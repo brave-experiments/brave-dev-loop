@@ -37,9 +37,22 @@ When you change a story's status to "skipped" (from any status), you MUST check 
    )"
    ```
 
-4. **Document in progress.txt:**
+4. **Ping the bot owner to verify (investigation-based skips only):**
+
+   When the skip decision rests on the bot's own investigation/judgment rather than an objective fact — e.g. "no longer reproducible", "already fixed on master", "root cause is infrastructure not code", "no code change can fix it" — the conclusion should be verified by a human before the issue stays closed. A skip that is purely operational (intentionally deferred, waiting on a known blocker) does NOT need this step.
+
+   - Read `project.botOwnerGithubHandle` from the bot config provided in the prompt.
+   - **If `botOwnerGithubHandle` is set** (non-empty), @-mention the owner in the same notification comment (or a follow-up comment) asking them to verify and confirm the close:
+     ```
+     @<botOwnerGithubHandle> I've skipped this based on the investigation above. Could you verify the conclusion and confirm the close if you agree? Reopen if I've got it wrong.
+     ```
+     Replace `<botOwnerGithubHandle>` with the configured handle. Only ever mention this exact configured handle — never guess or invent a username (see the no-hallucinated-mentions rule in CLAUDE.md).
+   - **If `botOwnerGithubHandle` is empty/absent**, skip the @mention and note in progress.txt that no owner is configured to verify.
+
+5. **Document in progress.txt:**
    - Note that you posted the GitHub comment
    - Include the reason for skipping
+   - Note whether you pinged the bot owner to verify (and which handle)
 
 **Example scenarios requiring notification:**
 - Story skipped because of missing dependencies/blockers → Comment on issue explaining what's blocking it
@@ -86,9 +99,22 @@ When you change a story's status to "invalid" (from any status), you MUST check 
    )"
    ```
 
-4. **Document in progress.txt:**
+4. **Ping the bot owner to verify (investigation-based invalids only):**
+
+   When the invalid decision rests on the bot's own investigation/judgment rather than an objective fact — e.g. "not reproducible / working as intended", "root cause is infrastructure not code", "requirements are contradictory", "no code change can fix it" — the conclusion should be verified by a human before the issue stays closed. Duplicate-of-#XXXX or PR-closed-without-merging are objective and do NOT need this step.
+
+   - Read `project.botOwnerGithubHandle` from the bot config provided in the prompt.
+   - **If `botOwnerGithubHandle` is set** (non-empty), @-mention the owner in the same notification comment (or a follow-up comment) asking them to verify and confirm the close:
+     ```
+     @<botOwnerGithubHandle> I've marked this invalid based on the investigation above. Could you verify the conclusion and close it as invalid if you agree? Reopen if I've got it wrong.
+     ```
+     Replace `<botOwnerGithubHandle>` with the configured handle. Only ever mention this exact configured handle — never guess or invent a username (see the no-hallucinated-mentions rule in CLAUDE.md).
+   - **If `botOwnerGithubHandle` is empty/absent**, skip the @mention and note in progress.txt that no owner is configured to verify.
+
+5. **Document in progress.txt:**
    - Note that you posted the GitHub comment
    - Include the reason for marking invalid
+   - Note whether you pinged the bot owner to verify (and which handle)
 
 **Example scenarios requiring notification:**
 - Story invalid because it's a duplicate → Comment on issue with link to original issue/PR
