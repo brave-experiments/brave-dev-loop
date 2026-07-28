@@ -73,11 +73,11 @@ Closes $ISSUE_REPO#<issue-number>
 [Description of how the fix addresses the root cause]
 
 ## Test Plan
-- [x] Ran npm run format - passed
-- [x] Ran npm run presubmit - passed
-- [x] Ran npm run gn_check - passed
-- [x] Ran npm run build - passed
-- [x] Ran npm run test -- [test-name] - passed [N/N times]
+- [x] Ran pnpm run format - passed
+- [x] Ran pnpm run presubmit - passed
+- [x] Ran pnpm run gn_check - passed
+- [x] Ran pnpm run build - passed
+- [x] Ran pnpm run test [test-name] - passed [N/N times]
 - [ ] CI passes cleanly
 EOF
 )"
@@ -86,7 +86,7 @@ EOF
    **IMPORTANT**:
    - **The `Closes` line MUST be the very first line of the PR body**, above `## Summary`. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config). Issues live in the issue repository and PRs in the PR repository, so a bare `Closes #<n>` will NOT auto-close the cross-repo issue. Put the closing keyword + issue link at the TOP, never at the bottom.
    - Fill in actual test commands and results from acceptance criteria
-   - If `.ts`/`.tsx`/`.js` files were changed, add checkboxes for `npm run test-unit` and `npm run build-storybook` to the test plan
+   - If `.ts`/`.tsx`/`.js` files were changed, add checkboxes for `pnpm run test-unit` and `pnpm run build-storybook` to the test plan
    - Keep the last checkbox "CI passes cleanly" unchecked
    - Do NOT add "Generated with Claude Code" or similar attribution
    - Capture the PR number from the output

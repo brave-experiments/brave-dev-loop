@@ -17,6 +17,7 @@ if [ "$GIT_USER" = "__BOT_USERNAME__" ]; then
     "npm-shrinkwrap.json"
     "yarn.lock"
     "pnpm-lock.yaml"
+    "pnpm-workspace.yaml"
     "DEPS"
     "Cargo.toml"
     "Cargo.lock"

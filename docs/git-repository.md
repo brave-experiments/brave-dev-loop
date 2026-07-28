@@ -22,12 +22,20 @@ git checkout -b fix-<test-name-or-feature>
 
 **IMPORTANT**: Each user story is independent and should NOT build on commits from previous stories. Always start from a clean master branch.
 
-## npm Commands
+## pnpm Commands
 
-When running npm commands from the PRD acceptance criteria:
-- The commands say "npm run X from src/brave"
+The target repo uses **pnpm**, not npm. Never run `npm ...` against it — `npm install`
+will corrupt `node_modules` and the lockfile.
+
+When running pnpm commands from the PRD acceptance criteria:
+- The commands say "pnpm run X from src/brave"
 - Change directory to `[targetRepoPath from bot config]` first
-- Example: `cd [targetRepoPath from bot config] && npm run build`
+- Example: `cd [targetRepoPath from bot config] && pnpm run build`
+- Node 24.x and pnpm >= 11.9 are required (`devEngines` in package.json enforces
+  this). If pnpm is missing or node is the wrong major, run `nvm use v24.16.0`
+  first — `nvm use node` picks up node 25 and every pnpm command fails.
+- Script arguments are passed directly, with no `--` separator:
+  `pnpm run test brave_unit_tests --filter="Fixture.Test"`
 
 ## Committing Changes with git
 
@@ -146,7 +154,7 @@ EOF
 
 **Blocked Files** (will cause commit failure):
 - package.json, package-lock.json, npm-shrinkwrap.json
-- yarn.lock, pnpm-lock.yaml
+- yarn.lock, pnpm-lock.yaml, pnpm-workspace.yaml (holds the pnpm dependency `catalog:`)
 - DEPS (Chromium dependency file)
 - Cargo.toml, Cargo.lock
 - go.mod, go.sum

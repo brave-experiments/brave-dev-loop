@@ -121,7 +121,7 @@ Follow the prompts, then use `/prd-json` to convert to `data/prd.json`.
       "prUrl": null,
       "lastActivityBy": null,
       "acceptanceCriteria": [
-        "npm run test -- auth_tests"
+        "pnpm run test auth_tests"
       ]
     }
   ]
@@ -574,7 +574,7 @@ The bot will automatically rebase and re-sync:
 ```bash
 git fetch
 git rebase origin/master
-npm run sync -- --no-history
+pnpm run sync --no-history
 ```
 
 ## Contributing

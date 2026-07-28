@@ -125,8 +125,8 @@ For stories with testable logic, also include:
 ```json
 "acceptanceCriteria": [
   "Fix the failing test condition",
-  "Run npm run build from src/brave (must pass)",
-  "Run npm run test -- brave_browser_tests --gtest_filter=TestName (must pass 5 consecutive times)"
+  "Run pnpm run build from src/brave (must pass)",
+  "Run pnpm run test brave_browser_tests --filter=TestName (must pass 5 consecutive times)"
 ]
 ```
 
@@ -134,8 +134,8 @@ For stories with testable logic, also include:
 ```json
 "acceptanceCriteria": [
   "Fix the failing test condition",
-  "Run npm run build from src/brave (must pass)",
-  "Run npm run test -- browser_tests --gtest_filter=TestName (must pass 5 consecutive times)"
+  "Run pnpm run build from src/brave (must pass)",
+  "Run pnpm run test browser_tests --filter=TestName (must pass 5 consecutive times)"
 ]
 ```
 

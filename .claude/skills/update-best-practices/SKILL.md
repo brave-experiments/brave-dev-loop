@@ -215,15 +215,15 @@ If changes were made to best practices files, commit them and create a PR so the
    ```
 4. **Run format and presubmit**, then amend any resulting changes into the commit. Both must pass before the PR is created:
    ```bash
-   npm run format
-   npm run presubmit
+   pnpm run format
+   pnpm run presubmit
    ```
    If either command modifies files (e.g. formatting fixes), stage and amend them into the commit:
    ```bash
    git add -A
    git commit --amend --no-edit
    ```
-   If presubmit reports errors that aren't auto-fixed, resolve them and amend before proceeding. Do not create the PR until `npm run presubmit` passes cleanly.
+   If presubmit reports errors that aren't auto-fixed, resolve them and amend before proceeding. Do not create the PR until `pnpm run presubmit` passes cleanly.
 5. **Push and create a PR**:
    ```bash
    git push -u origin HEAD

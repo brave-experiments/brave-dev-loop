@@ -104,23 +104,23 @@ Each story should be small enough to implement in one focused session.
 For a Brave test (found in `../src/brave/browser/...`):
 ```
 - [ ] Fix the failing test condition
-- [ ] Run `npm run build` from src/brave (must pass)
-- [ ] Run `npm run test -- brave_browser_tests --gtest_filter=TestName` (must pass 5 consecutive times)
+- [ ] Run `pnpm run build` from src/brave (must pass)
+- [ ] Run `pnpm run test brave_browser_tests --filter=TestName` (must pass 5 consecutive times)
 ```
 
 For a Chromium test (found in `../src/chrome/browser/...`):
 ```
 - [ ] Fix the failing test condition
-- [ ] Run `npm run build` from src/brave (must pass)
-- [ ] Run `npm run test -- browser_tests --gtest_filter=TestName` (must pass 5 consecutive times)
+- [ ] Run `pnpm run build` from src/brave (must pass)
+- [ ] Run `pnpm run test browser_tests --filter=TestName` (must pass 5 consecutive times)
 ```
 
 For a front-end change (`.ts`/`.tsx`/`.js` files):
 ```
 - [ ] Implement the fix
-- [ ] Run `npm run build` from src/brave (must pass)
-- [ ] Run `npm run test-unit` (must pass)
-- [ ] Run `npm run build-storybook` (must pass)
+- [ ] Run `pnpm run build` from src/brave (must pass)
+- [ ] Run `pnpm run test-unit` (must pass)
+- [ ] Run `pnpm run build-storybook` (must pass)
 ```
 
 ### 4. Functional Requirements

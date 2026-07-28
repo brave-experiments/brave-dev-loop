@@ -4,7 +4,7 @@
 
 **YOU MUST RUN ALL ACCEPTANCE CRITERIA TESTS - NO EXCEPTIONS**
 
-**Exception: Filter-file-only changes** — If the ONLY changed files are test filter files (`test/filters/*.filter`), skip acceptance criteria tests entirely. No build is needed either. Proceed directly to presubmit (`npm run format` and `npm run presubmit` only).
+**Exception: Filter-file-only changes** — If the ONLY changed files are test filter files (`test/filters/*.filter`), skip acceptance criteria tests entirely. No build is needed either. Proceed directly to presubmit (`pnpm run format` and `pnpm run presubmit` only).
 
 - **NEVER skip tests** because they "take too long" - this is NOT acceptable
 - If tests take hours, that's expected - run them anyway
@@ -46,13 +46,13 @@ If `xvfb-run` is not available, install it with `sudo apt-get install xvfb`. On 
 
 ## Build Failure Recovery
 
-**If `npm run build` fails**, first determine whether the failure is related to your changes or not.
+**If `pnpm run build` fails**, first determine whether the failure is related to your changes or not.
 
 ### Failure unrelated to your changes
 If the build error is in code you did not modify, run from `src/brave`:
 ```bash
 cd src/brave
-npm run sync -- --no-history
+pnpm run sync --no-history
 ```
 Then retry the build. **Only attempt this recovery once** — if the build still fails after syncing, do not repeat it. Investigate or report the issue.
 
@@ -62,7 +62,7 @@ Run these steps in order from `src/brave`:
 cd src/brave
 git fetch
 git rebase origin/master
-npm run sync -- --no-history
+pnpm run sync --no-history
 ```
 Then retry the build.
 
@@ -97,7 +97,7 @@ Only update status to "committed" when you have ACTUAL PROOF the test ran and pa
 ```javascript
 // Start build in background
 Bash({
-  command: "cd brave && npm run build",
+  command: "cd brave && pnpm run build",
   run_in_background: true,
   timeout: 7200000,  // 2 hours
   description: "Build brave browser (may take 1-2 hours)"
@@ -112,7 +112,7 @@ TaskOutput({
 
 // Run tests in background
 Bash({
-  command: "cd brave && npm run test -- brave_browser_tests",
+  command: "cd brave && pnpm run test brave_browser_tests",
   run_in_background: true,
   timeout: 7200000,
   description: "Run brave_browser_tests (may take hours)"
@@ -125,8 +125,8 @@ Bash({
 
 ```bash
 cd [targetRepoPath from bot config]
-npm run test-unit      # Run front-end unit tests
-npm run build-storybook  # Verify Storybook builds successfully
+pnpm run test-unit      # Run front-end unit tests
+pnpm run build-storybook  # Verify Storybook builds successfully
 ```
 
 Both must pass before committing. These are in addition to any C++ tests or other acceptance criteria tests.
@@ -449,16 +449,16 @@ After committing your changes, run the full verification cycle:
 
 ```bash
 cd [targetRepoPath from bot config]
-npm run format      # Check/fix formatting
-npm run presubmit   # Run presubmit checks
-npm run gn_check    # Verify GN configuration (skip for filter-file-only changes)
-npm run build       # Verify build succeeds
+pnpm run format      # Check/fix formatting
+pnpm run presubmit   # Run presubmit checks
+pnpm run gn_check    # Verify GN configuration (skip for filter-file-only changes)
+pnpm run build       # Verify build succeeds
 # If any .ts/.tsx/.js files were changed:
-npm run test-unit        # Run front-end unit tests
-npm run build-storybook  # Verify Storybook builds
+pnpm run test-unit        # Run front-end unit tests
+pnpm run build-storybook  # Verify Storybook builds
 ```
 
-**For filter-file-only changes** (only `test/filters/*.filter` modified): run only `npm run format` and `npm run presubmit`. Skip `gn_check`, `build`, and all acceptance criteria test runs.
+**For filter-file-only changes** (only `test/filters/*.filter` modified): run only `pnpm run format` and `pnpm run presubmit`. Skip `gn_check`, `build`, and all acceptance criteria test runs.
 
 **If presubmit fails:**
 1. Fix the issues identified by presubmit
@@ -476,10 +476,10 @@ npm run build-storybook  # Verify Storybook builds
 **Multiple iterations = full re-verification:**
 
 If you make ANY changes after the initial commit (formatting fixes, presubmit fixes, additional code changes), you MUST re-run:
-1. `npm run format`
-2. `npm run presubmit`
-3. `npm run gn_check`
-4. `npm run build`
+1. `pnpm run format`
+2. `pnpm run presubmit`
+3. `pnpm run gn_check`
+4. `pnpm run build`
 5. ALL acceptance criteria tests
 
 Do NOT create a PR until all verifications pass on the final committed state.

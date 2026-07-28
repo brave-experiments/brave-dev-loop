@@ -151,7 +151,7 @@ def build_test_story(story_id, priority, issue):
         "Commit changes, then run the /review skill from the target repo in a fresh subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); report all findings back to the main context; fix any violations and commit the fixes (must pass)",
         f"Run the test: {test_binary} --gtest_filter={test_name} (must pass - run 5 times to verify consistency, unless this is a filter file change only)",
         "Run presubmit checks (must pass)",
-        "Run npm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
+        "Run pnpm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
     ]
 
     return {
@@ -209,7 +209,7 @@ def build_disabled_test_story(story_id, priority, issue):
         "Commit changes, then run the /review skill from the target repo in a fresh subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); report all findings back to the main context; fix any violations and commit the fixes (must pass)",
         f"Run the test: {test_binary} --gtest_filter={test_name} (must pass - run 5 times to verify consistency)",
         "Run presubmit checks (must pass)",
-        "Run npm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
+        "Run pnpm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
     ]
 
     return {
@@ -244,7 +244,7 @@ def build_generic_story(story_id, priority, issue):
         "Commit changes, then run the /review skill from the target repo in a fresh subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); report all findings back to the main context; fix any violations and commit the fixes (must pass)",
         "Find and run relevant tests to verify the change (must pass)",
         "Run presubmit checks (must pass)",
-        "Run npm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
+        "Run pnpm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
     ]
 
     return {

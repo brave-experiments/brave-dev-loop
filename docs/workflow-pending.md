@@ -269,16 +269,16 @@
    After committing, you MUST run the full verification cycle to ensure the commit is valid:
    ```bash
    cd [targetRepoPath from bot config]
-   npm run format      # Check/fix formatting
-   npm run presubmit   # Run presubmit checks
-   npm run gn_check    # Verify GN configuration (skip for filter-file-only changes)
-   npm run build       # Verify build succeeds (skip for filter-file-only changes)
+   pnpm run format      # Check/fix formatting
+   pnpm run presubmit   # Run presubmit checks
+   pnpm run gn_check    # Verify GN configuration (skip for filter-file-only changes)
+   pnpm run build       # Verify build succeeds (skip for filter-file-only changes)
    # If any .ts/.tsx/.js files were changed:
-   npm run test-unit        # Run front-end unit tests
-   npm run build-storybook  # Verify Storybook builds
+   pnpm run test-unit        # Run front-end unit tests
+   pnpm run build-storybook  # Verify Storybook builds
    ```
 
-   **For filter-file-only changes** (only `test/filters/*.filter` modified): run only `npm run format` and `npm run presubmit`. Skip `gn_check`, `build`, and all test runs — filter files don't affect build configuration or compiled code.
+   **For filter-file-only changes** (only `test/filters/*.filter` modified): run only `pnpm run format` and `pnpm run presubmit`. Skip `gn_check`, `build`, and all test runs — filter files don't affect build configuration or compiled code.
 
    **If presubmit or any verification fails:**
    - Fix the issues
@@ -287,11 +287,11 @@
    - Repeat until ALL verifications pass consecutively
 
    **IMPORTANT: Multiple iterations require full re-verification.** If you make ANY changes after initial commit (including formatting fixes, presubmit fixes, or any other modifications), you MUST re-run:
-   1. `npm run format`
-   2. `npm run presubmit`
-   3. `npm run gn_check` (skip for filter-file-only changes)
-   4. `npm run build` (skip for filter-file-only changes)
-   5. If any `.ts`/`.tsx`/`.js` files changed: `npm run test-unit` and `npm run build-storybook`
+   1. `pnpm run format`
+   2. `pnpm run presubmit`
+   3. `pnpm run gn_check` (skip for filter-file-only changes)
+   4. `pnpm run build` (skip for filter-file-only changes)
+   5. If any `.ts`/`.tsx`/`.js` files changed: `pnpm run test-unit` and `pnpm run build-storybook`
    6. ALL acceptance criteria tests (skip for filter-file-only changes)
 
    This ensures the final committed state is fully verified. Do NOT create a PR until all checks pass on the final committed state.
