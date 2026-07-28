@@ -346,8 +346,13 @@ class TestSelectTaskTiers:
         )
 
     def test_pushed_bot_is_medium(self, select_task):
+        # MEDIUM requires the pushed story to have been processed within the last
+        # day; without a recent lastProcessedDate it reads as STALE.
+        recent = datetime.now(timezone.utc).isoformat()
         assert (
-            select_task.assign_tier(make_story("pushed", lastActivityBy="bot"))
+            select_task.assign_tier(
+                make_story("pushed", lastActivityBy="bot", lastProcessedDate=recent)
+            )
             == select_task.TIER_MEDIUM
         )
 
