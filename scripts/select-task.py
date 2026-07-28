@@ -20,10 +20,15 @@ from datetime import datetime, timezone
 
 TIER_URGENT = 1  # pushed + lastActivityBy == "reviewer"
 TIER_HIGH = 2  # committed
+# 2.5 (float) is used only as an *effective* sort tier to reserve the first
+# slot of a run for pending work — see sort_key(promote_pending=True). No story
+# is ever assigned it by assign_tier.
+TIER_PENDING_RESERVED = 2.5
 TIER_STALE = 3  # pushed + lastActivityBy != "reviewer" + not checked in >1 day
 TIER_NORMAL = 4  # pending
 TIER_MEDIUM = 5  # pushed + lastActivityBy != "reviewer" + checked within last day
 TIER_LOW = 6  # merged (needs recheck)
+TIER_QUARANTINE = 7  # pending that has been retried >= MAX_PENDING_ATTEMPTS times
 
 TIER_NAMES = {
     TIER_URGENT: "URGENT",
@@ -32,9 +37,16 @@ TIER_NAMES = {
     TIER_NORMAL: "NORMAL",
     TIER_MEDIUM: "MEDIUM",
     TIER_LOW: "LOW",
+    TIER_QUARANTINE: "QUARANTINE",
 }
 
 STALE_THRESHOLD_SECONDS = 86400  # 1 day
+
+# A pending story selected this many times without ever leaving "pending" is
+# treated as stuck and quarantined to the back of the queue, so it stops
+# blocking fresh pending work (and stops burning a full iteration every run).
+# It is not dropped — it is only reachable once nothing else is selectable.
+MAX_PENDING_ATTEMPTS = 5
 
 # Sentinel for missing timestamps (sorts before everything = oldest)
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -57,6 +69,11 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def pending_attempts(story):
+    """Number of times a pending story has been selected (its iterationLogs)."""
+    return len(story.get("iterationLogs") or [])
+
+
 def assign_tier(story, now=None):
     """Assign a priority tier to a story based on its status and lastActivityBy."""
     if now is None:
@@ -74,6 +91,8 @@ def assign_tier(story, now=None):
     elif status == "committed":
         return TIER_HIGH
     elif status == "pending":
+        if pending_attempts(story) >= MAX_PENDING_ATTEMPTS:
+            return TIER_QUARANTINE
         return TIER_NORMAL
     elif status == "merged":
         return TIER_LOW
@@ -81,26 +100,41 @@ def assign_tier(story, now=None):
     return TIER_NORMAL
 
 
-def sort_key(story, now=None):
+def sort_key(story, now=None, promote_pending=False):
     """Generate a sort key for a story within its tier.
+
+    The key is (effective_tier, secondary, priority); all three are numeric so
+    stories are never compared across incompatible types.
 
     - Pushed stories (tiers 1, 3, 5): sort by lastProcessedDate asc, then priority
     - Merged stories (tier 6): sort by nextMergedCheck asc, then priority
+    - Pending stories: sort by attempt count asc (fresh tests before ones that
+      keep getting retried), then priority
     - Other stories: sort by priority only
+
+    When ``promote_pending`` is True, un-quarantined pending work is lifted just
+    above STALE/MEDIUM pushed-maintenance (but still below URGENT reviewer
+    responses and ready-to-push committed stories). This reserves the first slot
+    of a run for actually developing a fix instead of nudging stale PRs.
     """
     if now is None:
         now = datetime.now(timezone.utc)
     tier = assign_tier(story, now)
     priority = story.get("priority", 999)
+    status = story.get("status")
 
-    if story.get("status") == "pushed":
-        last_processed = parse_iso(story.get("lastProcessedDate"))
-        return (tier, last_processed, priority)
-    elif story.get("status") == "merged":
-        next_check = parse_iso(story.get("nextMergedCheck"))
-        return (tier, next_check, priority)
+    eff_tier = tier
+    if promote_pending and status == "pending" and tier == TIER_NORMAL:
+        eff_tier = TIER_PENDING_RESERVED
+
+    if status == "pushed":
+        return (eff_tier, parse_iso(story.get("lastProcessedDate")).timestamp(), priority)
+    elif status == "merged":
+        return (eff_tier, parse_iso(story.get("nextMergedCheck")).timestamp(), priority)
+    elif status == "pending":
+        return (eff_tier, float(pending_attempts(story)), priority)
     else:
-        return (tier, EPOCH, priority)
+        return (eff_tier, 0.0, priority)
 
 
 def filter_stories(stories, run_state):
@@ -298,7 +332,11 @@ def main():
     # Fall back to deterministic tier-based selection
     if not selected:
         now = datetime.now(timezone.utc)
-        candidates.sort(key=lambda s: sort_key(s, now))
+        # Reserve the first pick of each run for pending fix development so
+        # stale-PR maintenance can't consume every slot. run-state resets at the
+        # start of a run, so an empty storiesCheckedThisRun means this is slot 1.
+        reserve_pending = len(run_state.get("storiesCheckedThisRun", [])) == 0
+        candidates.sort(key=lambda s: sort_key(s, now, reserve_pending))
         selected = candidates[0]
 
     now = datetime.now(timezone.utc)

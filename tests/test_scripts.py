@@ -458,6 +458,67 @@ class TestSelectTaskSortKey:
         stories.sort(key=select_task.sort_key)
         assert stories[0]["id"] == "US-001"
 
+    def test_pending_fewer_attempts_first(self, select_task):
+        # A fresh pending story (no logs) is worked before one that has been
+        # retried, even if the stuck one has a lower priority number.
+        stories = [
+            make_story(
+                "pending",
+                id="US-STUCK",
+                priority=1,
+                iterationLogs=["a", "b", "c"],
+            ),
+            make_story("pending", id="US-FRESH", priority=50),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-FRESH"
+
+    def test_promote_pending_beats_stale(self, select_task):
+        # On the reserved (first) slot, pending work outranks stale pushed
+        # maintenance...
+        pending = make_story("pending", id="US-P")
+        stale = make_story(
+            "pushed", id="US-S", lastProcessedDate="2000-01-01T00:00:00Z"
+        )
+        assert select_task.sort_key(pending, promote_pending=True) < select_task.sort_key(
+            stale, promote_pending=True
+        )
+        # ...but without promotion the stale PR (tier 3) still outranks pending
+        # (tier 4).
+        assert select_task.sort_key(stale) < select_task.sort_key(pending)
+
+    def test_promote_pending_still_below_urgent(self, select_task):
+        # Reviewer responses (URGENT) are not preempted by the reserved slot.
+        pending = make_story("pending", id="US-P")
+        urgent = make_story("pushed", id="US-U", lastActivityBy="reviewer")
+        assert select_task.sort_key(urgent, promote_pending=True) < select_task.sort_key(
+            pending, promote_pending=True
+        )
+
+
+class TestSelectTaskQuarantine:
+    def test_stuck_pending_is_quarantined(self, select_task):
+        story = make_story("pending", iterationLogs=["l"] * select_task.MAX_PENDING_ATTEMPTS)
+        assert select_task.assign_tier(story) == select_task.TIER_QUARANTINE
+
+    def test_under_cap_stays_normal(self, select_task):
+        story = make_story(
+            "pending", iterationLogs=["l"] * (select_task.MAX_PENDING_ATTEMPTS - 1)
+        )
+        assert select_task.assign_tier(story) == select_task.TIER_NORMAL
+
+    def test_quarantined_loses_to_fresh_pending(self, select_task):
+        stuck = make_story(
+            "pending",
+            id="US-STUCK",
+            priority=1,
+            iterationLogs=["l"] * select_task.MAX_PENDING_ATTEMPTS,
+        )
+        fresh = make_story("pending", id="US-FRESH", priority=99)
+        stories = [stuck, fresh]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-FRESH"
+
 
 class TestSelectTaskUpdatePrd:
     def test_sets_last_processed_for_pushed(self, select_task, write_json, read_json):
