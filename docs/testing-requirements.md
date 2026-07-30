@@ -258,6 +258,10 @@ EXPECT_TRUE(base::test::RunUntil([&]() { return destroy_count == 1; }));
 
 When a test must be disabled (e.g., upstream Chromium test incompatible with Brave infrastructure), **use the most specific filter file possible**.
 
+### FIRST: Rule out an infrastructure / build / CI root cause
+
+**Do NOT disable a test to work around a broken build or CI environment.** A failure caused by a stale build (wrong revision compiled, stale generated files/buildflags, builder- or cache-specific failure, a landed config not taking effect) is a DevOps regression, not a test problem. Disabling the test hides it. If you see any of those signals, keep the story `pending`, ping the bot owner with the evidence, and END THE ITERATION — see [workflow-pending.md](./workflow-pending.md) step 5 ("Infrastructure / Build / CI Root Cause"). Only disable a test when the root cause is genuinely in the code/test and unfixable, not in the environment that built them.
+
 ### Filter File Naming Convention
 
 Filter files are located in `test/filters/` and follow the pattern:

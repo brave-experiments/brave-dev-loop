@@ -158,6 +158,39 @@
 
    **If you cannot determine whether the bug is in production code or test code, default to investigating the production code more deeply.** Do not take the easy path of changing the test.
 
+   **CRITICAL: Infrastructure / Build / CI Root Cause — STOP, do NOT write a PR**
+
+   Before proposing ANY code change (including a test disable/skip), rule out that the root cause is the build or CI environment rather than the code. A test can fail because the thing under test was built wrong, not because the code or test is wrong. **A PR that skips or works around such a failure hides a real DevOps/infrastructure regression and is the wrong outcome.**
+
+   **Signals the root cause is infrastructure, not code:**
+   - The compiled binary or generated files reflect a **different source revision** than expected (e.g. a nightly built a SHA that predates a landed change; stale git mirror; wrong branch/tag).
+   - Generated files (`gen/**/*.h`, `args.gn`, `args_generated.gni`, buildflags) contain **stale or unexpected values** that do not match current `master`.
+   - The failure depends on **build type / builder / cache** (ASAN-only, one CI node only, disappears on a clean build) with no corresponding code difference.
+   - A config/default that already landed in code is **not taking effect** in the built artifact.
+   - The failure cannot be reproduced from a clean local build of the current source.
+
+   **What to do when infrastructure is the (suspected) root cause:**
+   1. **Do NOT create a PR** — not a fix PR, and especially not a PR that disables/skips/guards the test to make the failure "go away." Working around an infra bug in code is a band-aid that masks the real problem.
+   2. **Gather the evidence** — the specific SHA/revision built, the stale generated file contents vs. expected, the builder/job URL, and why this points to build/CI rather than code.
+   3. **Keep the story `status: "pending"`** and do NOT commit anything.
+   4. **Ping the bot owner to investigate** (see below) — this class of failure needs a human with DevOps access to confirm and fix the infrastructure. The bot cannot re-run CI or fix build nodes itself.
+   5. **Document the evidence and the ping in `$BOT_DIR/data/progress.txt`**, then END THE ITERATION.
+
+   **How to ping the bot owner (infrastructure escalation):**
+   - Read `project.botOwnerGithubHandle` from the bot config provided in the prompt.
+   - **If set** (non-empty), post a comment on the GitHub issue @-mentioning the owner with the evidence and your hypothesis. Ask them to confirm whether it's an infra/CI/build problem before any code workaround is considered:
+     ```
+     @<botOwnerGithubHandle> This test failure looks like an infrastructure/build issue, not a code bug. Evidence:
+     - <SHA/revision actually built vs. expected>
+     - <stale generated file / value, with builder job URL>
+     - <why this indicates CI/build rather than code>
+     I'm holding off on any code change (including disabling the test) since a PR would just mask this. Can you confirm the root cause and whether this needs a DevOps fix? Reopen/redirect if I've misdiagnosed it.
+     ```
+     Replace `<botOwnerGithubHandle>` with the configured handle. Only ever mention this exact configured handle — never guess or invent a username (see the no-hallucinated-mentions rule in CLAUDE.md).
+   - **If empty/absent**, do not @-mention anyone; document in progress.txt that the failure appears infrastructure-caused and no owner is configured to escalate to.
+
+   **Only proceed to a code change when you have high confidence the root cause is in the code or the test itself — not the environment that built them.**
+
    **CRITICAL: Minimal Change Scope**
 
    Only make changes that are **directly necessary** to fix the issue. Do NOT:
@@ -338,8 +371,11 @@ When multiple attempts have failed, consider whether the fundamental approach is
 - **Fix the underlying code**: Sometimes the test is revealing a real bug in the production code
 - **Add proper synchronization**: If there's a race condition, add explicit signaling rather than waits
 
+**Before disabling: rule out an infrastructure root cause.**
+If the failure shows any of the infrastructure/build/CI signals listed in step 5 (stale revision built, stale generated files, builder/cache-specific failure, a landed config not taking effect), **do NOT disable the test**. Disabling would mask a real DevOps regression. Instead keep the story `pending`, ping the bot owner with the evidence (see step 5's escalation), and END THE ITERATION. A test-disable PR is only appropriate when the test is genuinely unfixable *in code* — never as a way to paper over a broken build.
+
 **Last resort - disable with full documentation:**
-If no fix is viable after thorough investigation, you may create a PR to disable the test, but you MUST:
+If no fix is viable after thorough investigation AND you have ruled out an infrastructure root cause, you may create a PR to disable the test, but you MUST:
 - For Chromium tests (not Brave-specific tests): run `python3 $TARGET_REPO/script/check-upstream-flake.py "<TestName>"` and include the results
 - Document all previous fix attempts (including PRs by others)
 - Explain why each approach failed
