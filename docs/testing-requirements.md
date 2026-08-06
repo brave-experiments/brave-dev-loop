@@ -226,6 +226,28 @@ EXPECT_TRUE(base::test::RunUntil([&]() { return destroy_count == 1; }));
 
 **KEY POINT: Always wait for a SPECIFIC completion signal or condition, not just "all idle tasks".**
 
+### ❌ NEVER Let a Test Depend on a Feature Flag's Current Default
+
+**When a story flips a `base::Feature` default, tests must pin the flag explicitly or run for both states — never ride the new default.**
+
+A test that relies on the compiled-in default silently changes what it covers the day someone flips that default, and reads as passing either way. When flipping a default, two moves are tempting and both are wrong:
+
+1. **Deleting "now redundant" `feature_list_.InitAndEnableFeature(kFlag)` calls** from fixtures because the new default already enables the flag. The fixture is now coupled to the default; flip it back and it silently stops testing the path it is named after.
+2. **Adding a bespoke helper that absorbs the new default's behavior** so the old expectations still hold. This models an ordering production never performs — which is how it introduces a real bug rather than hiding one.
+
+**What to do instead:**
+
+- **Look for an existing parameterized fixture in the same file first.** A test file that already covers the flag usually has one (e.g. `class FooDATCacheTest : public testing::TestWithParam<bool>`). Reuse it instead of writing a helper next to it.
+- **Move the affected tests into that fixture** so they run with the feature enabled *and* disabled. Derive expectations from `GetParam()` only where behavior genuinely differs.
+- **If most tests turn out flag-independent, that is the proof no helper was needed.** Keep them parameterized anyway so a future default flip can't quietly change coverage.
+- **Where parameterizing is impractical** (e.g. a `TYPED_TEST` fixture), at least pin the flag explicitly: `InitWithFeatureStates({{kOtherFlag, x}, {kMyFlag, true}})`.
+
+**Ordering trap:** a `ScopedFeatureList` must be initialized *before* constructing anything that reads the flag in its constructor. If a fixture builds a service in `SetUp()`, the feature list init belongs at the **top** of `SetUp()`, not the bottom.
+
+**Filtering:** parameterized suites need the instantiation prefix in `--gtest_filter` (`All/MyTest.*`). A bare fixture-name filter matches nothing and still reports SUCCESS.
+
+**Attributing failures after a flip:** re-run the failing test with `--disable-features=<Flag>` on the same binary. If it fails identically, it is pre-existing — and you did not have to rebuild at the merge base to find out.
+
 ## Test Quality Standards
 
 **Test in Isolation:**
