@@ -76,6 +76,13 @@ Relay the script's SUMMARY. For any PR marked `CONFLICT`, `PUSH_FAILED`, or
 `ERROR`, surface the detail so the user can resolve it manually — do not attempt
 to force past a conflict.
 
+For every PR marked `REBASED`, also report the **new head SHA** and state that
+its CI results are now stale. A rebase can break a branch that compiled before
+it — upstream API changes land in `master` constantly — so a pre-rebase green
+verdict does not carry over. The next `pushed` iteration for that PR must
+re-check CI on the new head before nudging anyone; see
+[docs/workflow-pushed.md](../../../docs/workflow-pushed.md#ci-status-always-re-verify-after-a-rebase).
+
 ## Notes
 
 - Run from anywhere; the script locates the target repo from config.

@@ -40,6 +40,40 @@ If a story has `status: "pushed"` with `prUrl` and `prNumber` already defined, t
    ```
    Example: `$BOT_DIR/scripts/filter-pr-reviews.sh 33512 markdown $PR_REPO`
 
+5. **Read the CI results for the current head** — see [CI Status: Always Re-Verify After a Rebase](#ci-status-always-re-verify-after-a-rebase). A red CI outranks every other branch of this workflow.
+
+## CI Status: Always Re-Verify After a Rebase
+
+**The bot cannot run CI, but it can always read CI results — and it must.**
+
+Every iteration in the `pushed` state, before deciding to nudge, ping, escalate, or wait, read the checks for the **current head**:
+
+```bash
+HEAD_SHA=$(gh pr view <pr-number> --repo $PR_REPO --json headRefOid -q '.headRefOid')
+gh pr checks <pr-number> --repo $PR_REPO
+```
+
+Then classify the result:
+
+- **FAILED on the current head** → this is the highest-priority work in the iteration. Treat a failing build/test check exactly like reviewer feedback: enter the [Review Response Workflow](#review-response-workflow-when-there-are-new-reviewer-comments) and fix it. **Do NOT post a reviewer reminder or an owner escalation for a PR whose CI is red** — the ball is in the bot's court, not the reviewer's, and asking someone to "re-run CI" on a head that fails to compile wastes their time.
+  - Read the actual failure text before concluding anything: `gh run view <run-id> --repo $PR_REPO --log-failed`, or the check's target URL.
+  - Known infra-flaky checks (`Assign labels`, `security` on fork PRs) are not code failures — those genuinely do need a human re-run. A compile error or a test failure is not infra flake.
+- **No runs newer than `HEAD_SHA`** → CI is *stale*, not green and not red: it has not run on this head at all. This is the case where asking the owner to re-run CI is correct.
+- **Passing on the current head** → proceed with the normal workflow.
+
+### A rebase invalidates every prior CI result
+
+After `git rebase` + `git push --force-with-lease`, the previous run's verdict says **nothing** about the new head. Upstream API changes land in `master` constantly, so a branch that compiled last week can fail to compile after a rebase without a single line of its own diff changing.
+
+Rules:
+
+1. **Never carry a pre-rebase green forward.** Do not state or assume CI passes because it passed before the rebase.
+2. **Record the new head SHA in `$BOT_DIR/data/progress.txt`** whenever the branch is force-pushed, and note that CI results are now stale for that SHA.
+3. **On the next iteration, check the new head's CI first** (the command above), before any reminder/escalation logic. This is the step that closes the loop — a rebase with no follow-up check is how a broken build sits unnoticed.
+4. **If the local checkout cannot build** (e.g. the Chromium `src` checkout is desynced from what `brave-core` master requires), CI is the *only* compile signal available. Reading it is then not optional.
+
+Real failure this rule exists to prevent: PR #38603 was rebased onto a Chromium 152 roll in which `Browser::profile()` had been removed. The branch stopped compiling (`error: no member named 'profile' in 'Browser'`). The bot never looked at the checks and posted three owner escalations across two weeks asking for a CI re-run, while a compile failure was already sitting on the PR.
+
 ## PR Merge Policy
 
 - **NEVER** ask for admin privileges to force merge PRs on GitHub
@@ -106,7 +140,7 @@ python3 "$BOT_DIR/.claude/skills/rebase-bot-prs/rebase-bot-prs.py" --execute <pr
 ```
 - The script is a no-op if the branch is already up to date, so it is safe to call every iteration.
 - **The bot cannot run CI** (see [PR Merge Policy](#pr-merge-policy)), so the force-push does **not** reliably start CI. Do NOT tell anyone CI "is re-running" or to "wait for CI".
-- **If it rebased and force-pushed**, the head is fresh but CI still needs a human to run it. In the owner nudge below, ask the owner to **re-run CI** on the new head (and merge once it's green). Note the rebase in `$BOT_DIR/data/progress.txt`.
+- **If it rebased and force-pushed**, the head is fresh but CI still needs a human to run it. In the owner nudge below, ask the owner to **re-run CI** on the new head (and merge once it's green). Note the rebase **and the new head SHA** in `$BOT_DIR/data/progress.txt` — the next iteration must re-check CI on that SHA, see [CI Status: Always Re-Verify After a Rebase](#ci-status-always-re-verify-after-a-rebase). A pre-rebase green does not carry over.
 - If it reports `CONFLICT`/`PUSH_FAILED`/`ERROR`, note it in progress.txt and continue to the nudge below (the owner needs to know it can't be merged cleanly).
 
 If the branch was already fresh (no rebase happened), verify ALL of the following, then nudge the owner:
@@ -247,7 +281,7 @@ python3 $BOT_DIR/scripts/business-hours-elapsed.py <reference-timestamp> [thresh
      ```bash
      python3 "$BOT_DIR/.claude/skills/rebase-bot-prs/rebase-bot-prs.py" --execute <pr-number>
      ```
-     - If the script reports the PR was rebased and pushed, the head is fresh — but **the bot cannot run CI** (see [PR Merge Policy](#pr-merge-policy)), so CI will not necessarily start on its own. In the reminder below, ask the owner to **re-run CI** on the new head. Note the rebase in progress.txt.
+     - If the script reports the PR was rebased and pushed, the head is fresh — but **the bot cannot run CI** (see [PR Merge Policy](#pr-merge-policy)), so CI will not necessarily start on its own. In the reminder below, ask the owner to **re-run CI** on the new head. Note the rebase **and the new head SHA** in progress.txt, and re-check CI on that SHA next iteration — see [CI Status: Always Re-Verify After a Rebase](#ci-status-always-re-verify-after-a-rebase).
      - If the script reports `CONFLICT` (or `PUSH_FAILED`/`ERROR`), do NOT force past it. Leave the branch as-is, note the conflict in progress.txt, and still post the reminder below so the reviewer/owner knows the PR is waiting.
      - If the branch was already up to date, the script is a no-op — proceed normally.
 
@@ -396,6 +430,8 @@ Before implementing changes, analyze review comments to detect if the reviewer i
   git rebase upstream/master
   ```
   **NEVER merge master into the feature branch.** Always rebase. If the rebase has conflicts, resolve them before proceeding.
+
+  A rebase can break a branch that compiled before it — re-verify the build after rebasing, and re-check CI on the new head next iteration. See [CI Status: Always Re-Verify After a Rebase](#ci-status-always-re-verify-after-a-rebase).
 
 ### 5. Implement Changes
 
