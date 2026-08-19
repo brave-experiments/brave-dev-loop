@@ -626,3 +626,167 @@ class TestCheckPrdHasWork:
 
     def test_empty_stories(self):
         assert self._active([]) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# sync-bot-prs-to-prd.py
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def make_pr(number=38869, title="Add TI-042", files=("docs/best-practices/x.md",),
+            body="", branch="docs/ti-042", draft=False):
+    return {
+        "number": number,
+        "title": title,
+        "url": f"https://github.com/brave/brave-core/pull/{number}",
+        "headRefName": branch,
+        "isDraft": draft,
+        "body": body,
+        "files": [{"path": p} for p in files],
+    }
+
+
+class TestSyncBotPrsTracking:
+    def test_pr_number_field_is_tracked(self, sync_bot_prs):
+        prd = {"stories": [make_story(prNumber=38540)]}
+        assert 38540 in sync_bot_prs.tracked_pr_numbers(prd)
+
+    def test_pr_url_is_tracked(self, sync_bot_prs):
+        prd = {"stories": [make_story(
+            prUrl="https://github.com/brave/brave-core/pull/38603")]}
+        assert 38603 in sync_bot_prs.tracked_pr_numbers(prd)
+
+    def test_description_pr_reference_is_tracked(self, sync_bot_prs):
+        prd = {"stories": [make_story(description="Land PR #38869 in brave-core.")]}
+        assert 38869 in sync_bot_prs.tracked_pr_numbers(prd)
+
+    def test_archived_prd_counts_as_tracked(self, sync_bot_prs):
+        prd = {"stories": []}
+        archived = {"stories": [make_story(prNumber=37286)]}
+        assert 37286 in sync_bot_prs.tracked_pr_numbers(prd, archived)
+
+    def test_missing_archived_prd_is_tolerated(self, sync_bot_prs):
+        assert sync_bot_prs.tracked_pr_numbers({"stories": []}, None) == set()
+
+
+class TestSyncBotPrsLinkedIssue:
+    def test_closing_keyword_with_issue_repo(self, sync_bot_prs):
+        pr = make_pr(body="Fixes brave/brave-browser#57147")
+        assert sync_bot_prs.linked_issue_number(pr) == 57147
+
+    def test_closing_keyword_with_issue_url(self, sync_bot_prs):
+        pr = make_pr(
+            body="Resolves https://github.com/brave/brave-browser/issues/57147")
+        assert sync_bot_prs.linked_issue_number(pr) == 57147
+
+    def test_bare_hash_refers_to_pr_repo_not_issue_repo(self, sync_bot_prs):
+        # "#38724" in a brave-core PR body is a brave-core PR, not an issue.
+        pr = make_pr(body="Learned from review feedback on #38724")
+        assert sync_bot_prs.linked_issue_number(pr) is None
+
+    def test_no_closing_keyword(self, sync_bot_prs):
+        pr = make_pr(body="See brave/brave-browser#57147 for background")
+        assert sync_bot_prs.linked_issue_number(pr) is None
+
+    def test_empty_body(self, sync_bot_prs):
+        assert sync_bot_prs.linked_issue_number(make_pr(body=None)) is None
+
+
+class TestSyncBotPrsDocsOnly:
+    def test_markdown_only_is_docs_only(self, sync_bot_prs):
+        pr = make_pr(files=("docs/a.md", "docs/b.md"))
+        assert sync_bot_prs.is_docs_only(pr) is True
+
+    def test_mixed_files_is_not_docs_only(self, sync_bot_prs):
+        pr = make_pr(files=("docs/a.md", "brave/browser/x.cc"))
+        assert sync_bot_prs.is_docs_only(pr) is False
+
+    def test_no_file_data_is_not_docs_only(self, sync_bot_prs):
+        assert sync_bot_prs.is_docs_only(make_pr(files=())) is False
+
+
+class TestSyncBotPrsStory:
+    def test_docs_only_story_omits_build_criteria(self, sync_bot_prs):
+        story = sync_bot_prs.build_pr_story(333, 332, make_pr())
+        criteria = " ".join(story["acceptanceCriteria"])
+        assert "Build the project" not in criteria
+        assert "presubmit" not in criteria
+        assert story["docsOnly"] is True
+
+    def test_code_story_includes_build_criteria(self, sync_bot_prs):
+        story = sync_bot_prs.build_pr_story(
+            333, 332, make_pr(files=("brave/browser/x.cc",)))
+        criteria = " ".join(story["acceptanceCriteria"])
+        assert "Build the project (must pass)" in criteria
+        assert "presubmit" in criteria
+        assert story["docsOnly"] is False
+
+    def test_story_is_pushed_with_pr_fields(self, sync_bot_prs):
+        story = sync_bot_prs.build_pr_story(333, 332, make_pr())
+        assert story["id"] == "US-333"
+        assert story["status"] == "pushed"
+        assert story["prNumber"] == 38869
+        assert story["branchName"] == "docs/ti-042"
+        assert story["sourcedFromPr"] is True
+
+    def test_seeded_activity_is_bot_not_reviewer(self, sync_bot_prs):
+        # "reviewer" would fake TIER_URGENT before any review data is read.
+        assert sync_bot_prs.build_pr_story(333, 332, make_pr())["lastActivityBy"] == "bot"
+
+    def test_linked_issue_uses_dedupe_phrase(self, sync_bot_prs):
+        pr = make_pr(body="Closes brave/brave-browser#57147")
+        story = sync_bot_prs.build_pr_story(333, 332, pr)
+        # add-backlog-to-prd dedupes on this exact phrase.
+        assert "issue #57147" in story["description"]
+
+
+class TestSyncBotPrsMain:
+    def _run(self, sync_bot_prs, monkeypatch, prd_path, prs, extra_args=()):
+        monkeypatch.setattr(
+            sync_bot_prs, "fetch_bot_prs", lambda pr_number=None, state="open": prs)
+        argv = ["sync-bot-prs-to-prd.py", "--prd", prd_path,
+                "--archived-prd", prd_path + ".missing", *extra_args]
+        monkeypatch.setattr(sys, "argv", argv)
+        return sync_bot_prs.main()
+
+    def test_adds_untracked_pr(self, sync_bot_prs, monkeypatch, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": [make_story(priority=5)]})
+        assert self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()]) == 0
+        stories = read_json(prd_path)["stories"]
+        assert len(stories) == 2
+        assert stories[1]["prNumber"] == 38869
+        assert stories[1]["priority"] == 6
+
+    def test_skips_tracked_pr(self, sync_bot_prs, monkeypatch, write_json, read_json):
+        prd_path = write_json(
+            "prd.json", {"stories": [make_story(prNumber=38869)]})
+        assert self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()]) == 0
+        assert len(read_json(prd_path)["stories"]) == 1
+
+    def test_skips_draft_pr(self, sync_bot_prs, monkeypatch, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": []})
+        assert self._run(
+            sync_bot_prs, monkeypatch, prd_path, [make_pr(draft=True)]) == 0
+        assert read_json(prd_path)["stories"] == []
+
+    def test_dry_run_writes_nothing(
+            self, sync_bot_prs, monkeypatch, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": []})
+        assert self._run(
+            sync_bot_prs, monkeypatch, prd_path, [make_pr()], ["--dry-run"]) == 0
+        assert read_json(prd_path)["stories"] == []
+
+    def test_existing_stories_untouched(
+            self, sync_bot_prs, monkeypatch, write_json, read_json):
+        existing = make_story(id="US-001", priority=5, status="merged")
+        prd_path = write_json("prd.json", {"stories": [existing]})
+        self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()])
+        assert read_json(prd_path)["stories"][0] == existing
+
+    def test_ids_continue_from_highest_existing(
+            self, sync_bot_prs, monkeypatch, write_json, read_json):
+        prd_path = write_json(
+            "prd.json", {"stories": [make_story(id="US-330", priority=1027)]})
+        self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()])
+        assert read_json(prd_path)["stories"][1]["id"] == "US-331"
+

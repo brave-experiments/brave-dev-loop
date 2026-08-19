@@ -56,6 +56,14 @@ def check_prd_has_work():
 
 
 @pytest.fixture
+def sync_bot_prs():
+    return _load_module(
+        "sync_bot_prs_to_prd",
+        os.path.join(SCRIPTS_DIR, "sync-bot-prs-to-prd.py"),
+    )
+
+
+@pytest.fixture
 def chunk_best_practices():
     return _load_module(
         "chunk_best_practices",
