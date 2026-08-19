@@ -1,0 +1,140 @@
+{
+  "_comment": "Machine source of truth for the per-pod bug scan. Each entry is ONE scan task (its own cron job + its own subagent). 'paths' and 'exclude' are fnmatch globs matched against repo-relative paths in the target repo (brave-core); note '*' matches '/' too, so 'components/foo/*' matches nested files. Regenerate PODS.md after editing: python3 prepare-scan.py --sync-doc. Verified against brave-browser/src/brave on master.",
+  "target_branch": "master",
+  "pods": [
+    {
+      "id": "ai-chat",
+      "label": "AI Chat / Leo",
+      "paths": ["components/ai_chat/*", "browser/ai_chat/*"],
+      "focus": "Conversation state lifetime, streaming response handling, untrusted model/server output parsing, tab-content extraction, feature-flag gating."
+    },
+    {
+      "id": "wallet-ethereum",
+      "label": "Wallet — Ethereum/EVM",
+      "paths": ["components/brave_wallet/browser/eth_*", "components/brave_wallet/browser/eip*", "components/brave_wallet/browser/ethereum_*"],
+      "focus": "EVM tx construction/signing, ABI decode bounds, nonce/gas math integer over/underflow, RPC response parsing, allowance handling."
+    },
+    {
+      "id": "wallet-solana",
+      "label": "Wallet — Solana",
+      "paths": ["components/brave_wallet/browser/solana*"],
+      "focus": "Instruction/message compilation bounds, account-meta indexing, signature/serialization correctness, untrusted RPC parsing."
+    },
+    {
+      "id": "wallet-bitcoin",
+      "label": "Wallet — Bitcoin",
+      "paths": ["components/brave_wallet/browser/bitcoin/*"],
+      "focus": "UTXO selection/amount math over/underflow, PSBT/tx serialization bounds, key derivation, block-tracker lifetime."
+    },
+    {
+      "id": "wallet-zcash",
+      "label": "Wallet — Zcash",
+      "paths": ["components/brave_wallet/browser/zcash/*"],
+      "focus": "Shielded/transparent tx math, orchard/librustzcash FFI boundary validation, serialization bounds, amount over/underflow."
+    },
+    {
+      "id": "wallet-other-chains",
+      "label": "Wallet — Cardano/Polkadot/Filecoin/internal",
+      "paths": ["components/brave_wallet/browser/cardano/*", "components/brave_wallet/browser/polkadot/*", "components/brave_wallet/browser/internal/*", "components/brave_wallet/browser/filecoin_*", "components/brave_wallet/browser/fil_*"],
+      "focus": "Chain-specific tx/amount math, serialization bounds, FFI/internal boundary validation, key handling."
+    },
+    {
+      "id": "wallet-keyring",
+      "label": "Wallet — Keyring / key management",
+      "paths": ["components/brave_wallet/browser/*keyring*"],
+      "focus": "Seed/private-key lifetime and zeroing, mnemonic handling, keyring migration correctness, unlock/lock state, password handling."
+    },
+    {
+      "id": "wallet-core",
+      "label": "Wallet — Core services & UI",
+      "paths": ["components/brave_wallet/*", "components/brave_wallet_ui/*", "browser/brave_wallet/*"],
+      "exclude": ["components/brave_wallet/browser/eth_*", "components/brave_wallet/browser/eip*", "components/brave_wallet/browser/ethereum_*", "components/brave_wallet/browser/solana*", "components/brave_wallet/browser/bitcoin/*", "components/brave_wallet/browser/zcash/*", "components/brave_wallet/browser/cardano/*", "components/brave_wallet/browser/polkadot/*", "components/brave_wallet/browser/internal/*", "components/brave_wallet/browser/filecoin_*", "components/brave_wallet/browser/fil_*", "components/brave_wallet/browser/*keyring*"],
+      "focus": "Service/factory object lifetime, mojo/IPC validation of renderer-supplied values, asset/price parsing, permission checks, WeakPtr use-after-invalidate."
+    },
+    {
+      "id": "shields",
+      "label": "Shields (content settings, blocking core)",
+      "paths": ["components/brave_shields/*", "browser/brave_shields/*"],
+      "exclude": ["components/brave_shields/core/browser/ad_block_*", "components/brave_shields/core/browser/adblock*", "components/brave_shields/*farbl*", "components/brave_shields/*fingerprint*"],
+      "focus": "Content-settings resolution correctness, per-site rule application, cross-thread access to shields state, null pref/host-content-settings reads."
+    },
+    {
+      "id": "adblock",
+      "label": "Adblock component",
+      "paths": ["components/brave_shields/core/browser/ad_block_*", "components/brave_shields/core/browser/adblock*", "components/brave_adblock_ui/*", "components/brave_shields/content/*ad_block*"],
+      "focus": "Filter-list provider lifetime, component/DAT loading and parsing bounds, engine update races, untrusted rule/resource parsing."
+    },
+    {
+      "id": "fingerprinting",
+      "label": "Fingerprinting protection (farbling)",
+      "paths": ["components/script_injector/*", "components/brave_shields/*farbl*", "components/brave_shields/*fingerprint*"],
+      "focus": "Farbling seed derivation, script injection into untrusted frames, per-origin randomization consistency, renderer-side value validation."
+    },
+    {
+      "id": "sync",
+      "label": "Sync",
+      "paths": ["components/brave_sync/*", "components/sync/*", "components/sync_device_info/*", "components/sync_preferences/*", "browser/sync/*"],
+      "focus": "Sync record encode/decode of untrusted server data, crypto/nudge handling, device-info lifetime, cross-sequence access, migration correctness."
+    },
+    {
+      "id": "vpn",
+      "label": "VPN",
+      "paths": ["components/brave_vpn/*", "browser/brave_vpn/*"],
+      "focus": "Connection state machine correctness, credential/subscription handling, region-list parsing of server data, connection-observer lifetime."
+    },
+    {
+      "id": "talk",
+      "label": "Talk",
+      "paths": ["components/brave_talk/*", "components/brave_new_tab_ui/components/default/braveTalk/*", "ios/browser/brave_talk/*"],
+      "focus": "Talk integration/launch flow, message-handler input validation, native-JS bridge value validation."
+    },
+    {
+      "id": "talk-premium",
+      "label": "Talk Premium / SKUs entitlement",
+      "paths": ["components/skus/*", "browser/skus/*"],
+      "focus": "SKU/entitlement verification that gates Talk & VPN premium, credential/order-state parsing of server responses, expiry math, replay/forgery of entitlement state."
+    },
+    {
+      "id": "news",
+      "label": "News",
+      "paths": ["components/brave_news/*", "browser/brave_news/*"],
+      "focus": "Feed/publisher parsing of untrusted network data, image/URL handling, feed-controller lifetime, cross-thread feed updates."
+    },
+    {
+      "id": "sidebar",
+      "label": "Sidebar",
+      "paths": ["components/sidebar/*", "browser/ui/sidebar/*"],
+      "focus": "Sidebar item model lifetime vs UI, tab/browser observer teardown, null browser/webcontents reads, item ordering correctness."
+    },
+    {
+      "id": "speedreader",
+      "label": "Speedreader",
+      "paths": ["components/speedreader/*", "browser/speedreader/*"],
+      "focus": "Distillation of untrusted page content, throttle/delegate lifetime, renderer boundary validation, null document reads."
+    },
+    {
+      "id": "tor",
+      "label": "Tor",
+      "paths": ["components/tor/*", "browser/tor/*"],
+      "focus": "Tor process/launcher lifetime, control-port parsing, proxy config correctness, profile teardown, leaking identifiers across sessions."
+    },
+    {
+      "id": "wayback-machine",
+      "label": "Wayback Machine",
+      "paths": ["components/brave_wayback_machine/*"],
+      "focus": "Wayback API response parsing, infobar/delegate lifetime vs webcontents, null response handling, URL validation."
+    },
+    {
+      "id": "web-discovery",
+      "label": "Web Discovery",
+      "paths": ["components/web_discovery/*", "browser/web_discovery/*"],
+      "focus": "Untrusted page/content extraction and reporting, anonymization/hashing correctness, scheduler/observer lifetime, PII leakage in payloads."
+    },
+    {
+      "id": "email-aliases",
+      "label": "Email Aliases",
+      "paths": ["components/email_aliases/*", "browser/email_aliases/*"],
+      "focus": "Alias service state, server-response parsing, auth/session handling, mojo/IPC validation, alias-list lifetime."
+    }
+  ]
+}
