@@ -790,3 +790,20 @@ class TestSyncBotPrsMain:
         self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()])
         assert read_json(prd_path)["stories"][1]["id"] == "US-331"
 
+
+class TestSelectTaskCandidateSummary:
+    def test_includes_pr_number(self, select_task):
+        line = select_task.candidate_summary([make_story(prNumber=38869)])
+        assert "PR #38869" in line
+
+    def test_includes_issue_number_from_description(self, select_task):
+        story = make_story(description="Fix the failure in Foo.Bar (issue #56971).")
+        assert "issue #56971" in select_task.candidate_summary([story])
+
+    def test_omits_refs_when_absent(self, select_task):
+        line = select_task.candidate_summary([make_story(id="US-001", priority=1)])
+        assert line == '- US-001: "Story US-001" (status: pending, priority: 1)'
+
+    def test_one_line_per_candidate(self, select_task):
+        stories = [make_story(id="US-001"), make_story(id="US-002")]
+        assert len(select_task.candidate_summary(stories).splitlines()) == 2

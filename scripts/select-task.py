@@ -179,15 +179,31 @@ def filter_stories(stories, run_state):
     return candidates
 
 
-def llm_select(candidates, extra_prompt, claude_bin="claude"):
-    """Use Claude CLI (haiku) to interpret extra_prompt and select a story."""
+def candidate_summary(candidates):
+    """One line per candidate for the LLM selector.
+
+    Includes the PR and issue numbers so a bare number in the user's request
+    ("./run.sh tui 38869") can be matched — a story's title never contains them.
+    """
     summary_lines = []
     for s in candidates:
+        refs = ""
+        pr_number = s.get("prNumber")
+        if pr_number:
+            refs += f", PR #{pr_number}"
+        issue_match = re.search(r"issue #(\d+)", s.get("description") or "")
+        if issue_match:
+            refs += f", issue #{issue_match.group(1)}"
         summary_lines.append(
             f'- {s.get("id")}: "{s.get("title")}" '
-            f"(status: {s.get('status')}, priority: {s.get('priority')})"
+            f"(status: {s.get('status')}, priority: {s.get('priority')}{refs})"
         )
-    summary = "\n".join(summary_lines)
+    return "\n".join(summary_lines)
+
+
+def llm_select(candidates, extra_prompt, claude_bin="claude"):
+    """Use Claude CLI (haiku) to interpret extra_prompt and select a story."""
+    summary = candidate_summary(candidates)
 
     prompt = (
         f"Given these candidate stories:\n{summary}\n\n"
@@ -327,6 +343,12 @@ def main():
         if llm_choice:
             selected = next(
                 (s for s in all_active if s.get("id") == llm_choice), None
+            )
+        if not selected:
+            print(
+                f"WARNING: could not match extra prompt {args.extra_prompt!r} to a "
+                f"story; falling back to deterministic tier selection",
+                file=sys.stderr,
             )
 
     # Fall back to deterministic tier-based selection
