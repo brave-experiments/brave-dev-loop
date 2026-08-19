@@ -240,6 +240,13 @@ If changes were made to best practices files, commit them and create a PR so the
    ```bash
    cd $BOT_DIR
    ```
+7. **Track the PR in the PRD** so the normal `pushed` workflow keeps reviewing,
+   rebasing, and landing it. A PR with no story is invisible to `run.sh` and
+   stalls open forever:
+   ```bash
+   python3 $BOT_DIR/scripts/sync-bot-prs-to-prd.py --pr <pr-number>
+   ```
+   Report the story ID it prints in the recap.
 
 If no changes were made, skip this step entirely.
 

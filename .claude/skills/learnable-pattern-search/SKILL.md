@@ -226,6 +226,17 @@ EOF
 )"
 ```
 
+Then track the new PR in the PRD so the normal `pushed` workflow keeps
+reviewing, rebasing, and landing it. A PR with no story is invisible to
+`run.sh`/`select-task.py` and stalls open forever:
+
+```bash
+cd $BOT_DIR
+python3 $BOT_DIR/scripts/sync-bot-prs-to-prd.py --pr <pr-number>
+```
+
+Report the story ID it prints alongside the PR link in the recap.
+
 ### What NOT to Do in Self-Review Mode
 
 - Do NOT re-post or re-raise any of the bot's original comments
@@ -325,6 +336,7 @@ For self-review mode adjustments:
 - **Always create a branch and PR** (see "Creating Best Practice PRs" in the Self-Review section above) — do NOT commit directly to master
 - The branch must be based on `origin/master`
 - Keep changes minimal and focused — one PR per rule adjustment
+- **Always track the PR in the PRD** with `scripts/sync-bot-prs-to-prd.py --pr <pr-number>` after creating it
 
 ---
 

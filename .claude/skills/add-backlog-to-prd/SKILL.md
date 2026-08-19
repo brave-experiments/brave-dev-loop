@@ -72,6 +72,27 @@ If `./data/prd.json` doesn't exist yet, the script creates a new PRD. If it alre
 
 ---
 
+## Step 3b: Sync Untracked Bot PRs
+
+Some cron skills (`learnable-pattern-search`, `update-best-practices`) open PRs
+directly against the PR repository without creating a story. Those PRs are
+invisible to `run.sh`/`select-task.py`, so nothing ever responds to reviews,
+rebases them, or nudges them toward a merge. Catch any that slipped through:
+
+```bash
+python3 ./scripts/sync-bot-prs-to-prd.py
+```
+
+The script fetches every open PR authored by `bot.username` in
+`project.prRepository`, skips ones already referenced by a story (in
+`data/prd.json` *or* `data/prd.archived.json`), skips drafts, and appends the
+rest as `pushed` stories. It never modifies existing stories. Use `--dry-run`
+first if you want to see what it would add.
+
+Include anything it added in the recap below.
+
+---
+
 ## Step 4: Provide Recap
 
 Generate a comprehensive recap showing:
@@ -90,7 +111,10 @@ Generate a comprehensive recap showing:
    - Skipped
    - Invalid
 
-3. **Total PRD Statistics**:
+3. **Untracked Bot PRs Added** (from Step 3b): US-XXX, PR number, and PR title
+   for each one
+
+4. **Total PRD Statistics**:
    - Total count before and after
    - Count by status
 
@@ -148,7 +172,7 @@ Successfully fetched 15 open issues assigned to the bot and added 7 missing issu
 - Test issues include a best_practices.md read step in acceptance criteria; the path is derived from `bestPractices.docsDir` + `bestPractices.indexFile` in `config.json` (e.g. `../src/brave/docs/best_practices.md`)
 - Test type determination is critical for generating correct test commands
 - Priority numbers must be sequential and not conflict with existing ones
-- All new stories start in "pending" status
+- All new issue-derived stories start in "pending" status; PR-derived stories from Step 3b start in "pushed" status because their PR already exists
 
 ---
 
