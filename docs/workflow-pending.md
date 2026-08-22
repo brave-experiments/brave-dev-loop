@@ -416,6 +416,50 @@ The goal is to avoid infinite loops on impossible tasks while still giving suffi
 - If you cannot understand the root cause with high confidence, keep the story as `status: "pending"` and document why
 - Temporary hacks or arbitrary timing adjustments are NOT acceptable solutions
 
+### Never Assert Upstream Behaviour Without Checking the Pinned Revision
+
+"Upstream does X" is a **factual claim about a specific Chromium revision**, and reviewers
+check it. Do not write one — in a PR description, a commit message, or a code comment —
+unless you have just read the file at the revision `master` actually pins. This applies
+especially to claims used to *justify* a fix, because a false premise invalidates the whole
+approach, not just one sentence.
+
+The claim is only as good as the revision it came from:
+
+```bash
+# 1. The tag master pins. NOT the local ../src checkout, which is routinely stale.
+cd <targetRepoPath> && git fetch upstream --quiet
+TAG=$(git show upstream/master:package.json \
+      | python3 -c "import json,sys; print(json.load(sys.stdin)['config']['projects']['chrome']['tag'])")
+
+# 2. Read the actual file at that tag.
+curl -s "https://chromium.googlesource.com/chromium/src.git/+/refs/tags/$TAG/<path>?format=TEXT" \
+  | base64 -d | grep -n "DISABLED_\|MAYBE_\|crbug.com/\|BUILDFLAG(IS_"
+```
+
+Rules:
+
+- **Quote what you actually saw**, with the tag you saw it at — "verified at 152.0.7977.42:
+  only `PerformOCRLargeImage` is guarded, under crbug.com/509294498". Vague summaries like
+  "upstream disables most of these on Linux" are where fabrication hides.
+- **A crbug number is a citation. Verify it resolves in the tree** (`git grep <number>` at
+  that revision). A plausible-looking bug ID that appears nowhere is a fabrication.
+- **Check whether a guard is actually ours.** Before calling a `DISABLED_`/`MAYBE_` guard
+  "upstream's", blame it: `git log -1 -S "<crbug-number>" upstream/master -- <file>`. Brave's
+  own past disables sit in Brave files and read exactly like upstream ones.
+- **If the claim collapses, re-examine the fix, not just the wording.** When the justification
+  was "upstream needed this workaround too", losing that means the approach itself needs
+  rethinking. Do not quietly reword the description and keep the code.
+- The same false claim usually exists in **more than one place** — description, commit message,
+  and code comments. Grep the branch for the bug number and fix every copy.
+
+Real failure this rule exists to prevent: PR #38603 justified a `GTEST_SKIP()` with "upstream
+disables its own OCR browser tests on Linux and Mac (crbug.com/470431038)". A reviewer checked:
+`470431038` appears nowhere in the tree, the `PDFSearchifyTest` cases named were not disabled at
+all, the one real guard cited a different bug, and the `crbug.com/406839385` also cited was
+Brave's own Mac disable from #34457. Upstream ran those tests on Linux unguarded — the exact
+opposite of the claim — which removed the entire basis for the fix and cost a review round trip.
+
 ## Update CLAUDE.md Files
 
 Before committing, check if any edited files have learnings worth preserving in nearby CLAUDE.md files:
