@@ -44,10 +44,13 @@ def run(cmd, cwd=None, check=True, capture=True):
 def load_config():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     bot_dir = os.path.realpath(os.path.join(script_dir, "..", "..", ".."))
+    sys.path.insert(0, os.path.join(bot_dir, "scripts"))
+    from lib.load_config import resolve_target_repo
+
     with open(os.path.join(bot_dir, "config.json")) as f:
         cfg = json.load(f)
     proj = cfg["project"]
-    target = os.path.realpath(os.path.join(bot_dir, proj["targetRepoPath"]))
+    target = resolve_target_repo(cfg, bot_dir)
     return {
         "bot": cfg["bot"]["username"],
         "pr_repo": proj["prRepository"],

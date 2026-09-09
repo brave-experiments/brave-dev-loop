@@ -32,7 +32,12 @@ sys.path.insert(0, _SCRIPT_DIR)
 
 import importlib.util
 
-from lib.load_config import load_config, require_config
+from lib.load_config import (
+    load_config,
+    require_config,
+    resolve_docs_dir,
+    resolve_target_repo,
+)
 
 # Import fetch-prs functions (the module uses if __name__ guard)
 _fp_spec = importlib.util.spec_from_file_location(
@@ -60,16 +65,16 @@ _ei_spec.loader.exec_module(_ei_mod)
 # ---------------------------------------------------------------------------
 _config = load_config()
 PR_REPO = require_config(_config, "project.prRepository")
-BP_DOCS_DIR = require_config(_config, "bestPractices.docsDir")
+require_config(_config, "bestPractices.docsDir")
+BP_DOCS_DIR = resolve_docs_dir(_config, _BOT_DIR)
 ORG_MEMBERS_PATH = os.path.join(_BOT_DIR, ".ignore", "org-members.txt")
 TRUSTED_REVIEWERS_PATH = os.path.join(_BOT_DIR, "scripts", "trusted-reviewers.txt")
 CACHE_PATH = os.path.join(_BOT_DIR, ".ignore", "review-prs-cache.json")
 DEFAULT_BRANCH = require_config(_config, "project.defaultBranch")
-BP_DIR = os.path.join(_BOT_DIR, BP_DOCS_DIR, "best-practices")
+BP_DIR = os.path.join(BP_DOCS_DIR, "best-practices")
 BP_LINK_BASE = f"https://github.com/{PR_REPO}/tree/{DEFAULT_BRANCH}/docs/best-practices"
-TARGET_REPO_PATH = os.path.normpath(
-    os.path.join(_BOT_DIR, require_config(_config, "project.targetRepoPath"))
-)
+require_config(_config, "project.targetRepoPath")
+TARGET_REPO_PATH = resolve_target_repo(_config, _BOT_DIR)
 
 
 def log(msg):

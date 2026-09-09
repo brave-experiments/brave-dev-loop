@@ -8,10 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCKFILE="$SCRIPT_DIR/.run.lock"
 source "$SCRIPT_DIR/scripts/lib/load-config.sh"
 
-GIT_REPO="${BOT_TARGET_REPO_PATH:-}"
-if [[ "$GIT_REPO" != /* ]]; then
-  GIT_REPO="$(cd "$SCRIPT_DIR/.." && pwd)/$GIT_REPO"
-fi
+GIT_REPO="$BOT_TARGET_REPO_DIR"
 
 # Recursively kill a process and all its descendants (leaf-first)
 kill_tree() {
@@ -70,6 +67,7 @@ fi
 cd "$GIT_REPO"
 git stash --include-untracked 2>/dev/null || true
 git checkout "$BOT_DEFAULT_BRANCH"
+
 git fetch upstream
 git reset --hard "upstream/$BOT_DEFAULT_BRANCH"
 
