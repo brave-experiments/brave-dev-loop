@@ -671,12 +671,13 @@ class TestSyncBotPrsTracking:
 
 class TestSyncBotPrsLinkedIssue:
     def test_closing_keyword_with_issue_repo(self, sync_bot_prs):
-        pr = make_pr(body="Fixes brave/brave-browser#57147")
+        pr = make_pr(body=f"Fixes {sync_bot_prs._issue_repo}#57147")
         assert sync_bot_prs.linked_issue_number(pr) == 57147
 
     def test_closing_keyword_with_issue_url(self, sync_bot_prs):
         pr = make_pr(
-            body="Resolves https://github.com/brave/brave-browser/issues/57147")
+            body="Resolves https://github.com/"
+                 f"{sync_bot_prs._issue_repo}/issues/57147")
         assert sync_bot_prs.linked_issue_number(pr) == 57147
 
     def test_bare_hash_refers_to_pr_repo_not_issue_repo(self, sync_bot_prs):
@@ -685,7 +686,7 @@ class TestSyncBotPrsLinkedIssue:
         assert sync_bot_prs.linked_issue_number(pr) is None
 
     def test_no_closing_keyword(self, sync_bot_prs):
-        pr = make_pr(body="See brave/brave-browser#57147 for background")
+        pr = make_pr(body=f"See {sync_bot_prs._issue_repo}#57147 for background")
         assert sync_bot_prs.linked_issue_number(pr) is None
 
     def test_empty_body(self, sync_bot_prs):
@@ -734,7 +735,7 @@ class TestSyncBotPrsStory:
         assert sync_bot_prs.build_pr_story(333, 332, make_pr())["lastActivityBy"] == "bot"
 
     def test_linked_issue_uses_dedupe_phrase(self, sync_bot_prs):
-        pr = make_pr(body="Closes brave/brave-browser#57147")
+        pr = make_pr(body=f"Closes {sync_bot_prs._issue_repo}#57147")
         story = sync_bot_prs.build_pr_story(333, 332, pr)
         # add-backlog-to-prd dedupes on this exact phrase.
         assert "issue #57147" in story["description"]
