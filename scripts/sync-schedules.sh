@@ -49,27 +49,27 @@ PATH=$CLAUDE_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bi
 # Main agent run — skip if no actionable stories
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 2x/day
-10 8 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
+10 8 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
 # Weekends: once/day at 14:10
-10 14 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
+10 14 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
 
 # Review PRs — skip if no recent open PRs
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 3x/day
-0 13,20 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
+0 13,20 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
 # Weekends: once/day at noon
-0 12 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
+0 12 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
 
 # Learnable pattern search — skip if no recent merged PRs
 # Gate check runs before git sync to avoid wasted fetches
-0 6 * * * cd $PROJECT_ROOT && source .envrc && ./scripts/check-bot-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh learnable-pattern-search -- $CLAUDE_BIN -p '/learnable-pattern-search 2d' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/learnable-pattern-search-cron.log 2>&1
+0 6 * * * cd $PROJECT_ROOT && source .envrc && ./scripts/check-bot-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh learnable-pattern-search -- $CLAUDE_BIN -p '/learnable-pattern-search 2d' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/learnable-pattern-search-cron.log 2>&1
 
 # Check Signal messages (every 5 min, offset to avoid git lock contention with other jobs)
 # Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)
 1,6,11,16,21,26,31,36,41,46,51,56 * * * * cd $PROJECT_ROOT && source .envrc && ./scripts/check-signal-messages.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh check-signal -- $CLAUDE_BIN -p '/check-signal' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/check-signal-cron.log 2>&1
 
 # Update best practices from upstream Chromium docs (monthly, 1st of each month)
-15 4 1 * * cd $PROJECT_ROOT && source .envrc && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh update-best-practices -- $CLAUDE_BIN -p '/update-best-practices' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/update-best-practices-cron.log 2>&1
+15 4 1 * * cd $PROJECT_ROOT && source .envrc && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh update-best-practices -- $CLAUDE_BIN -p '/update-best-practices' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/update-best-practices-cron.log 2>&1
 
 $(if [ "$SYNC_REPO_ENABLED" = "true" ] && [ -n "$SYNC_REPO_PATH" ]; then
 cat <<SYNC

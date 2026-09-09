@@ -68,8 +68,14 @@ cd "$GIT_REPO"
 git stash --include-untracked 2>/dev/null || true
 git checkout "$BOT_DEFAULT_BRANCH"
 
-git fetch upstream
-git reset --hard "upstream/$BOT_DEFAULT_BRANCH"
+
+# No-fork deployments have no separate upstream remote — sync from origin.
+SYNC_REMOTE=upstream
+if ! git remote get-url upstream >/dev/null 2>&1; then
+  SYNC_REMOTE=origin
+fi
+git fetch "$SYNC_REMOTE"
+git reset --hard "$SYNC_REMOTE/$BOT_DEFAULT_BRANCH"
 
 echo ""
 echo "=== Reset complete. Ready to run ./run.sh ==="
