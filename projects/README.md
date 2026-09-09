@@ -17,6 +17,7 @@ projects/<name>/
 | --- | --- |
 | `validations` | Ordered acceptance-criteria steps every story ends with. `{testStep}` is replaced per story kind, and dropped when the profile defines no test step for that kind. |
 | `testSteps` | Templates for `testFix`, `disabledTest`, and `generic` stories. `{testBinary}` and `{testFilter}` are substituted. |
+| `labels` | Project labels: `pr` (applied to bot PRs) and `disabledTest` (marks an issue as a disabled test). `labels.disabledTestLabel` in `config.json` is honoured as a fallback. |
 | `testTargets` | Maps a suite (`unit`, `browser`) and a location to a test binary. `local` is a test defined in the target repo, `upstream` one inherited from the surrounding checkout. |
 
 **`docs/`** holds the prose. The shared workflow docs keep a one-line pointer

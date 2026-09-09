@@ -14,7 +14,19 @@
     "generic": "Find and run relevant tests to verify the change (must pass)"
   },
   "testTargets": {
-    "unit": { "local": "brave_unit_tests", "upstream": "unit_tests" },
-    "browser": { "local": "brave_browser_tests", "upstream": "browser_tests" }
+    "unit": {
+      "local": "brave_unit_tests",
+      "upstream": "unit_tests"
+    },
+    "browser": {
+      "local": "brave_browser_tests",
+      "upstream": "browser_tests"
+    }
+  },
+  "labels": {
+    "pr": [
+      "ai-generated"
+    ],
+    "disabledTest": "disabled-brave-test"
   }
 }

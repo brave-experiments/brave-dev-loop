@@ -32,6 +32,7 @@ sys.path.insert(0, _script_dir)
 from lib.load_config import (
     best_practices_index,
     build_validations,
+    get_config,
     load_config,
     load_profile,
     require_config,
@@ -115,12 +116,25 @@ def is_test_issue(issue):
     return False
 
 
+def disabled_test_label():
+    """Label marking an issue as a disabled test, or "" when the project has none.
+
+    The profile owns it; `labels.disabledTestLabel` in config.json is honoured
+    as a fallback so deployments that set it by hand keep working.
+    """
+    from_profile = (_profile.get("labels") or {}).get("disabledTest")
+    if from_profile is not None:
+        return from_profile
+    return get_config(_config, "labels.disabledTestLabel", "") or ""
+
+
 def is_disabled_test_issue(issue):
     """Check if an issue is about a disabled test based on title or labels."""
     title = issue["title"].lower()
     if title.startswith("disabled test:"):
         return True
-    if has_label(issue, "disabled-brave-test"):
+    label = disabled_test_label()
+    if label and has_label(issue, label):
         return True
     return False
 

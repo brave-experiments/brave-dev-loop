@@ -46,7 +46,6 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_ISSUE_REPO=$(_prev '.project.issueRepository')
     PREV_BOT_USER=$(_prev '.bot.username')
     PREV_BOT_EMAIL=$(_prev '.bot.email')
-    PREV_LABELS=$(jq -r '(.labels.issueLabels // []) | join(",")' "$CONFIG_FILE" 2>/dev/null)
     PREV_SSH_KEY=$(_prev '.bot.sshKeyPath')
     PREV_GH_ACCOUNT=$(_prev '.bot.ghAccount')
   fi
@@ -111,11 +110,26 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_OWNER_HANDLE="${CFG_OWNER_HANDLE:-$PREV_OWNER_HANDLE}"
 
   echo ""
+  echo "─── Push Layout ───"
+  echo "fork:   the bot pushes branches to its own fork of ${CFG_PR_REPO}."
+  echo "direct: the bot pushes branches straight to ${CFG_PR_REPO}. Requires the"
+  echo "        bot account to have write access there. No fork is created."
+  PREV_USE_FORK=""
+  if [ -f "$CONFIG_FILE" ]; then
+    PREV_USE_FORK=$(jq -r 'if .project.useFork == false then "direct" else "fork" end' "$CONFIG_FILE" 2>/dev/null || echo "")
+  fi
+  read -p "Push layout (fork/direct) [${PREV_USE_FORK:-fork}]: " CFG_LAYOUT
+  CFG_LAYOUT="${CFG_LAYOUT:-${PREV_USE_FORK:-fork}}"
+  if [ "$CFG_LAYOUT" = "direct" ]; then
+    CFG_USE_FORK=false
+  else
+    CFG_USE_FORK=true
+  fi
+
+  echo ""
   echo "─── Bot Identity ───"
   prompt_required CFG_BOT_USER "GitHub username the bot commits as: " "$PREV_BOT_USER"
   prompt_required CFG_BOT_EMAIL "Email for git commits: " "$PREV_BOT_EMAIL"
-  read -p "Issue labels (comma-separated) [${PREV_LABELS:-}]: " CFG_LABELS_RAW
-  CFG_LABELS_RAW="${CFG_LABELS_RAW:-$PREV_LABELS}"
 
   echo ""
   echo "─── SSH Key ───"
@@ -215,7 +229,6 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_BOT_EMAIL="$CFG_BOT_EMAIL" \
   CFG_SSH_KEY="$CFG_SSH_KEY" \
   CFG_GH_ACCOUNT="${PREV_GH_ACCOUNT:-}" \
-  CFG_LABELS_RAW="$CFG_LABELS_RAW" \
   CONFIG_FILE="$CONFIG_FILE" \
   BOT_ROOT="$PROJECT_ROOT" \
   python3 -c "
@@ -226,6 +239,13 @@ def val(name):
 
 target_repo = os.environ['CFG_TARGET_REPO']
 bot_root = os.environ['BOT_ROOT']
+
+existing_labels = {'prLabels': ['ai-generated'], 'issueLabels': [], 'disabledTestLabel': ''}
+try:
+    with open(os.environ['CONFIG_FILE']) as _f:
+        existing_labels = json.load(_f).get('labels') or existing_labels
+except (OSError, ValueError):
+    pass
 
 # Derive docsDir from the *resolved* target repo so it does not depend on which
 # base the operator typed the path against. targetRepoPath is accepted relative
@@ -270,11 +290,10 @@ config = {
         'cursorModel': None,
         'cursorBin': None,
     },
-    'labels': {
-        'prLabels': ['ai-generated'],
-        'issueLabels': [l.strip() for l in os.environ['CFG_LABELS_RAW'].split(',') if l.strip()],
-        'disabledTestLabel': '',
-    },
+    # Labels belong to the project profile (projects/<name>/profile.json), which
+    # is where anything actually reads them from. This block is carried forward
+    # untouched so deployments that set it by hand keep their values.
+    'labels': existing_labels,
     'bestPractices': {
         'docsDir': docs_dir,
         'indexFile': 'best_practices.md',

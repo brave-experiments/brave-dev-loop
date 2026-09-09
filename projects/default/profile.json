@@ -9,5 +9,9 @@
     "disabledTest": "Run the re-enabled test {testFilter} (must pass)",
     "generic": "Find and run relevant tests to verify the change (must pass)"
   },
-  "testTargets": {}
+  "testTargets": {},
+  "labels": {
+    "pr": [],
+    "disabledTest": ""
+  }
 }

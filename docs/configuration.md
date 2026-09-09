@@ -28,8 +28,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `bot.codexBin`: Path to the `codex` binary (`null` = found on PATH)
 - `bot.cursorModel`: Cursor model to use (`null` = account default; overridden by `./run.sh --model` for Cursor runs)
 - `bot.cursorBin`: Path to the `cursor-agent` binary (`null` = found on PATH)
-- `labels.prLabels`: Labels applied to bot-created PRs
-- `labels.issueLabels`: Labels used for backlog issue fetching
+- `labels.*`: legacy. Labels now live in the project profile (`projects/<name>/profile.json`); `labels.disabledTestLabel` is still honoured as a fallback for deployments that set it by hand. See [Project profiles](../projects/README.md)
 - `bestPractices.docsDir`: Path to the docs directory containing best practices (relative to bot dir)
 
 A `config.example.json` template and `config.brave-core.json` reference config are included.
