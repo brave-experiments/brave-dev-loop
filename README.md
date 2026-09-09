@@ -242,7 +242,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `project.prRepository`: PR repository as `owner/repo` (e.g. `brave/brave-core`)
 - `project.issueRepository`: Issue repository as `owner/repo` (e.g. `brave/brave-browser`)
 - `project.defaultBranch`: Default branch for the PR repo (e.g. `master`)
-- `project.targetRepoPath`: Path to the target git repo (relative to parent dir or absolute)
+- `project.targetRepoPath`: Path to the target git repo (relative to the bot dir, to its parent, or absolute — all three resolve)
 - `bot.username`: Bot's GitHub username
 - `bot.email`: Bot's email for git commits
 - `bot.sshKeyPath`: SSH identity the bot pushes with (`null` = this machine's default key). See [Bot Identity Isolation](#bot-identity-isolation)

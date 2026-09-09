@@ -199,6 +199,7 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_GH_ACCOUNT="${PREV_GH_ACCOUNT:-}" \
   CFG_LABELS_RAW="$CFG_LABELS_RAW" \
   CONFIG_FILE="$CONFIG_FILE" \
+  BOT_ROOT="$PROJECT_ROOT" \
   python3 -c "
 import json, os
 
@@ -206,6 +207,24 @@ def val(name):
     return os.environ.get(name) or None
 
 target_repo = os.environ['CFG_TARGET_REPO']
+bot_root = os.environ['BOT_ROOT']
+
+# Derive docsDir from the *resolved* target repo so it does not depend on which
+# base the operator typed the path against. targetRepoPath is accepted relative
+# to the bot dir or to its parent (see resolve_target_repo in load-config.sh);
+# docsDir is always stored relative to the bot dir.
+if os.path.isabs(target_repo):
+    _target_abs = os.path.normpath(target_repo)
+else:
+    _bot_base = os.path.normpath(os.path.join(bot_root, target_repo))
+    _parent_base = os.path.normpath(os.path.join(os.path.dirname(bot_root), target_repo))
+    if os.path.exists(os.path.join(_bot_base, '.git')):
+        _target_abs = _bot_base
+    elif os.path.exists(os.path.join(_parent_base, '.git')):
+        _target_abs = _parent_base
+    else:
+        _target_abs = _bot_base
+docs_dir = os.path.join(os.path.relpath(_target_abs, bot_root), 'docs')
 config = {
     'project': {
         'name': os.environ['CFG_PROJECT_NAME'],
@@ -235,7 +254,7 @@ config = {
         'disabledTestLabel': '',
     },
     'bestPractices': {
-        'docsDir': '../' + target_repo + '/docs',
+        'docsDir': docs_dir,
         'indexFile': 'best_practices.md',
         'securityFile': 'SECURITY.md',
     },
@@ -251,6 +270,15 @@ with open(os.environ['CONFIG_FILE'], 'w') as f:
   echo ""
   echo "✓ Config written to $CONFIG_FILE"
   echo ""
+fi
+
+# ─── Step 1b: Repair paths in an existing config ─────────────────────────────
+#
+# Fixes a docsDir left pointing nowhere by the historical base ambiguity
+# between targetRepoPath consumers. No-op when already correct, so it is safe
+# on every run, wizard or not.
+if [ -f "$CONFIG_FILE" ]; then
+  python3 "$SCRIPT_DIR/repair-config-paths.py" --config "$CONFIG_FILE" --bot-root "$PROJECT_ROOT"
 fi
 
 # Source config (needed for all subsequent steps)
@@ -325,10 +353,8 @@ fi
 
 if [ "$SKIP_GIT" = false ]; then
   GIT_REPO_RAW="$GIT_REPO"
-  # Handle relative paths (relative to the bot directory)
-  if [[ "$GIT_REPO" != /* ]]; then
-    GIT_REPO="$PROJECT_ROOT/$GIT_REPO"
-  fi
+  # Accepts a path relative to the bot dir or to its parent, or an absolute one.
+  GIT_REPO="$(resolve_target_repo "$GIT_REPO")"
 
   if [ ! -d "$GIT_REPO/.git" ]; then
     echo "⚠️  $GIT_REPO is not a git repository — skipping target repo setup."

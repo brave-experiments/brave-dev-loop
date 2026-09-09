@@ -29,31 +29,25 @@ import sys
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
-from lib.load_config import get_config, load_config, require_config
+from lib.load_config import (
+    best_practices_index,
+    load_config,
+    require_config,
+    resolve_target_repo,
+)
 
 _config = load_config()
 _issue_repo = require_config(_config, "project.issueRepository")
 _bot_user = require_config(_config, "bot.username")
 _project_name = require_config(_config, "project.name")
-_bp_docs_dir = get_config(_config, "bestPractices.docsDir", ".")
-_bp_index_file = get_config(_config, "bestPractices.indexFile", "best_practices.md")
-_best_practices_path = os.path.join(_bp_docs_dir, _bp_index_file)
+_best_practices_path = best_practices_index(_config, _bot_dir)
 
 ISSUE_FIELDS = "number,title,url,labels"
 
 
 def target_repo_dir():
-    """Absolute path of the target repo, or None when it isn't configured.
-
-    Relative `project.targetRepoPath` values resolve against the bot repo's
-    parent directory, the same way run.sh resolves them.
-    """
-    path = get_config(_config, "project.targetRepoPath", "")
-    if not path:
-        return None
-    if not os.path.isabs(path):
-        path = os.path.join(os.path.dirname(_bot_dir), path)
-    return os.path.normpath(path)
+    """Absolute path of the target repo, or None when it isn't configured."""
+    return resolve_target_repo(_config, _bot_dir)
 
 
 def find_test_location(test_class_name):

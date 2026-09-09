@@ -29,12 +29,12 @@ BOT_DIR = os.path.join(SCRIPT_DIR, "..", "..", "..")
 BOT_DIR = os.path.normpath(BOT_DIR)
 
 sys.path.insert(0, os.path.join(BOT_DIR, "scripts"))
-from lib.load_config import load_config, require_config
+from lib.load_config import load_config, require_config, resolve_docs_dir
 
 CACHE_PATH = os.path.join(BOT_DIR, ".ignore", "review-prs-cache.json")
 _config = load_config()
-_BP_DOCS_DIR = require_config(_config, "bestPractices.docsDir")
-_BP_BASE = os.path.normpath(os.path.join(BOT_DIR, _BP_DOCS_DIR, ".."))
+require_config(_config, "bestPractices.docsDir")
+_BP_BASE = os.path.dirname(resolve_docs_dir(_config, BOT_DIR))
 MANAGE_BP_IDS = os.path.join(_BP_BASE, "script", "manage-bp-ids.py")
 CHECK_CAN_APPROVE = os.path.join(BOT_DIR, "scripts", "check-can-approve.py")
 UPDATE_CACHE = os.path.join(SCRIPT_DIR, "update-cache.py")

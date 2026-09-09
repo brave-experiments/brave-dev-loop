@@ -112,14 +112,16 @@ LOGS_DIR="$SCRIPT_DIR/logs"
 RUN_STATE_FILE="$SCRIPT_DIR/data/run-state.json"
 
 # Resolve target repo path from config.json (required)
-GIT_REPO="${BOT_TARGET_REPO_PATH:-}"
-if [ -z "$GIT_REPO" ]; then
+if [ -z "${BOT_TARGET_REPO_PATH:-}" ]; then
   echo "Error: project.targetRepoPath not set in config.json"
   exit 1
 fi
-if [[ "$GIT_REPO" != /* ]]; then
-  PARENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-  GIT_REPO="$PARENT_ROOT/$GIT_REPO"
+GIT_REPO="$BOT_TARGET_REPO_DIR"
+if [ ! -e "$GIT_REPO/.git" ]; then
+  echo "Error: project.targetRepoPath '$BOT_TARGET_REPO_PATH' does not resolve to a git repo."
+  echo "  Tried: $SCRIPT_DIR/$BOT_TARGET_REPO_PATH"
+  echo "     and $(dirname "$SCRIPT_DIR")/$BOT_TARGET_REPO_PATH"
+  exit 1
 fi
 
 # Function to switch back to master branch on exit

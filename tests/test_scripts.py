@@ -1369,3 +1369,196 @@ class TestAddBacklogEndToEnd:
         prd = read_json(prd_path)
         assert prd["projectName"].endswith("Backlog")
         assert len(prd["stories"]) == 1
+
+
+class TestResolveTargetRepo:
+    """project.targetRepoPath is stored against two different bases in the
+    wild: config.brave-core.json uses "src/brave" (relative to the bot dir's
+    parent) while the setup wizard documents a bot-dir-relative path. Both
+    must keep resolving, and the shell and Python resolvers must agree."""
+
+    @staticmethod
+    def _resolver():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import resolve_target_repo
+
+        return resolve_target_repo
+
+    @staticmethod
+    def _layout(root, target_rel):
+        """Create <root>/brave-dev-bot and a git repo at <root>/<target_rel>."""
+        bot = os.path.join(root, "brave-dev-bot")
+        target = os.path.join(root, target_rel)
+        os.makedirs(os.path.join(target, ".git"))
+        os.makedirs(bot, exist_ok=True)
+        return bot, target
+
+    def _sh_resolve(self, bot_dir, raw_path):
+        """Run the bash resolver so both implementations stay in sync."""
+        os.makedirs(os.path.join(bot_dir, "scripts", "lib"), exist_ok=True)
+        src = os.path.join(SCRIPT_DIR, "lib", "load-config.sh")
+        dst = os.path.join(bot_dir, "scripts", "lib", "load-config.sh")
+        with open(src) as f:
+            contents = f.read()
+        with open(dst, "w") as f:
+            f.write(contents)
+        with open(os.path.join(bot_dir, "config.json"), "w") as f:
+            json.dump(
+                {
+                    "project": {
+                        "name": "p",
+                        "org": "o",
+                        "prRepository": "o/p",
+                        "issueRepository": "o/p",
+                        "targetRepoPath": raw_path,
+                    },
+                    "bot": {"username": "b"},
+                },
+                f,
+            )
+        probe = os.path.join(bot_dir, "probe.sh")
+        with open(probe, "w") as f:
+            f.write(
+                '#!/bin/bash\nsource "$(dirname "$0")/scripts/lib/load-config.sh"\n'
+                'printf "%s" "$BOT_TARGET_REPO_DIR"\n'
+            )
+        os.chmod(probe, 0o755)
+        return subprocess.run(
+            [probe], capture_output=True, text=True, check=True
+        ).stdout
+
+    def test_parent_relative_brave_core_layout(self, tmp_dir):
+        """ "src/brave" next to the bot dir — the shipped brave-core spelling."""
+        bot, target = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {"project": {"targetRepoPath": "src/brave"}}
+        assert self._resolver()(cfg, bot) == target
+
+    def test_bot_relative_layout(self, tmp_dir):
+        """ "../sibling" relative to the bot dir — what the wizard documents."""
+        bot, target = self._layout(tmp_dir, "sibling")
+        cfg = {"project": {"targetRepoPath": "../sibling"}}
+        assert self._resolver()(cfg, bot) == target
+
+    def test_absolute_path_passthrough(self):
+        cfg = {"project": {"targetRepoPath": "/abs/target"}}
+        assert self._resolver()(cfg, "/bot") == "/abs/target"
+
+    def test_unset_returns_none(self):
+        assert self._resolver()({}, "/bot") is None
+
+    def test_missing_repo_falls_back_to_documented_base(self, tmp_dir):
+        """Neither base exists — return the bot-dir base so errors read sanely."""
+        bot = os.path.join(tmp_dir, "brave-dev-bot")
+        os.makedirs(bot)
+        cfg = {"project": {"targetRepoPath": "nope"}}
+        assert self._resolver()(cfg, bot) == os.path.join(bot, "nope")
+
+    def test_shell_and_python_agree_parent_base(self, tmp_dir):
+        bot, target = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {"project": {"targetRepoPath": "src/brave"}}
+        assert self._sh_resolve(bot, "src/brave") == target
+        assert self._resolver()(cfg, bot) == target
+
+    def test_shell_and_python_agree_bot_base(self, tmp_dir):
+        bot, target = self._layout(tmp_dir, "sibling")
+        cfg = {"project": {"targetRepoPath": "../sibling"}}
+        assert self._sh_resolve(bot, "../sibling") == target
+        assert self._resolver()(cfg, bot) == target
+
+
+# ── repair-config-paths.py ───────────────────────────────────────────────────
+
+
+class TestRepairConfigPaths:
+    """`make setup` repairs a docsDir left pointing nowhere by the historical
+    targetRepoPath base ambiguity. Must be a no-op on healthy configs."""
+
+    @staticmethod
+    def _layout(root, target_rel, docs=True):
+        bot = os.path.join(root, "brave-dev-bot")
+        target = os.path.join(root, target_rel)
+        os.makedirs(os.path.join(target, ".git"))
+        if docs:
+            os.makedirs(os.path.join(target, "docs"))
+        os.makedirs(bot, exist_ok=True)
+        return bot, target
+
+    def test_repairs_broken_docs_dir(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {
+            "project": {"targetRepoPath": "src/brave"},
+            "bestPractices": {"docsDir": "../../src/brave/docs"},
+        }
+        fixed, old = repair_config_paths.repair(cfg, bot)
+        assert fixed == os.path.join("..", "src", "brave", "docs")
+        assert old == "../../src/brave/docs"
+        assert cfg["bestPractices"]["docsDir"] == fixed
+
+    def test_noop_when_docs_dir_already_resolves(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {
+            "project": {"targetRepoPath": "src/brave"},
+            "bestPractices": {"docsDir": "../src/brave/docs"},
+        }
+        fixed, reason = repair_config_paths.repair(cfg, bot)
+        assert fixed is None
+        assert reason == "already resolves"
+        assert cfg["bestPractices"]["docsDir"] == "../src/brave/docs"
+
+    def test_noop_when_target_repo_missing(self, repair_config_paths, tmp_dir):
+        bot = os.path.join(tmp_dir, "brave-dev-bot")
+        os.makedirs(bot)
+        cfg = {
+            "project": {"targetRepoPath": "nowhere"},
+            "bestPractices": {"docsDir": "../../nope/docs"},
+        }
+        fixed, reason = repair_config_paths.repair(cfg, bot)
+        assert fixed is None
+        assert reason == "target repo not found"
+        assert cfg["bestPractices"]["docsDir"] == "../../nope/docs"
+
+    def test_repairs_bot_relative_layout(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, "sibling")
+        cfg = {
+            "project": {"targetRepoPath": "../sibling"},
+            "bestPractices": {"docsDir": "../../sibling/docs"},
+        }
+        fixed, _ = repair_config_paths.repair(cfg, bot)
+        assert fixed == os.path.join("..", "sibling", "docs")
+
+    def test_idempotent_across_two_runs(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {
+            "project": {"targetRepoPath": "src/brave"},
+            "bestPractices": {"docsDir": "../../src/brave/docs"},
+        }
+        first, _ = repair_config_paths.repair(cfg, bot)
+        second, reason = repair_config_paths.repair(cfg, bot)
+        assert second is None and reason == "already resolves"
+        assert cfg["bestPractices"]["docsDir"] == first
+
+    def test_writes_valid_json_end_to_end(self, repair_config_paths, tmp_dir):
+        """Guards the inline-python-in-bash escaping bug this was extracted from."""
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        config_path = os.path.join(bot, "config.json")
+        with open(config_path, "w") as f:
+            json.dump(
+                {
+                    "project": {"targetRepoPath": "src/brave"},
+                    "bestPractices": {"docsDir": "../../src/brave/docs"},
+                },
+                f,
+            )
+        script = os.path.join(SCRIPT_DIR, "repair-config-paths.py")
+        for _ in range(2):
+            res = subprocess.run(
+                [sys.executable, script, "--config", config_path, "--bot-root", bot],
+                capture_output=True,
+                text=True,
+            )
+            assert res.returncode == 0, res.stderr
+            with open(config_path) as f:
+                reloaded = json.load(f)
+        assert reloaded["bestPractices"]["docsDir"] == os.path.join(
+            "..", "src", "brave", "docs"
+        )
