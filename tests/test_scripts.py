@@ -1720,3 +1720,59 @@ class TestProfileLoading:
         blob = json.dumps(profile).lower()
         for term in ("pnpm", "gtest", "chromium", "brave", "presubmit"):
             assert term not in blob, f"default profile leaks {term!r}"
+
+
+class TestPrdMode:
+    """The PRD is either authored (curated) or a cache the bot refreshes from
+    GitHub (auto). Defaulting matters: deployments predating the key treat
+    their PRD as authored input and must keep doing so."""
+
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        import lib.load_config as m
+
+        return m
+
+    def test_absent_key_defaults_to_curated(self):
+        assert self._lib().prd_mode({}) == "curated"
+
+    def test_explicit_auto(self):
+        assert self._lib().prd_mode({"project": {"prdMode": "auto"}}) == "auto"
+
+    def test_seed_prd_has_no_placeholder_story(self):
+        """A seeded placeholder gets picked up as real work on a bot's first run."""
+        path = os.path.join(
+            os.path.dirname(__file__), os.pardir, "data", "prd.example.json"
+        )
+        with open(path) as f:
+            assert json.load(f)["stories"] == []
+
+    def test_refresh_is_a_noop_in_curated_mode(self, tmp_dir):
+        """Curated PRDs must never be rewritten from GitHub behind the operator."""
+        script = os.path.join(SCRIPT_DIR, "refresh-prd-cache.sh")
+        with open(script) as f:
+            body = f.read()
+        assert 'if [ "$BOT_PRD_MODE" != "auto" ]; then' in body
+        assert body.index('if [ "$BOT_PRD_MODE" != "auto" ]; then') < body.index(
+            "add-backlog-to-prd.py"
+        )
+
+    def test_refresh_starts_no_agent(self):
+        """The whole point: keeping the PRD current must cost no tokens."""
+        for name in (
+            "refresh-prd-cache.sh",
+            "add-backlog-to-prd.py",
+            "sync-bot-prs-to-prd.py",
+        ):
+            with open(os.path.join(SCRIPT_DIR, name)) as f:
+                body = f.read()
+            assert "CLAUDE_BIN" not in body, name
+            assert "claude -p" not in body, name
+
+    def test_cron_backlog_job_starts_no_agent(self):
+        """This job used to spend a whole agent session on a deterministic sync."""
+        with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
+            body = f.read()
+        assert "add-backlog -- ./scripts/refresh-prd-cache.sh" in body
+        assert "/add-backlog-to-prd'" not in body

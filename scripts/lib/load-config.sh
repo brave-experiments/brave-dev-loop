@@ -93,6 +93,10 @@ BOT_PR_REPO=$(bot_config '.project.prRepository')
 BOT_ISSUE_REPO=$(bot_config '.project.issueRepository')
 BOT_DEFAULT_BRANCH=$(bot_config '.project.defaultBranch')
 BOT_TARGET_REPO_PATH=$(bot_config '.project.targetRepoPath')
+# 'curated' (default) — stories are authored and the PRD is the source of
+# truth. 'auto' — the PRD is a cache the bot refreshes from GitHub itself.
+BOT_PRD_MODE=$(bot_config '.project.prdMode')
+BOT_PRD_MODE="${BOT_PRD_MODE:-curated}"
 
 BOT_USERNAME=$(bot_config '.bot.username')
 BOT_EMAIL=$(bot_config '.bot.email')
@@ -161,7 +165,7 @@ if [ -z "$BOT_GH_ACCOUNT" ]; then
 fi
 
 export BOT_DIR BOT_CONFIG_FILE
-export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BOT_TARGET_REPO_PATH BOT_TARGET_REPO_DIR
+export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BOT_TARGET_REPO_PATH BOT_TARGET_REPO_DIR BOT_PRD_MODE
 export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
 export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS

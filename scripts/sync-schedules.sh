@@ -39,12 +39,15 @@ CRON_JOBS=$(cat <<EOF
 SHELL=/bin/bash
 PATH=$CLAUDE_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 
-# Add backlog to PRD (before first run.sh) — skip if no prd.json
+# Refresh the PRD cache / backlog before the first run.sh of the day.
+# Runs the deterministic sync scripts directly: no agent session, no tokens.
+# In prdMode "auto" run.sh refreshes the cache itself too, so this is only a
+# head start, not a requirement.
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 1x/day
-45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- $CLAUDE_BIN -p '/add-backlog-to-prd' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 # Weekends: once/day (before run.sh)
-45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- $CLAUDE_BIN -p '/add-backlog-to-prd' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 
 # Main agent run — skip if no actionable stories
 # Gate check runs before git sync to avoid wasted fetches
@@ -100,11 +103,11 @@ echo ""
 echo "Current schedule:"
 echo "  Weekdays (Mon-Fri):"
 echo "    08:10 - run.sh (3 iterations)"
-echo "    07:45 - /add-backlog-to-prd"
+echo "    07:45 - PRD/backlog sync (no agent)"
 echo "    13:00, 20:00 - /review-prs"
 echo "  Weekends (Sat-Sun):"
 echo "    14:10 - run.sh (3 iterations)"
-echo "    11:45 - /add-backlog-to-prd"
+echo "    11:45 - PRD/backlog sync (no agent)"
 echo "    12:00 - /review-prs"
 echo "  Daily:"
 echo "    06:00 - /learnable-pattern-search"

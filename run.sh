@@ -179,6 +179,10 @@ fi
 echo "Resetting run state for fresh start..."
 "$SCRIPT_DIR/scripts/reset-run-state.sh"
 
+# In auto mode the PRD is a cache — rebuild it from GitHub before selecting a
+# task. Plain Python against the API; no agent is started, so this costs nothing.
+"$SCRIPT_DIR/scripts/refresh-prd-cache.sh"
+
 # Track both loop count (for max iterations) and work iterations (actual state changes)
 loop_count=0
 work_iteration=0
