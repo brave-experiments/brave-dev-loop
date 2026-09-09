@@ -4,6 +4,7 @@ Covers: update-prd-status.py, select-task.py, business-hours-elapsed.py,
 and check-prd-has-work.py.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -1192,3 +1193,179 @@ class TestBotExportIdentityEnv:
         )
         assert result.returncode == 0
         assert "ssh=[]" in result.stdout
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# add-backlog-to-prd.py
+# ═══════════════════════════════════════════════════════════════════════════
+
+ADD_BACKLOG_SCRIPT = os.path.join(SCRIPT_DIR, "add-backlog-to-prd.py")
+
+
+def make_issue(number=52439, title="Something is broken", labels=()):
+    return {
+        "number": number,
+        "title": title,
+        "url": f"https://github.com/brave/brave-browser/issues/{number}",
+        "labels": [{"name": name} for name in labels],
+    }
+
+
+def run_add_backlog(prd_path, issues, *args, archived_path=None):
+    """Run add-backlog-to-prd.py against a fixed issue list (no gh calls)."""
+    issues_path = prd_path + ".issues.json"
+    with open(issues_path, "w") as f:
+        json.dump(issues, f)
+    cmd = [
+        sys.executable,
+        ADD_BACKLOG_SCRIPT,
+        "--prd",
+        prd_path,
+        "--archived-prd",
+        archived_path or (prd_path + ".missing.json"),
+        "--issues-file",
+        issues_path,
+        *args,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result
+
+
+class TestAddBacklogClassification:
+    def test_test_failure_title_is_a_test_issue(self, add_backlog):
+        issue = make_issue(title="Test failure: FooTest.Bar")
+        assert add_backlog.is_test_issue(issue) is True
+        assert add_backlog.is_disabled_test_issue(issue) is False
+
+    def test_test_label_is_a_test_issue(self, add_backlog):
+        issue = make_issue(title="Flaky somewhere", labels=("bot/type/test",))
+        assert add_backlog.is_test_issue(issue) is True
+
+    def test_disabled_test_title_is_a_disabled_issue(self, add_backlog):
+        issue = make_issue(title="Disabled test: FooTest.Bar")
+        assert add_backlog.is_disabled_test_issue(issue) is True
+
+    def test_disabled_test_label_is_a_disabled_issue(self, add_backlog):
+        issue = make_issue(
+            title="Re-enable FooTest.Bar", labels=("disabled-brave-test",)
+        )
+        assert add_backlog.is_disabled_test_issue(issue) is True
+
+    def test_plain_issue_is_neither(self, add_backlog):
+        issue = make_issue(title="Add a settings toggle")
+        assert add_backlog.is_test_issue(issue) is False
+        assert add_backlog.is_disabled_test_issue(issue) is False
+
+
+class TestAddBacklogTestNameExtraction:
+    def test_disabled_test_prefix(self, add_backlog):
+        assert (
+            add_backlog.extract_disabled_test_name("Disabled test: FooTest.Bar")
+            == "FooTest.Bar"
+        )
+
+    def test_backtick_quoted_name(self, add_backlog):
+        assert (
+            add_backlog.extract_disabled_test_name(
+                "Flaky `FooTest/FooTest.Bar/1` again"
+            )
+            == "FooTest/FooTest.Bar/1"
+        )
+
+    def test_re_enable_phrasing(self, add_backlog):
+        assert add_backlog.extract_disabled_test_name("Re-enable FooTest.Bar test") == (
+            "FooTest.Bar"
+        )
+
+    def test_search_term_strips_param_suffix_and_class(self, add_backlog):
+        assert (
+            add_backlog.extract_disabled_search_term("FooTest/FooTest.Bar/1") == "Bar"
+        )
+
+    def test_search_term_of_bare_name(self, add_backlog):
+        assert add_backlog.extract_disabled_search_term("Bar") == "Bar"
+
+
+class TestAddBacklogTracking:
+    def test_description_issue_reference_is_tracked(self, add_backlog):
+        prd = {"stories": [make_story(description="Resolve issue #52439: x")]}
+        assert 52439 in add_backlog.tracked_issue_numbers(prd)
+
+    def test_archived_prd_counts_as_tracked(self, add_backlog):
+        archived = {"stories": [make_story(description="Resolve issue #111: x")]}
+        assert 111 in add_backlog.tracked_issue_numbers({"stories": []}, archived)
+
+    def test_missing_archived_prd_is_tolerated(self, add_backlog):
+        assert add_backlog.tracked_issue_numbers({"stories": []}, None) == set()
+
+    def test_unrelated_hash_is_not_tracked(self, add_backlog):
+        prd = {"stories": [make_story(description="Land PR #52439 in repo")]}
+        assert add_backlog.tracked_issue_numbers(prd) == set()
+
+
+class TestAddBacklogEndToEnd:
+    def test_appends_missing_issue(self, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": []})
+        result = run_add_backlog(prd_path, [make_issue(number=900, title="Fix thing")])
+        assert result.returncode == 0
+        stories = read_json(prd_path)["stories"]
+        assert len(stories) == 1
+        assert stories[0]["id"] == "US-001"
+        assert stories[0]["status"] == "pending"
+        assert "issue #900" in stories[0]["description"]
+        assert json.loads(result.stdout)["added"][0]["issueNumber"] == 900
+
+    def test_ids_and_priorities_continue_from_existing(self, write_json, read_json):
+        prd_path = write_json(
+            "prd.json", {"stories": [make_story(id="US-007", priority=7)]}
+        )
+        run_add_backlog(prd_path, [make_issue(number=901, title="Fix thing")])
+        stories = read_json(prd_path)["stories"]
+        assert stories[1]["id"] == "US-008"
+        assert stories[1]["priority"] == 8
+
+    def test_already_tracked_issue_is_skipped(self, write_json, read_json):
+        prd_path = write_json(
+            "prd.json",
+            {"stories": [make_story(description="Resolve issue #902: Fix thing")]},
+        )
+        result = run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        assert read_json(prd_path)["stories"] == [
+            make_story(description="Resolve issue #902: Fix thing")
+        ]
+        assert json.loads(result.stdout)["added"] == []
+
+    def test_archived_issue_is_not_re_added(self, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": []})
+        archived_path = write_json(
+            "prd.archived.json",
+            {
+                "stories": [
+                    make_story(status="merged", description="Resolve issue #903: x")
+                ]
+            },
+        )
+        run_add_backlog(
+            prd_path,
+            [make_issue(number=903, title="x")],
+            archived_path=archived_path,
+        )
+        assert read_json(prd_path)["stories"] == []
+
+    def test_dry_run_writes_nothing(self, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": []})
+        result = run_add_backlog(
+            prd_path, [make_issue(number=904, title="Fix thing")], "--dry-run"
+        )
+        assert read_json(prd_path)["stories"] == []
+        summary = json.loads(result.stdout)
+        assert summary["dryRun"] is True
+        assert len(summary["added"]) == 1
+
+    def test_missing_prd_is_created(self, tmp_dir, read_json):
+        prd_path = os.path.join(tmp_dir, "new-prd.json")
+        result = run_add_backlog(prd_path, [make_issue(number=905, title="Fix thing")])
+        assert result.returncode == 0
+        prd = read_json(prd_path)
+        assert prd["projectName"].endswith("Backlog")
+        assert len(prd["stories"]) == 1

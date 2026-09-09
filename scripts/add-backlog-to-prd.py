@@ -1,4 +1,24 @@
 #!/usr/bin/env python3
+"""Add stories for open issues assigned to the bot that aren't in prd.json.
+
+Fetches every open issue assigned to `bot.username` in
+`project.issueRepository` and appends a story for each one the PRD doesn't
+already reference. Existing stories are never modified.
+
+This is the whole /add-backlog-to-prd sync — no LLM involved. The skill and
+`make backlog` both call this script so there is one implementation.
+
+Usage:
+  scripts/add-backlog-to-prd.py                     # update data/prd.json in place
+  scripts/add-backlog-to-prd.py --dry-run           # report only, write nothing
+  scripts/add-backlog-to-prd.py --issues-file -     # read issue JSON from stdin
+
+Exit codes:
+  0 - success (stories added, or nothing to add)
+  2 - error
+"""
+
+import argparse
 import copy
 import json
 import os
@@ -7,31 +27,51 @@ import subprocess
 import sys
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-_bot_dir = os.path.join(_script_dir, "..", "..", "..")
-sys.path.insert(0, os.path.join(_bot_dir, "scripts"))
+_bot_dir = os.path.dirname(_script_dir)
+sys.path.insert(0, _script_dir)
 from lib.load_config import get_config, load_config, require_config
 
 _config = load_config()
 _issue_repo = require_config(_config, "project.issueRepository")
+_bot_user = require_config(_config, "bot.username")
 _project_name = require_config(_config, "project.name")
 _bp_docs_dir = get_config(_config, "bestPractices.docsDir", ".")
 _bp_index_file = get_config(_config, "bestPractices.indexFile", "best_practices.md")
 _best_practices_path = os.path.join(_bp_docs_dir, _bp_index_file)
 
+ISSUE_FIELDS = "number,title,url,labels"
+
+
+def target_repo_dir():
+    """Absolute path of the target repo, or None when it isn't configured.
+
+    Relative `project.targetRepoPath` values resolve against the bot repo's
+    parent directory, the same way run.sh resolves them.
+    """
+    path = get_config(_config, "project.targetRepoPath", "")
+    if not path:
+        return None
+    if not os.path.isabs(path):
+        path = os.path.join(os.path.dirname(_bot_dir), path)
+    return os.path.normpath(path)
+
 
 def find_test_location(test_class_name):
     """
-    Determine if a test is a Brave test or Chromium test by running git grep.
-    Returns 'brave' if found in src/brave, 'chromium' if found in src only, or 'unknown'.
+    Determine if a test lives in the target repo or in its parent checkout.
+    Returns 'brave' if found in the target repo, 'chromium' if found only in
+    the surrounding checkout, or 'unknown'.
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    brave_dir = os.path.join(script_dir, "..", "..", "..", "..", "src", "brave")
-    chromium_dir = os.path.join(script_dir, "..", "..", "..", "..", "src")
+    target_dir = target_repo_dir()
+    if not target_dir:
+        return "unknown"
+    parent_dir = os.path.dirname(target_dir)
+    target_name = os.path.basename(target_dir)
 
     try:
         result = subprocess.run(
             ["git", "grep", "-l", test_class_name],
-            cwd=brave_dir,
+            cwd=target_dir,
             capture_output=True,
             text=True,
             timeout=30,
@@ -43,8 +83,8 @@ def find_test_location(test_class_name):
 
     try:
         result = subprocess.run(
-            ["git", "grep", "-l", test_class_name, "--", ".", ":!brave"],
-            cwd=chromium_dir,
+            ["git", "grep", "-l", test_class_name, "--", ".", f":!{target_name}"],
+            cwd=parent_dir,
             capture_output=True,
             text=True,
             timeout=30,
@@ -261,99 +301,210 @@ def build_generic_story(story_id, priority, issue):
     }
 
 
-# Read GitHub issues and existing PRD
-if len(sys.argv) < 2:
-    print(
-        "Usage: cat github_issues.json | python3 update-prd-with-issues.py path/to/prd.json",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+def build_story(story_id, priority, issue):
+    """Dispatch to the story builder that matches the issue type."""
+    if is_disabled_test_issue(issue):
+        return build_disabled_test_story(story_id, priority, issue)
+    if is_test_issue(issue):
+        return build_test_story(story_id, priority, issue)
+    return build_generic_story(story_id, priority, issue)
 
-prd_path = sys.argv[1]
 
-# Read GitHub issues from stdin
-github_issues = json.loads(sys.stdin.read())
+def fetch_assigned_issues():
+    """Fetch open issues assigned to the bot in the issue repository."""
+    args = [
+        "issue",
+        "list",
+        "--repo",
+        _issue_repo,
+        "--assignee",
+        _bot_user,
+        "--state",
+        "open",
+        "--json",
+        ISSUE_FIELDS,
+        "--limit",
+        "100",
+    ]
+    try:
+        result = subprocess.run(
+            ["gh"] + args, capture_output=True, text=True, timeout=120
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"Error running gh {' '.join(args)}: {e}", file=sys.stderr)
+        sys.exit(2)
+    if result.returncode != 0:
+        print(
+            f"Error running gh {' '.join(args)}: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        print(f"Error parsing gh output: {e}", file=sys.stderr)
+        sys.exit(2)
 
-# Read existing PRD or create empty structure
-if os.path.exists(prd_path):
-    with open(prd_path, "r") as f:
-        prd = json.load(f)
-else:
-    prd = {
+
+def read_issues_file(path):
+    """Read issue JSON from a file, or from stdin when path is '-'."""
+    try:
+        raw = sys.stdin.read() if path == "-" else open(path).read()
+        return json.loads(raw)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Error reading issues from {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+def load_json(path):
+    """Load a JSON file, returning None if it doesn't exist."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Error reading {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+def story_issue_number(story):
+    """Issue number a story references in its description, or None."""
+    match = re.search(r"issue #(\d+)", story.get("description") or "")
+    return int(match.group(1)) if match else None
+
+
+def tracked_issue_numbers(*prds):
+    """Collect every issue number already referenced by a story in any PRD."""
+    numbers = set()
+    for prd in prds:
+        if not prd:
+            continue
+        for story in prd.get("stories", []):
+            for match in re.findall(r"issue #(\d+)", story.get("description") or ""):
+                numbers.add(int(match))
+    return numbers
+
+
+def empty_prd():
+    """A fresh PRD skeleton, used when data/prd.json doesn't exist yet."""
+    return {
         "projectName": f"{_project_name} Backlog",
         "description": f"Issues from {_issue_repo} repository to be resolved",
         "config": {},
         "stories": [],
     }
 
-# Detect which key the PRD uses for stories
-stories_key = "stories" if "stories" in prd else "stories"
 
-# Create a deep copy of existing stories for verification
-original_stories = copy.deepcopy(prd[stories_key])
-existing_story_count = len(prd[stories_key])
+def main():
+    parser = argparse.ArgumentParser(
+        description="Add stories for open issues assigned to the bot"
+    )
+    parser.add_argument(
+        "--prd",
+        default=os.path.join(_bot_dir, "data", "prd.json"),
+        help="Path to prd.json (created if missing)",
+    )
+    parser.add_argument(
+        "--archived-prd",
+        default=os.path.join(_bot_dir, "data", "prd.archived.json"),
+        help="Path to prd.archived.json (checked for already-tracked issues)",
+    )
+    parser.add_argument(
+        "--issues-file",
+        help="Read issue JSON from this file ('-' for stdin) instead of calling gh",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be added, write nothing",
+    )
+    args = parser.parse_args()
 
-# Extract existing issue numbers from PRD
-existing_issues = set()
-for story in prd[stories_key]:
-    desc = story["description"]
-    matches = re.findall(r"issue #(\d+)", desc)
-    for match in matches:
-        existing_issues.add(int(match))
+    prd = load_json(args.prd)
+    if prd is None:
+        prd = empty_prd()
+    archived = load_json(args.archived_prd)
 
-# Find the highest existing ID number and priority
-max_id = 0
-max_priority = 0
-for story in prd[stories_key]:
-    id_num = int(story["id"].split("-")[1])
-    if id_num > max_id:
-        max_id = id_num
-    if story["priority"] > max_priority:
-        max_priority = story["priority"]
-
-# Process each GitHub issue and add if missing
-new_stories = []
-for issue in github_issues:
-    issue_num = issue["number"]
-
-    # Skip if already in PRD
-    if issue_num in existing_issues:
-        continue
-
-    max_id += 1
-    max_priority += 1
-
-    if is_disabled_test_issue(issue):
-        story = build_disabled_test_story(max_id, max_priority, issue)
-    elif is_test_issue(issue):
-        story = build_test_story(max_id, max_priority, issue)
+    if args.issues_file:
+        issues = read_issues_file(args.issues_file)
     else:
-        story = build_generic_story(max_id, max_priority, issue)
+        issues = fetch_assigned_issues()
 
-    new_stories.append(story)
+    known = tracked_issue_numbers(prd, archived)
 
-# SAFETY CHECK: Verify existing stories were not modified
-for i in range(existing_story_count):
-    if prd[stories_key][i] != original_stories[i]:
-        print(
-            f"ERROR: Existing story {prd[stories_key][i]['id']} was modified!",
-            file=sys.stderr,
+    stories = prd.setdefault("stories", [])
+    original_stories = copy.deepcopy(stories)
+    existing_count = len(stories)
+
+    max_id = 0
+    max_priority = 0
+    for story in stories:
+        try:
+            id_num = int(story["id"].split("-")[1])
+        except (KeyError, IndexError, ValueError):
+            id_num = 0
+        max_id = max(max_id, id_num)
+        max_priority = max(max_priority, story.get("priority") or 0)
+
+    new_stories = []
+    for issue in issues:
+        if issue["number"] in known:
+            continue
+        max_id += 1
+        max_priority += 1
+        new_stories.append(build_story(max_id, max_priority, issue))
+
+    # SAFETY CHECK: existing stories must never be touched
+    for i in range(existing_count):
+        if stories[i] != original_stories[i]:
+            print(
+                f"ERROR: Existing story {stories[i].get('id')} was modified!",
+                file=sys.stderr,
+            )
+            return 2
+
+    if new_stories and not args.dry_run:
+        stories.extend(new_stories)
+        tmp_path = args.prd + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(prd, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, args.prd)
+
+    verb = "Would add" if args.dry_run else "Added"
+    print(
+        f"{verb} {len(new_stories)} new issue(s) to the PRD "
+        f"({len(issues)} assigned issue(s) checked, {len(known)} already tracked)",
+        file=sys.stderr,
+    )
+    for story in new_stories:
+        issue_num = story_issue_number(story) or "unknown"
+        label = story.get("testFilter", story["title"])
+        print(f"  {story['id']}: {label} (#{issue_num})", file=sys.stderr)
+
+    print(
+        json.dumps(
+            {
+                "added": [
+                    {
+                        "id": s["id"],
+                        "issueNumber": story_issue_number(s),
+                        "title": s["title"],
+                        "status": s["status"],
+                        "priority": s["priority"],
+                    }
+                    for s in new_stories
+                ],
+                "checked": len(issues),
+                "alreadyTracked": len(known),
+                "issueRepository": _issue_repo,
+                "dryRun": args.dry_run,
+            }
         )
-        print(
-            "This is a bug - existing stories should never be changed.", file=sys.stderr
-        )
-        sys.exit(1)
+    )
+    return 0
 
-# Add new stories to PRD (appends to end, doesn't modify existing)
-prd[stories_key].extend(new_stories)
 
-# Output updated PRD
-print(json.dumps(prd, indent=2))
-
-# Print summary to stderr
-print(f"\nAdded {len(new_stories)} new issues to PRD", file=sys.stderr)
-for story in new_stories:
-    issue_match = re.search(r"issue #(\d+)", story["description"])
-    issue_num = issue_match.group(1) if issue_match else "unknown"
-    title = story.get("testFilter", story["title"])
-    print(f"  {story['id']}: {title} (#{issue_num})", file=sys.stderr)
+if __name__ == "__main__":
+    sys.exit(main())

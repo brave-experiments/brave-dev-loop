@@ -64,6 +64,14 @@ def sync_bot_prs():
 
 
 @pytest.fixture
+def add_backlog():
+    return _load_module(
+        "add_backlog_to_prd",
+        os.path.join(SCRIPTS_DIR, "add-backlog-to-prd.py"),
+    )
+
+
+@pytest.fixture
 def chunk_best_practices():
     return _load_module(
         "chunk_best_practices",
