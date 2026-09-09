@@ -16,13 +16,7 @@ format:
 
 # Install dev dependencies and run project setup
 setup:
-	@if command -v uv >/dev/null 2>&1; then \
-		uv pip install pytest ruff; \
-	elif command -v pip3 >/dev/null 2>&1; then \
-		pip3 install pytest ruff; \
-	else \
-		echo "Error: Neither uv nor pip3 found. Install uv (https://docs.astral.sh/uv/) or pip3."; exit 1; \
-	fi
+	@./scripts/install-dev-deps.sh
 	@rm -rf *.egg-info
 	./scripts/setup.sh
 
