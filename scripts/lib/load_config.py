@@ -203,3 +203,14 @@ def test_binary(profile, suite, location):
     """
     targets = (profile.get("testTargets") or {}).get(suite) or {}
     return targets.get("local" if location == "brave" else "upstream")
+
+
+def prd_mode(config):
+    """'curated' (default) or 'auto'.
+
+    'curated': stories are authored; the PRD is the source of truth.
+    'auto': the PRD is a cache the bot refreshes from GitHub before each run,
+    so it needs no manual curation. Defaults to 'curated' so deployments that
+    predate the key keep treating their PRD as authored input.
+    """
+    return get_config(config, "project.prdMode") or "curated"

@@ -88,6 +88,21 @@ if [ "$WRITE_CONFIG" = true ]; then
   fi
   prompt_required CFG_TARGET_REPO "Target repo path (e.g. ../src/brave, /abs/path/to/repo): " "$PREV_TARGET_REPO"
 
+  echo ""
+  echo "─── PRD Mode ───"
+  echo "curated: you author data/prd.json and the bot works through those stories."
+  echo "auto:    the PRD is a cache — the bot rebuilds it from issues assigned to"
+  echo "         it and its open PRs before each run. No curation, no tokens."
+  PREV_PRD_MODE=""
+  if [ -f "$CONFIG_FILE" ]; then
+    PREV_PRD_MODE=$(jq -r '.project.prdMode // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
+  fi
+  read -p "PRD mode (curated/auto) [${PREV_PRD_MODE:-curated}]: " CFG_PRD_MODE
+  CFG_PRD_MODE="${CFG_PRD_MODE:-${PREV_PRD_MODE:-curated}}"
+  if [ "$CFG_PRD_MODE" != "auto" ]; then
+    CFG_PRD_MODE="curated"
+  fi
+
   PREV_OWNER_HANDLE=""
   if [ -f "$CONFIG_FILE" ]; then
     PREV_OWNER_HANDLE=$(jq -r '.project.botOwnerGithubHandle // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
@@ -194,6 +209,7 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_TARGET_REPO="$CFG_TARGET_REPO" \
   CFG_USE_FORK="${CFG_USE_FORK:-true}" \
   CFG_PROFILE="${CFG_PROFILE:-}" \
+  CFG_PRD_MODE="${CFG_PRD_MODE:-curated}" \
   CFG_OWNER_HANDLE="$CFG_OWNER_HANDLE" \
   CFG_BOT_USER="$CFG_BOT_USER" \
   CFG_BOT_EMAIL="$CFG_BOT_EMAIL" \
@@ -237,6 +253,7 @@ config = {
         'targetRepoPath': target_repo,
         'useFork': os.environ.get('CFG_USE_FORK', 'true') == 'true',
         'profile': os.environ.get('CFG_PROFILE') or 'default',
+        'prdMode': os.environ.get('CFG_PRD_MODE') or 'curated',
         'botOwnerGithubHandle': val('CFG_OWNER_HANDLE'),
     },
     'bot': {
@@ -718,8 +735,9 @@ echo ""
 
 # Show next steps based on what's still needed
 NEXT=()
-if [ ! -f "$PROJECT_ROOT/data/prd.json" ] || \
-   [ "$(jq -r '.stories // .stories | length' "$PROJECT_ROOT/data/prd.json" 2>/dev/null)" = "0" ]; then
+if [ "$BOT_PRD_MODE" != "auto" ] && \
+   { [ ! -f "$PROJECT_ROOT/data/prd.json" ] || \
+     [ "$(jq -r '.stories // .stories | length' "$PROJECT_ROOT/data/prd.json" 2>/dev/null)" = "0" ]; }; then
   NEXT+=("Edit data/prd.json with your user stories (or use /prd-json skill)")
 fi
 if [ "$SKIP_GIT" = true ] && [ -z "${GIT_REPO_RAW:-}" ]; then

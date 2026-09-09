@@ -8,7 +8,8 @@
     "targetRepoPath": "../my-project",
     "botOwnerGithubHandle": "",
     "useFork": true,
-    "profile": "default"
+    "profile": "default",
+    "prdMode": "curated"
   },
   "bot": {
     "username": "my-bot",

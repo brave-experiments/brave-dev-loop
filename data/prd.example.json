@@ -1,21 +1,3 @@
 {
-  "stories": [
-    {
-      "id": "US-001",
-      "title": "Example user story",
-      "description": "As a developer, I need to...",
-      "testType": "browser_test",
-      "testFilter": "TestSuite.TestName",
-      "acceptanceCriteria": [
-        "Criteria 1",
-        "Criteria 2"
-      ],
-      "priority": 1,
-      "prNumber": null,
-      "status": "pending",
-      "lastActivityBy": null,
-      "branchName": null,
-      "prUrl": null
-    }
-  ]
+  "stories": []
 }

@@ -8,6 +8,14 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PRD_FILE="$BOT_DIR/data/prd.json"
+source "$SCRIPT_DIR/lib/load-config.sh"
+
+# In auto mode the PRD is a cache, so a missing or empty one just means it has
+# not been built yet — the refresh in run.sh will populate it.
+if [ "$BOT_PRD_MODE" = "auto" ]; then
+  echo "PRD is in auto mode — run.sh will refresh it."
+  exit 0
+fi
 
 if [ ! -f "$PRD_FILE" ]; then
   echo "No prd.json found — skipping run."
