@@ -1562,3 +1562,56 @@ class TestRepairConfigPaths:
         assert reloaded["bestPractices"]["docsDir"] == os.path.join(
             "..", "src", "brave", "docs"
         )
+
+
+class TestShippedConfigs:
+    """The reference configs pin behaviour for deployments seeded from them."""
+
+    @staticmethod
+    def _load(name):
+        with open(os.path.join(os.path.dirname(__file__), os.pardir, name)) as f:
+            return json.load(f)
+
+    def test_brave_core_keeps_the_fork_layout(self):
+        """brave-core pushes from a fork; flipping this silently rewires its remotes."""
+        assert self._load("config.brave-core.json")["project"]["useFork"] is True
+
+    def test_example_defaults_to_fork_layout(self):
+        assert self._load("config.example.json")["project"]["useFork"] is True
+
+    def test_docs_dir_matches_target_repo_in_reference_configs(self):
+        """docsDir is bot-dir-relative; targetRepoPath may be either base."""
+        for name in ("config.brave-core.json", "config.example.json"):
+            cfg = self._load(name)
+            target = cfg["project"]["targetRepoPath"].lstrip("./")
+            docs = cfg["bestPractices"]["docsDir"]
+            assert docs.endswith("/docs"), (name, docs)
+            assert target.split("/")[-1] in docs, (name, target, docs)
+
+
+# ── Project profiles ─────────────────────────────────────────────────────────
+
+# The exact acceptance-criteria tail add-backlog-to-prd.py emitted before the
+# validations moved into projects/brave-core/profile.json. brave-core bots must
+# keep getting these byte-for-byte.
+_BC_REVIEW = (
+    "Commit changes, then run the /review skill from the target repo in a fresh "
+    "subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); "
+    "report all findings back to the main context; fix any violations and commit "
+    "the fixes (must pass)"
+)
+_BC_FORMAT = (
+    "Run pnpm run format one final time; if it makes any changes, amend the last "
+    "commit with the formatting fixes"
+)
+
+
+def _bc_tail(test_step):
+    return [
+        "Build the project (must pass)",
+        "Format the code (must pass)",
+        _BC_REVIEW,
+        test_step,
+        "Run presubmit checks (must pass)",
+        _BC_FORMAT,
+    ]

@@ -243,6 +243,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `project.issueRepository`: Issue repository as `owner/repo` (e.g. `brave/brave-browser`)
 - `project.defaultBranch`: Default branch for the PR repo (e.g. `master`)
 - `project.targetRepoPath`: Path to the target git repo (relative to the bot dir, to its parent, or absolute — all three resolve)
+- `project.useFork`: `true` (default) — the bot pushes branches to its own fork (`origin` = fork, `upstream` = PR repo). `false` — the bot has write access to the PR repo and pushes there directly (`origin` = PR repo, no fork). Set `false` only when the bot account is a collaborator on the PR repo; `make setup` will then stop expecting a fork and stop offering to create one
 - `bot.username`: Bot's GitHub username
 - `bot.email`: Bot's email for git commits
 - `bot.sshKeyPath`: SSH identity the bot pushes with (`null` = this machine's default key). See [Bot Identity Isolation](#bot-identity-isolation)

@@ -6,7 +6,8 @@
     "issueRepository": "my-org/my-project",
     "defaultBranch": "main",
     "targetRepoPath": "../my-project",
-    "botOwnerGithubHandle": ""
+    "botOwnerGithubHandle": "",
+    "useFork": true
   },
   "bot": {
     "username": "my-bot",
@@ -22,7 +23,9 @@
     "cursorBin": null
   },
   "labels": {
-    "prLabels": ["ai-generated"],
+    "prLabels": [
+      "ai-generated"
+    ],
     "issueLabels": [],
     "disabledTestLabel": ""
   },

@@ -192,6 +192,7 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_ISSUE_REPO="$CFG_ISSUE_REPO" \
   CFG_DEFAULT_BRANCH="$CFG_DEFAULT_BRANCH" \
   CFG_TARGET_REPO="$CFG_TARGET_REPO" \
+  CFG_USE_FORK="${CFG_USE_FORK:-true}" \
   CFG_OWNER_HANDLE="$CFG_OWNER_HANDLE" \
   CFG_BOT_USER="$CFG_BOT_USER" \
   CFG_BOT_EMAIL="$CFG_BOT_EMAIL" \
@@ -233,6 +234,7 @@ config = {
         'issueRepository': os.environ['CFG_ISSUE_REPO'],
         'defaultBranch': os.environ['CFG_DEFAULT_BRANCH'],
         'targetRepoPath': target_repo,
+        'useFork': os.environ.get('CFG_USE_FORK', 'true') == 'true',
         'botOwnerGithubHandle': val('CFG_OWNER_HANDLE'),
     },
     'bot': {
@@ -420,7 +422,11 @@ if [ "$SKIP_GIT" = false ]; then
   fi
 
   # ─── Configure git remotes ────────────────────────────────────────────────
-  # Expected layout: origin = bot's fork, upstream = main repo
+  # Two supported layouts, selected by project.useFork:
+  #   true  (default) — origin = bot's fork, upstream = main repo
+  #   false           — origin = upstream = main repo, for a bot with write
+  #                     access. No fork is created and none is expected.
+  # Default true so existing fork-based deployments are unaffected.
   FORK_REPO_NAME="${BOT_PR_REPO##*/}"
   EXPECTED_ORIGIN="https://github.com/$BOT_USERNAME/$FORK_REPO_NAME.git"
   EXPECTED_ORIGIN_SSH="git@github.com:$BOT_USERNAME/$FORK_REPO_NAME.git"
@@ -446,13 +452,64 @@ if [ "$SKIP_GIT" = false ]; then
   REMOTE_ACTIONS=()
   REMOTES_OK=true
 
+  USE_FORK=$(bot_config '.project.useFork')
+  if [ -z "$USE_FORK" ]; then
+    USE_FORK=true
+  fi
+
+  if [ "$USE_FORK" != "true" ]; then
+    # No-fork layout: origin and upstream both point at the main repo. The bot
+    # pushes branches straight to it, and PR refs (refs/pull/N/head) resolve
+    # through origin, which the review worktrees depend on.
+    if [ -z "$CURRENT_ORIGIN" ]; then
+      REMOTE_ACTIONS+=("Add origin → $BOT_PR_REPO ($EXPECTED_UPSTREAM_SSH)")
+    elif ! url_matches "$CURRENT_ORIGIN" "$EXPECTED_UPSTREAM" "$EXPECTED_UPSTREAM_SSH"; then
+      REMOTE_ACTIONS+=("Set origin → $BOT_PR_REPO ($EXPECTED_UPSTREAM_SSH)")
+    fi
+    if [ -n "$CURRENT_UPSTREAM" ] && ! url_matches "$CURRENT_UPSTREAM" "$EXPECTED_UPSTREAM" "$EXPECTED_UPSTREAM_SSH"; then
+      REMOTE_ACTIONS+=("Set upstream → $BOT_PR_REPO ($EXPECTED_UPSTREAM_SSH)")
+    fi
+
+    if [ ${#REMOTE_ACTIONS[@]} -eq 0 ]; then
+      echo "  ✓ origin → $BOT_PR_REPO (no-fork layout)"
+    else
+      echo ""
+      echo "  The following remote changes are needed:"
+      for action in "${REMOTE_ACTIONS[@]}"; do
+        echo "    • $action"
+      done
+      echo ""
+      read -p "  Apply these remote changes? (Y/n) " -n 1 -r
+      echo
+      if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        if [ -z "$CURRENT_ORIGIN" ]; then
+          git -C "$GIT_REPO" remote add origin "$EXPECTED_UPSTREAM_SSH"
+        else
+          git -C "$GIT_REPO" remote set-url origin "$EXPECTED_UPSTREAM_SSH"
+        fi
+        if [ -n "$CURRENT_UPSTREAM" ]; then
+          git -C "$GIT_REPO" remote set-url upstream "$EXPECTED_UPSTREAM_SSH"
+        fi
+        echo "  ✓ origin → $BOT_PR_REPO"
+      else
+        echo "  Skipped. Configure manually:"
+        echo "    cd $GIT_REPO"
+        echo "    git remote set-url origin $EXPECTED_UPSTREAM_SSH"
+      fi
+    fi
+    REMOTES_OK=false   # skip the fork-layout branch below
+    FORK_EXISTS=false
+  fi
+
   # Check if the bot's fork exists on GitHub
   FORK_EXISTS=false
+  if [ "$USE_FORK" = "true" ]; then
   if gh repo view "$BOT_USERNAME/$FORK_REPO_NAME" --json name >/dev/null 2>&1; then
     FORK_EXISTS=true
   fi
+  fi
 
-  if [ "$FORK_EXISTS" = false ]; then
+  if [ "$USE_FORK" = "true" ] && [ "$FORK_EXISTS" = false ]; then
     echo ""
     echo "  Fork $BOT_USERNAME/$FORK_REPO_NAME not found on GitHub."
     read -p "  Create fork now? (Y/n) " -n 1 -r
@@ -505,14 +562,14 @@ if [ "$SKIP_GIT" = false ]; then
   fi
 
   # If everything is already correct, just report it
-  if [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -eq 0 ]; then
+  if [ "$USE_FORK" = "true" ] && [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -eq 0 ]; then
     echo "  ✓ origin → $BOT_USERNAME/$FORK_REPO_NAME"
     echo "  ✓ upstream → $BOT_PR_REPO"
     echo "  ✓ Remotes configured correctly"
   fi
 
   # If there are changes to make, describe them and ask for confirmation
-  if [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -gt 0 ]; then
+  if [ "$USE_FORK" = "true" ] && [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -gt 0 ]; then
     echo ""
     echo "  The following remote changes are needed:"
     for action in "${REMOTE_ACTIONS[@]}"; do
