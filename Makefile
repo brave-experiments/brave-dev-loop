@@ -1,4 +1,4 @@
-.PHONY: test lint format setup schedules view-schedules clean archive archive-progress archive-prd
+.PHONY: test lint format setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run
 
 # Run the test suite
 test:
@@ -38,6 +38,14 @@ archive-progress:
 	@echo "Started: $$(date)" >> data/progress.txt
 	@echo "---" >> data/progress.txt
 	@echo "Archived $$(wc -l < data/progress.archived.txt) lines to progress.archived.txt"
+
+# Sync open issues assigned to the bot into the PRD backlog (no LLM involved)
+backlog:
+	python3 scripts/add-backlog-to-prd.py
+
+# Show which assigned issues would be added, without writing prd.json
+backlog-dry-run:
+	python3 scripts/add-backlog-to-prd.py --dry-run
 
 # Archive completed PRD stories (merged/invalid → prd.archived.json)
 archive-prd:
