@@ -29,13 +29,12 @@ import os
 import re
 import subprocess
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.load_config import load_config, require_config
-
 
 # Allowed image hosts (GitHub-hosted content only, for security)
 ALLOWED_HOSTS = [

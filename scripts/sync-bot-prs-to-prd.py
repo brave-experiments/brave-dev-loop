@@ -29,7 +29,7 @@ import sys
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
-from lib.load_config import load_config, get_config, require_config
+from lib.load_config import get_config, load_config, require_config
 
 _config = load_config()
 _pr_repo = require_config(_config, "project.prRepository")

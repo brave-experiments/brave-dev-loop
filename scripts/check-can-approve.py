@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib.load_config import get_config, load_config, require_config
+from lib.load_config import load_config, require_config
 
 REVIEW_CACHE_PATH = ".ignore/review-prs-cache.json"
 

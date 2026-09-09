@@ -9,7 +9,7 @@ import sys
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.join(_script_dir, "..", "..", "..")
 sys.path.insert(0, os.path.join(_bot_dir, "scripts"))
-from lib.load_config import load_config, get_config, require_config
+from lib.load_config import get_config, load_config, require_config
 
 _config = load_config()
 _issue_repo = require_config(_config, "project.issueRepository")

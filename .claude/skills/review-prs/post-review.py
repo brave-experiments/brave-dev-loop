@@ -29,7 +29,7 @@ BOT_DIR = os.path.join(SCRIPT_DIR, "..", "..", "..")
 BOT_DIR = os.path.normpath(BOT_DIR)
 
 sys.path.insert(0, os.path.join(BOT_DIR, "scripts"))
-from lib.load_config import load_config, get_config, require_config
+from lib.load_config import load_config, require_config
 
 CACHE_PATH = os.path.join(BOT_DIR, ".ignore", "review-prs-cache.json")
 _config = load_config()
@@ -738,7 +738,7 @@ def main():
         f"PRs reviewed: {prs_reviewed}",
         f"PRs with violations: {prs_with_violations}",
         f"Total comments posted: {total_comments}",
-        f"Cached PRs processed: 0",
+        "Cached PRs processed: 0",
         f"PRs approved: {prs_approved}",
         "",
         "RESULTS:",

@@ -7,6 +7,7 @@ Outputs the transcribed text to stdout. Exits with code 1 on failure.
 """
 import sys
 
+
 def transcribe(audio_path):
     from faster_whisper import WhisperModel
     model = WhisperModel("tiny", device="cpu", compute_type="int8")

@@ -179,7 +179,7 @@ def main():
     )
 
     log(f"\n{'=' * 60}")
-    log(f"COLLECTION SUMMARY")
+    log("COLLECTION SUMMARY")
     log(f"{'=' * 60}")
     log(f"Total subagent chunks: {total_chunks}")
     log(f"Results files found: {results_found}")

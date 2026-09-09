@@ -234,7 +234,7 @@ def llm_select(candidates, extra_prompt, claude_bin="claude"):
                     file=sys.stderr,
                 )
         else:
-            print(f"LLM response didn't contain a story ID", file=sys.stderr)
+            print("LLM response didn't contain a story ID", file=sys.stderr)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         print(f"LLM selection failed: {e}", file=sys.stderr)
 
