@@ -70,7 +70,9 @@ def extract_applicability(filepath):
             for i, line in enumerate(f):
                 if i >= 10:
                     break
-                m = re.search(r"<!--\s*applicability:\s*(\S+)\s*-->", line, re.IGNORECASE)
+                m = re.search(
+                    r"<!--\s*applicability:\s*(\S+)\s*-->", line, re.IGNORECASE
+                )
                 if m:
                     return m.group(1).lower()
     except OSError:
@@ -99,11 +101,13 @@ def discover(bp_dir):
             continue
 
         condition = extract_applicability(fpath) or infer_condition(fname)
-        results.append({
-            "doc": fname,
-            "path": os.path.abspath(fpath),
-            "condition": condition,
-        })
+        results.append(
+            {
+                "doc": fname,
+                "path": os.path.abspath(fpath),
+                "condition": condition,
+            }
+        )
     return results
 
 
@@ -136,7 +140,8 @@ def main():
 
     if any_flag_set:
         filtered = [
-            d for d in all_docs
+            d
+            for d in all_docs
             if d["condition"] == "always" or d["condition"] in active_conditions
         ]
     else:

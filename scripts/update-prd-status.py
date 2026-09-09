@@ -334,10 +334,15 @@ def main():
     p.add_argument("story_id")
     p.add_argument("--who", required=True, choices=["bot", "reviewer"])
 
-    p = sub.add_parser("set-ping", help="Set lastReviewerPing to now and increment reviewerPingCount")
+    p = sub.add_parser(
+        "set-ping", help="Set lastReviewerPing to now and increment reviewerPingCount"
+    )
     p.add_argument("story_id")
 
-    p = sub.add_parser("set-escalation", help="Set lastOwnerEscalation to now and increment ownerEscalationCount")
+    p = sub.add_parser(
+        "set-escalation",
+        help="Set lastOwnerEscalation to now and increment ownerEscalationCount",
+    )
     p.add_argument("story_id")
 
     p = sub.add_parser("set-branch", help="Set branchName")
@@ -349,9 +354,13 @@ def main():
 
     p = sub.add_parser("fix-status", help="Fix invalid status to a valid one")
     p.add_argument("story_id")
-    p.add_argument("--target", required=True, dest="target_status",
-                   choices=sorted(VALID_STATUSES),
-                   help="Target valid status")
+    p.add_argument(
+        "--target",
+        required=True,
+        dest="target_status",
+        choices=sorted(VALID_STATUSES),
+        help="Target valid status",
+    )
 
     args = parser.parse_args()
 

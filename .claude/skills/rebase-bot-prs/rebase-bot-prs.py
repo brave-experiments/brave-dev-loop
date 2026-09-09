@@ -61,7 +61,12 @@ def resolve_remote_for_repo(target, repo):
     _, out, _ = run(["git", "remote", "-v"], cwd=target)
     for line in out.splitlines():
         parts = line.split()
-        if len(parts) >= 2 and (f"{repo}.git" in parts[1] or parts[1].endswith(repo) or f":{repo}" in parts[1] or f"/{repo}" in parts[1]):
+        if len(parts) >= 2 and (
+            f"{repo}.git" in parts[1]
+            or parts[1].endswith(repo)
+            or f":{repo}" in parts[1]
+            or f"/{repo}" in parts[1]
+        ):
             return parts[0]
     return None
 
@@ -81,14 +86,23 @@ def resolve_upstream_remote(target, repo):
 
 
 def list_bot_prs(pr_repo, bot):
-    _, out, _ = run([
-        "gh", "pr", "list",
-        "--repo", pr_repo,
-        "--author", bot,
-        "--state", "open",
-        "--json", "number,headRefName,title,isCrossRepository,headRepositoryOwner,headRepository",
-        "--limit", "200",
-    ])
+    _, out, _ = run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            pr_repo,
+            "--author",
+            bot,
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName,title,isCrossRepository,headRepositoryOwner,headRepository",
+            "--limit",
+            "200",
+        ]
+    )
     return json.loads(out)
 
 
@@ -129,7 +143,9 @@ def main():
     pr_repo = cfg["pr_repo"]
     base_branch = cfg["default_branch"]
 
-    if not os.path.isdir(os.path.join(target, ".git")) and not os.path.exists(os.path.join(target, ".git")):
+    if not os.path.isdir(os.path.join(target, ".git")) and not os.path.exists(
+        os.path.join(target, ".git")
+    ):
         sys.exit(f"Target repo not found at {target}")
 
     upstream = resolve_upstream_remote(target, pr_repo)
@@ -149,14 +165,16 @@ def main():
     # no configured remote points at its head repo (then it genuinely can't be
     # pushed from this checkout).
     eligible = []  # (pr, push_remote)
-    skipped = []   # (pr, reason)
+    skipped = []  # (pr, reason)
     for p in prs:
         slug = head_repo_slug(p, pr_repo)
         remote = resolve_remote_for_repo(target, slug)
         if remote:
             eligible.append((p, remote))
         else:
-            skipped.append((p, f"no remote points at {slug} — add one with `git remote add`"))
+            skipped.append(
+                (p, f"no remote points at {slug} — add one with `git remote add`")
+            )
 
     for p, reason in skipped:
         print(f"SKIP ({reason}): #{p['number']} {p['title']}")
@@ -172,9 +190,13 @@ def main():
         run(["git", "fetch", r], cwd=target, capture=False)
     print()
 
-    print(f"{'Will rebase' if not execute else 'Rebasing'} {len(eligible)} PR(s) onto {upstream}/{base_branch}:")
+    print(
+        f"{'Will rebase' if not execute else 'Rebasing'} {len(eligible)} PR(s) onto {upstream}/{base_branch}:"
+    )
     for p, remote in eligible:
-        print(f"  #{p['number']}  {p['headRefName']}  -> push to {remote}  ({p['title']})")
+        print(
+            f"  #{p['number']}  {p['headRefName']}  -> push to {remote}  ({p['title']})"
+        )
     print()
 
     if not execute:
@@ -197,14 +219,19 @@ def main():
             print(f"\n=== PR #{num}  {branch} (push: {pr_remote}) ===")
             try:
                 # Point a local branch at the remote head and rebase it.
-                run(["git", "checkout", "-B", branch, f"{pr_remote}/{branch}"], cwd=target, capture=False)
+                run(
+                    ["git", "checkout", "-B", branch, f"{pr_remote}/{branch}"],
+                    cwd=target,
+                    capture=False,
+                )
             except RuntimeError as e:
                 results.append((num, branch, "ERROR", f"checkout failed: {e}"))
                 continue
 
             rc, out, err = run(
                 ["git", "rebase", f"{upstream}/{base_branch}"],
-                cwd=target, check=False,
+                cwd=target,
+                check=False,
             )
             if rc != 0:
                 # Conflict or other rebase failure — abort and leave PR untouched.
@@ -217,7 +244,8 @@ def main():
 
             rc, out, err = run(
                 ["git", "push", "--force-with-lease", pr_remote, branch],
-                cwd=target, check=False,
+                cwd=target,
+                check=False,
             )
             if rc != 0:
                 detail = (out + "\n" + err).strip().splitlines()
@@ -234,7 +262,9 @@ def main():
 
     print("\n========== SUMMARY ==========")
     order = {"REBASED": 0, "CONFLICT": 1, "PUSH_FAILED": 2, "ERROR": 3}
-    for num, branch, status, detail in sorted(results, key=lambda r: order.get(r[2], 9)):
+    for num, branch, status, detail in sorted(
+        results, key=lambda r: order.get(r[2], 9)
+    ):
         print(f"  [{status}] #{num} {branch} — {detail}")
     rebased = sum(1 for r in results if r[2] == "REBASED")
     print(f"\n{rebased}/{len(results)} rebased and pushed.")

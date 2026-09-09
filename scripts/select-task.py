@@ -128,7 +128,11 @@ def sort_key(story, now=None, promote_pending=False):
         eff_tier = TIER_PENDING_RESERVED
 
     if status == "pushed":
-        return (eff_tier, parse_iso(story.get("lastProcessedDate")).timestamp(), priority)
+        return (
+            eff_tier,
+            parse_iso(story.get("lastProcessedDate")).timestamp(),
+            priority,
+        )
     elif status == "merged":
         return (eff_tier, parse_iso(story.get("nextMergedCheck")).timestamp(), priority)
     elif status == "pending":
@@ -333,17 +337,14 @@ def main():
             for s in stories
             if s.get("status") not in ("skipped", "invalid")
             and not (
-                s.get("status") == "merged"
-                and s.get("mergedCheckFinalState") is True
+                s.get("status") == "merged" and s.get("mergedCheckFinalState") is True
             )
         ]
         llm_choice = llm_select(
             all_active, args.extra_prompt, claude_bin=args.claude_bin
         )
         if llm_choice:
-            selected = next(
-                (s for s in all_active if s.get("id") == llm_choice), None
-            )
+            selected = next((s for s in all_active if s.get("id") == llm_choice), None)
         if not selected:
             print(
                 f"WARNING: could not match extra prompt {args.extra_prompt!r} to a "

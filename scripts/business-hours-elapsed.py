@@ -38,7 +38,10 @@ def business_hours_between(ref, now):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: business-hours-elapsed.py <iso-timestamp> [threshold-hours]", file=sys.stderr)
+        print(
+            "Usage: business-hours-elapsed.py <iso-timestamp> [threshold-hours]",
+            file=sys.stderr,
+        )
         print("Prints business hours elapsed (weekdays only).", file=sys.stderr)
         print("Exits 0 if >= threshold (default 24h), 1 if not.", file=sys.stderr)
         sys.exit(2)

@@ -161,9 +161,7 @@ def main():
     config = load_config()
     default_repo = require_config(config, "project.prRepository")
 
-    parser = argparse.ArgumentParser(
-        description="Resolve bot review threads on a PR."
-    )
+    parser = argparse.ArgumentParser(description="Resolve bot review threads on a PR.")
     parser.add_argument("pr_number", type=int, help="PR number")
     parser.add_argument("bot_username", help="Bot's GitHub username")
     parser.add_argument("--repo", default=default_repo, help="owner/repo for PRs")
@@ -277,7 +275,9 @@ def main():
         # Resolve is the harder operation; only add the visible thumbs-up
         # if the thread was actually resolved.
         resolve_ok = resolve_thread(thread_id, args.dry_run)
-        reaction_ok = add_reaction(reply["id"], repo, args.dry_run) if resolve_ok else False
+        reaction_ok = (
+            add_reaction(reply["id"], repo, args.dry_run) if resolve_ok else False
+        )
 
         if resolve_ok and reaction_ok:
             resolved.append(

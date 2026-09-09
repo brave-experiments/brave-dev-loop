@@ -485,9 +485,9 @@ class TestSelectTaskSortKey:
         stale = make_story(
             "pushed", id="US-S", lastProcessedDate="2000-01-01T00:00:00Z"
         )
-        assert select_task.sort_key(pending, promote_pending=True) < select_task.sort_key(
-            stale, promote_pending=True
-        )
+        assert select_task.sort_key(
+            pending, promote_pending=True
+        ) < select_task.sort_key(stale, promote_pending=True)
         # ...but without promotion the stale PR (tier 3) still outranks pending
         # (tier 4).
         assert select_task.sort_key(stale) < select_task.sort_key(pending)
@@ -496,14 +496,16 @@ class TestSelectTaskSortKey:
         # Reviewer responses (URGENT) are not preempted by the reserved slot.
         pending = make_story("pending", id="US-P")
         urgent = make_story("pushed", id="US-U", lastActivityBy="reviewer")
-        assert select_task.sort_key(urgent, promote_pending=True) < select_task.sort_key(
-            pending, promote_pending=True
-        )
+        assert select_task.sort_key(
+            urgent, promote_pending=True
+        ) < select_task.sort_key(pending, promote_pending=True)
 
 
 class TestSelectTaskQuarantine:
     def test_stuck_pending_is_quarantined(self, select_task):
-        story = make_story("pending", iterationLogs=["l"] * select_task.MAX_PENDING_ATTEMPTS)
+        story = make_story(
+            "pending", iterationLogs=["l"] * select_task.MAX_PENDING_ATTEMPTS
+        )
         assert select_task.assign_tier(story) == select_task.TIER_QUARANTINE
 
     def test_under_cap_stays_normal(self, select_task):
@@ -633,8 +635,14 @@ class TestCheckPrdHasWork:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def make_pr(number=38869, title="Add TI-042", files=("docs/best-practices/x.md",),
-            body="", branch="docs/ti-042", draft=False):
+def make_pr(
+    number=38869,
+    title="Add TI-042",
+    files=("docs/best-practices/x.md",),
+    body="",
+    branch="docs/ti-042",
+    draft=False,
+):
     return {
         "number": number,
         "title": title,
@@ -652,8 +660,11 @@ class TestSyncBotPrsTracking:
         assert 38540 in sync_bot_prs.tracked_pr_numbers(prd)
 
     def test_pr_url_is_tracked(self, sync_bot_prs):
-        prd = {"stories": [make_story(
-            prUrl="https://github.com/brave/brave-core/pull/38603")]}
+        prd = {
+            "stories": [
+                make_story(prUrl="https://github.com/brave/brave-core/pull/38603")
+            ]
+        }
         assert 38603 in sync_bot_prs.tracked_pr_numbers(prd)
 
     def test_description_pr_reference_is_tracked(self, sync_bot_prs):
@@ -676,8 +687,8 @@ class TestSyncBotPrsLinkedIssue:
 
     def test_closing_keyword_with_issue_url(self, sync_bot_prs):
         pr = make_pr(
-            body="Resolves https://github.com/"
-                 f"{sync_bot_prs._issue_repo}/issues/57147")
+            body=f"Resolves https://github.com/{sync_bot_prs._issue_repo}/issues/57147"
+        )
         assert sync_bot_prs.linked_issue_number(pr) == 57147
 
     def test_bare_hash_refers_to_pr_repo_not_issue_repo(self, sync_bot_prs):
@@ -716,7 +727,8 @@ class TestSyncBotPrsStory:
 
     def test_code_story_includes_build_criteria(self, sync_bot_prs):
         story = sync_bot_prs.build_pr_story(
-            333, 332, make_pr(files=("brave/browser/x.cc",)))
+            333, 332, make_pr(files=("brave/browser/x.cc",))
+        )
         criteria = " ".join(story["acceptanceCriteria"])
         assert "Build the project (must pass)" in criteria
         assert "presubmit" in criteria
@@ -732,7 +744,9 @@ class TestSyncBotPrsStory:
 
     def test_seeded_activity_is_bot_not_reviewer(self, sync_bot_prs):
         # "reviewer" would fake TIER_URGENT before any review data is read.
-        assert sync_bot_prs.build_pr_story(333, 332, make_pr())["lastActivityBy"] == "bot"
+        assert (
+            sync_bot_prs.build_pr_story(333, 332, make_pr())["lastActivityBy"] == "bot"
+        )
 
     def test_linked_issue_uses_dedupe_phrase(self, sync_bot_prs):
         pr = make_pr(body=f"Closes {sync_bot_prs._issue_repo}#57147")
@@ -744,9 +758,16 @@ class TestSyncBotPrsStory:
 class TestSyncBotPrsMain:
     def _run(self, sync_bot_prs, monkeypatch, prd_path, prs, extra_args=()):
         monkeypatch.setattr(
-            sync_bot_prs, "fetch_bot_prs", lambda pr_number=None, state="open": prs)
-        argv = ["sync-bot-prs-to-prd.py", "--prd", prd_path,
-                "--archived-prd", prd_path + ".missing", *extra_args]
+            sync_bot_prs, "fetch_bot_prs", lambda pr_number=None, state="open": prs
+        )
+        argv = [
+            "sync-bot-prs-to-prd.py",
+            "--prd",
+            prd_path,
+            "--archived-prd",
+            prd_path + ".missing",
+            *extra_args,
+        ]
         monkeypatch.setattr(sys, "argv", argv)
         return sync_bot_prs.main()
 
@@ -759,35 +780,41 @@ class TestSyncBotPrsMain:
         assert stories[1]["priority"] == 6
 
     def test_skips_tracked_pr(self, sync_bot_prs, monkeypatch, write_json, read_json):
-        prd_path = write_json(
-            "prd.json", {"stories": [make_story(prNumber=38869)]})
+        prd_path = write_json("prd.json", {"stories": [make_story(prNumber=38869)]})
         assert self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()]) == 0
         assert len(read_json(prd_path)["stories"]) == 1
 
     def test_skips_draft_pr(self, sync_bot_prs, monkeypatch, write_json, read_json):
         prd_path = write_json("prd.json", {"stories": []})
-        assert self._run(
-            sync_bot_prs, monkeypatch, prd_path, [make_pr(draft=True)]) == 0
+        assert (
+            self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr(draft=True)]) == 0
+        )
         assert read_json(prd_path)["stories"] == []
 
     def test_dry_run_writes_nothing(
-            self, sync_bot_prs, monkeypatch, write_json, read_json):
+        self, sync_bot_prs, monkeypatch, write_json, read_json
+    ):
         prd_path = write_json("prd.json", {"stories": []})
-        assert self._run(
-            sync_bot_prs, monkeypatch, prd_path, [make_pr()], ["--dry-run"]) == 0
+        assert (
+            self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()], ["--dry-run"])
+            == 0
+        )
         assert read_json(prd_path)["stories"] == []
 
     def test_existing_stories_untouched(
-            self, sync_bot_prs, monkeypatch, write_json, read_json):
+        self, sync_bot_prs, monkeypatch, write_json, read_json
+    ):
         existing = make_story(id="US-001", priority=5, status="merged")
         prd_path = write_json("prd.json", {"stories": [existing]})
         self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()])
         assert read_json(prd_path)["stories"][0] == existing
 
     def test_ids_continue_from_highest_existing(
-            self, sync_bot_prs, monkeypatch, write_json, read_json):
+        self, sync_bot_prs, monkeypatch, write_json, read_json
+    ):
         prd_path = write_json(
-            "prd.json", {"stories": [make_story(id="US-330", priority=1027)]})
+            "prd.json", {"stories": [make_story(id="US-330", priority=1027)]}
+        )
         self._run(sync_bot_prs, monkeypatch, prd_path, [make_pr()])
         assert read_json(prd_path)["stories"][1]["id"] == "US-331"
 

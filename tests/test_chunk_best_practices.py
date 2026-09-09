@@ -26,6 +26,7 @@ _CONFIG_PATH = os.path.join(_BOT_DIR, "config.json")
 _BP_DOCS_DIR = None
 if os.path.isfile(_CONFIG_PATH):
     import json as _json
+
     with open(_CONFIG_PATH) as _f:
         _bp = _json.load(_f).get("bestPractices", {})
         _BP_DOCS_DIR = _bp.get("docsDir")

@@ -89,9 +89,18 @@ def fetch_and_create_worktree(pr_number, head_sha, worktree_path):
     # Serialize fetches — git fetch takes a pack-refs lock.
     with _git_fetch_lock:
         result = subprocess.run(
-            ["git", "-C", TARGET_REPO_PATH, "fetch", "origin",
-             f"pull/{pr_number}/head", "--no-tags"],
-            capture_output=True, text=True, timeout=180,
+            [
+                "git",
+                "-C",
+                TARGET_REPO_PATH,
+                "fetch",
+                "origin",
+                f"pull/{pr_number}/head",
+                "--no-tags",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
         )
         if result.returncode != 0:
             log(f"  WARNING: fetch for PR #{pr_number} failed: {result.stderr.strip()}")
@@ -99,12 +108,24 @@ def fetch_and_create_worktree(pr_number, head_sha, worktree_path):
 
     # Worktree creation doesn't need the lock.
     result = subprocess.run(
-        ["git", "-C", TARGET_REPO_PATH, "worktree", "add",
-         worktree_path, "--detach", head_sha],
-        capture_output=True, text=True, timeout=60,
+        [
+            "git",
+            "-C",
+            TARGET_REPO_PATH,
+            "worktree",
+            "add",
+            worktree_path,
+            "--detach",
+            head_sha,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
-        log(f"  WARNING: worktree add for PR #{pr_number} failed: {result.stderr.strip()}")
+        log(
+            f"  WARNING: worktree add for PR #{pr_number} failed: {result.stderr.strip()}"
+        )
         return None
 
     return worktree_path
@@ -161,7 +182,9 @@ def parse_args():
 def resolve_bot_username():
     result = subprocess.run(
         ["gh", "api", "user", "--jq", ".login"],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     if result.returncode != 0:
         log(f"ERROR: failed to resolve bot username: {result.stderr}")
@@ -186,7 +209,9 @@ def is_feature_branch(base_ref):
 def fetch_diff(pr_number):
     result = subprocess.run(
         ["gh", "pr", "diff", "--repo", PR_REPO, str(pr_number)],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to fetch diff: {result.stderr.strip()}")
@@ -211,7 +236,7 @@ def parse_diff_line_ranges(diff_text):
             if current_file not in ranges:
                 ranges[current_file] = []
         elif line.startswith("@@ ") and current_file:
-            m = re.search(r'\+(\d+)(?:,(\d+))?', line)
+            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
             if m:
                 start = int(m.group(1))
                 count = int(m.group(2)) if m.group(2) else 1
@@ -260,9 +285,13 @@ def classify_files(diff_text):
             flags["has_cpp_files"] = True
 
         # Test files
-        if (fl.endswith("_test.cc") or fl.endswith("_browsertest.cc") or
-                fl.endswith("_unittest.cc") or fl.endswith(".test.ts") or
-                fl.endswith(".test.tsx")):
+        if (
+            fl.endswith("_test.cc")
+            or fl.endswith("_browsertest.cc")
+            or fl.endswith("_unittest.cc")
+            or fl.endswith(".test.ts")
+            or fl.endswith(".test.tsx")
+        ):
             flags["has_test_files"] = True
 
         # chromium_src
@@ -290,15 +319,18 @@ def classify_files(diff_text):
             flags["has_patch_files"] = True
 
         # Nala files
-        if (re.search(r"/res/drawable/", f) or re.search(r"/res/values/", f) or
-                re.search(r"/res/values-night/", f) or
-                "components/vector_icons/" in f or
-                fl.endswith(".icon") or fl.endswith(".svg")):
+        if (
+            re.search(r"/res/drawable/", f)
+            or re.search(r"/res/values/", f)
+            or re.search(r"/res/values-night/", f)
+            or "components/vector_icons/" in f
+            or fl.endswith(".icon")
+            or fl.endswith(".svg")
+        ):
             flags["has_nala_files"] = True
 
         # Localization files
-        if (fl.endswith((".grd", ".grdp", ".xtb")) or
-                "l10n/" in f or "strings/" in f):
+        if fl.endswith((".grd", ".grdp", ".xtb")) or "l10n/" in f or "strings/" in f:
             flags["has_localization_files"] = True
 
     return flags
@@ -311,7 +343,9 @@ def _gh_api_paginated(endpoint):
     """Fetch paginated GitHub API results."""
     result = subprocess.run(
         ["gh", "api", endpoint, "--paginate"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         log(f"WARNING: gh api {endpoint} failed: {result.stderr.strip()}")
@@ -326,7 +360,9 @@ def _gh_api(endpoint):
     """Fetch a single GitHub API result (no pagination)."""
     result = subprocess.run(
         ["gh", "api", endpoint],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         log(f"WARNING: gh api {endpoint} failed: {result.stderr.strip()}")
@@ -367,8 +403,7 @@ def fetch_prior_comments(pr_number, org_members, include_author=None):
         commit_data = _gh_api(f"repos/{repo}/commits/{head_sha}")
         if commit_data:
             latest_push_ts = (
-                (commit_data.get("commit") or {})
-                .get("committer") or {}
+                (commit_data.get("commit") or {}).get("committer") or {}
             ).get("date", "")
 
     # Find latest reviewer activity from org members
@@ -523,11 +558,15 @@ def resolve_bot_threads(pr_number, bot_username):
             str(pr_number),
             bot_username,
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         cwd=_BOT_DIR,
     )
     if result.returncode != 0:
-        log(f"WARNING: resolve-bot-threads failed for #{pr_number}: {result.stderr.strip()}")
+        log(
+            f"WARNING: resolve-bot-threads failed for #{pr_number}: {result.stderr.strip()}"
+        )
         return {"resolved": 0, "unresolved_bot_threads": 0, "total_bot_threads": 0}
     try:
         data = json.loads(result.stdout)
@@ -551,7 +590,9 @@ def check_can_approve(pr_number, bot_username):
             str(pr_number),
             bot_username,
         ],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
         cwd=_BOT_DIR,
     )
     try:
@@ -572,10 +613,19 @@ def submit_approve(pr_number, head_sha):
     # Submit APPROVE
     approve_input = json.dumps({"event": "APPROVE", "body": ""})
     result = subprocess.run(
-        ["gh", "api", f"repos/{PR_REPO}/pulls/{pr_number}/reviews",
-         "--method", "POST", "--input", "-"],
+        [
+            "gh",
+            "api",
+            f"repos/{PR_REPO}/pulls/{pr_number}/reviews",
+            "--method",
+            "POST",
+            "--input",
+            "-",
+        ],
         input=approve_input,
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         log(f"WARNING: APPROVE failed for #{pr_number}: {result.stderr.strip()}")
@@ -590,7 +640,9 @@ def submit_approve(pr_number, head_sha):
             head_sha,
             "--approve",
         ],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
         cwd=_BOT_DIR,
     )
     return True
@@ -607,18 +659,24 @@ def extract_images(pr_number):
             os.path.join(_BOT_DIR, "scripts", "extract-pr-images.py"),
             str(pr_number),
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         cwd=_BOT_DIR,
     )
     if result.returncode != 0:
-        log(f"WARNING: extract-pr-images failed for #{pr_number}: {result.stderr.strip()}")
+        log(
+            f"WARNING: extract-pr-images failed for #{pr_number}: {result.stderr.strip()}"
+        )
         return []
     try:
         data = json.loads(result.stdout)
         return [
-            {"abs_path": img.get("abs_path", img.get("path", "")),
-             "source": img.get("source", ""),
-             "alt": img.get("alt", "")}
+            {
+                "abs_path": img.get("abs_path", img.get("path", "")),
+                "source": img.get("source", ""),
+                "alt": img.get("alt", ""),
+            }
             for img in data.get("images", [])
         ]
     except json.JSONDecodeError:
@@ -795,9 +853,19 @@ CRITICAL: You MUST write the results JSON file even if there are no violations.
 CRITICAL: NEVER post reviews, comments, or approvals to GitHub. NEVER use `gh api`, `gh pr review`, `gh pr comment`, or any other command to interact with the GitHub API. Your ONLY job is to analyze the diff against the rules and write the results JSON file. All posting is handled by a separate pipeline script after your results are collected."""
 
 
-def build_subagent_prompt(pr_number, pr_title, diff_text, images, prior_comments,
-                          bot_username, chunk, diff_line_ranges=None,
-                          results_file=None, target_repo_path=None, base_ref=None):
+def build_subagent_prompt(
+    pr_number,
+    pr_title,
+    diff_text,
+    images,
+    prior_comments,
+    bot_username,
+    chunk,
+    diff_line_ranges=None,
+    results_file=None,
+    target_repo_path=None,
+    base_ref=None,
+):
     """Build a complete self-contained subagent prompt for a single chunk."""
     doc = chunk["doc"]
     chunk_index = chunk["chunk_index"]
@@ -835,9 +903,15 @@ def build_subagent_prompt(pr_number, pr_title, diff_text, images, prior_comments
     # 2b. Valid line ranges for inline comments
     if diff_line_ranges:
         parts.append("## Valid Line Ranges for Inline Comments")
-        parts.append("CRITICAL: The `line` field in each violation MUST fall within one of these ranges.")
-        parts.append("These are the only lines where GitHub allows inline review comments.")
-        parts.append("If the code you want to flag is not on a + line in the diff, use the nearest + line within the same hunk.")
+        parts.append(
+            "CRITICAL: The `line` field in each violation MUST fall within one of these ranges."
+        )
+        parts.append(
+            "These are the only lines where GitHub allows inline review comments."
+        )
+        parts.append(
+            "If the code you want to flag is not on a + line in the diff, use the nearest + line within the same hunk."
+        )
         parts.append("```")
         parts.append(format_diff_line_ranges(diff_line_ranges))
         parts.append("```")
@@ -845,16 +919,22 @@ def build_subagent_prompt(pr_number, pr_title, diff_text, images, prior_comments
 
     # 3. Image paths (if any)
     if images:
-        parts.append("This PR includes screenshots/images. Use the Read tool to view each image for visual context about what the PR changes:")
+        parts.append(
+            "This PR includes screenshots/images. Use the Read tool to view each image for visual context about what the PR changes:"
+        )
         for img in images:
-            parts.append(f"- {img['abs_path']} (from: {img['source']}, alt: \"{img['alt']}\")")
+            parts.append(
+                f'- {img["abs_path"]} (from: {img["source"]}, alt: "{img["alt"]}")'
+            )
         parts.append("")
 
     # 4. Prior comments context
     if prior_comments:
         parts.append("## Prior Review Comments")
         parts.append("")
-        parts.append(f"The bot's GitHub username is `{bot_username}`. Comments from this user are the bot's own previous comments.")
+        parts.append(
+            f"The bot's GitHub username is `{bot_username}`. Comments from this user are the bot's own previous comments."
+        )
         parts.append("")
         parts.append(prior_comments)
         parts.append("")
@@ -907,11 +987,13 @@ def build_subagent_prompt(pr_number, pr_title, diff_text, images, prior_comments
         else:
             base_branch_validation_note = ""
         parts.append("")
-        parts.append(_VALIDATION_INSTRUCTIONS.format(
-            target_repo_path=target_repo_path,
-            results_file=results_file,
-            base_branch_validation_note=base_branch_validation_note,
-        ))
+        parts.append(
+            _VALIDATION_INSTRUCTIONS.format(
+                target_repo_path=target_repo_path,
+                results_file=results_file,
+                base_branch_validation_note=base_branch_validation_note,
+            )
+        )
 
     return "\n".join(parts)
 
@@ -942,7 +1024,11 @@ def process_pr(pr, bot_username, org_members, work_dir):
         # b. Classify files
         file_flags = classify_files(diff_text)
     except Exception as e:
-        return None, {"pr_number": pr_number, "stage": "classify_files", "error": str(e)}
+        return None, {
+            "pr_number": pr_number,
+            "stage": "classify_files",
+            "error": str(e),
+        }
 
     try:
         # c. Fetch prior comments
@@ -966,7 +1052,11 @@ def process_pr(pr, bot_username, org_members, work_dir):
         # e. Resolve addressed threads
         thread_resolution = resolve_bot_threads(pr_number, bot_username)
     except Exception as e:
-        thread_resolution = {"resolved": 0, "unresolved_bot_threads": 0, "total_bot_threads": 0}
+        thread_resolution = {
+            "resolved": 0,
+            "unresolved_bot_threads": 0,
+            "total_bot_threads": 0,
+        }
         log(f"  WARNING: thread resolution failed for #{pr_number}: {e}")
 
     try:
@@ -991,8 +1081,10 @@ def process_pr(pr, bot_username, org_members, work_dir):
     if worktree_path:
         log(f"  Worktree created for PR #{pr_number}: {worktree_path}")
     else:
-        log(f"  WARNING: worktree unavailable for PR #{pr_number}, "
-            f"falling back to {TARGET_REPO_PATH}")
+        log(
+            f"  WARNING: worktree unavailable for PR #{pr_number}, "
+            f"falling back to {TARGET_REPO_PATH}"
+        )
 
     # i. Chunk each doc, build subagent prompts, write to files
     subagent_prompts = []
@@ -1009,8 +1101,13 @@ def process_pr(pr, bot_username, org_members, work_dir):
                 results_file = os.path.join(pr_work_dir, f"{chunk_id}_results.json")
 
                 prompt = build_subagent_prompt(
-                    pr_number, pr_title, diff_text, images,
-                    prior_comments, bot_username, chunk,
+                    pr_number,
+                    pr_title,
+                    diff_text,
+                    images,
+                    prior_comments,
+                    bot_username,
+                    chunk,
                     diff_line_ranges=diff_line_ranges,
                     results_file=results_file,
                     target_repo_path=effective_repo_path,
@@ -1024,20 +1121,22 @@ def process_pr(pr, bot_username, org_members, work_dir):
                 prompt_chars = len(prompt)
                 total_prompt_chars += prompt_chars
 
-                subagent_prompts.append({
-                    "chunk_id": chunk_id,
-                    "doc": doc_info["doc"],
-                    "chunk_index": chunk["chunk_index"],
-                    "total_chunks": chunk["total_chunks"],
-                    "rule_count": chunk["rule_count"],
-                    "headings": chunk["headings"],
-                    "prompt_file": prompt_file,
-                    "results_file": results_file,
-                    "cost_estimate": {
-                        "prompt_chars": prompt_chars,
-                        "prompt_tokens_approx": prompt_chars // 4,
-                    },
-                })
+                subagent_prompts.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "doc": doc_info["doc"],
+                        "chunk_index": chunk["chunk_index"],
+                        "total_chunks": chunk["total_chunks"],
+                        "rule_count": chunk["rule_count"],
+                        "headings": chunk["headings"],
+                        "prompt_file": prompt_file,
+                        "results_file": results_file,
+                        "cost_estimate": {
+                            "prompt_chars": prompt_chars,
+                            "prompt_tokens_approx": prompt_chars // 4,
+                        },
+                    }
+                )
         except Exception as e:
             log(f"  WARNING: chunking failed for {doc_info['doc']}: {e}")
 
@@ -1057,11 +1156,13 @@ def process_pr(pr, bot_username, org_members, work_dir):
     }
 
     # Cost logging
-    log(f"  COST PR #{pr_number}: diff={diff_chars:,} chars, "
+    log(
+        f"  COST PR #{pr_number}: diff={diff_chars:,} chars, "
         f"prior_comments={prior_comments_chars:,} chars, "
         f"{len(subagent_prompts)} chunks, "
         f"total_prompt={total_prompt_chars:,} chars "
-        f"(~{total_prompt_chars // 4:,} tokens)")
+        f"(~{total_prompt_chars // 4:,} tokens)"
+    )
 
     log(f"  Done PR #{pr_number}: {len(subagent_prompts)} subagent prompts")
     return pr_result, None
@@ -1082,7 +1183,11 @@ def process_cached_pr(pr, bot_username):
     try:
         thread_resolution = resolve_bot_threads(pr_number, bot_username)
     except Exception as e:
-        thread_resolution = {"resolved": 0, "unresolved_bot_threads": 0, "total_bot_threads": 0}
+        thread_resolution = {
+            "resolved": 0,
+            "unresolved_bot_threads": 0,
+            "total_bot_threads": 0,
+        }
         log(f"  WARNING: thread resolution failed for cached #{pr_number}: {e}")
 
     # Check approval gate
@@ -1159,11 +1264,18 @@ def main():
     else:
         cache = _fp_mod.load_cache()
         (
-            to_review, cached_prs_raw,
-            skipped_filtered, skipped_cached,
-            skipped_approved, skipped_external,
+            to_review,
+            cached_prs_raw,
+            skipped_filtered,
+            skipped_cached,
+            skipped_approved,
+            skipped_external,
         ) = _fp_mod.filter_prs(
-            raw_prs, mode, days, cache, org_members,
+            raw_prs,
+            mode,
+            days,
+            cache,
+            org_members,
             reviewer_priority=bot_username if reviewer_priority else None,
         )
 
@@ -1203,9 +1315,7 @@ def main():
             "baseRefName": pr.get("baseRefName", ""),
             "author": author,
             "hasApproval": _fp_mod.has_any_approval(pr),
-            "isExternalContributor": bool(
-                org_members and author not in org_members
-            ),
+            "isExternalContributor": bool(org_members and author not in org_members),
         }
         return entry
 
@@ -1255,11 +1365,13 @@ def main():
                     if result:
                         processed_prs.append(result)
                 except Exception as e:
-                    errors.append({
-                        "pr_number": pr["number"],
-                        "stage": "process_pr",
-                        "error": str(e),
-                    })
+                    errors.append(
+                        {
+                            "pr_number": pr["number"],
+                            "stage": "process_pr",
+                            "error": str(e),
+                        }
+                    )
 
     # Sort processed PRs to match original order
     pr_order = {p["number"]: i for i, p in enumerate(prs_to_process)}
@@ -1280,11 +1392,13 @@ def main():
                     result = future.result()
                     processed_cached.append(result)
                 except Exception as e:
-                    errors.append({
-                        "pr_number": pr["number"],
-                        "stage": "process_cached_pr",
-                        "error": str(e),
-                    })
+                    errors.append(
+                        {
+                            "pr_number": pr["number"],
+                            "stage": "process_cached_pr",
+                            "error": str(e),
+                        }
+                    )
 
     # Sort cached PRs to match original order
     cached_order = {p["number"]: i for i, p in enumerate(cached_to_process)}
@@ -1322,7 +1436,9 @@ def main():
     log(f"{'=' * 60}")
     log(f"PRs to review: {len(processed_prs)}")
     log(f"Total subagent prompts: {total_prompts}")
-    log(f"Total prompt size: {total_prompt_chars:,} chars (~{total_prompt_tokens:,} tokens)")
+    log(
+        f"Total prompt size: {total_prompt_chars:,} chars (~{total_prompt_tokens:,} tokens)"
+    )
     if total_prompts > 0:
         avg_chars = total_prompt_chars // total_prompts
         log(f"Average prompt size: {avg_chars:,} chars (~{avg_chars // 4:,} tokens)")
@@ -1334,14 +1450,18 @@ def main():
             sp.get("cost_estimate", {}).get("prompt_chars", 0)
             for sp in pr.get("subagent_prompts", [])
         )
-        log(f"  PR #{pr['number']}: {len(pr.get('subagent_prompts', []))} chunks, "
-            f"{pr_chars:,} chars (~{pr_chars // 4:,} tokens)")
+        log(
+            f"  PR #{pr['number']}: {len(pr.get('subagent_prompts', []))} chunks, "
+            f"{pr_chars:,} chars (~{pr_chars // 4:,} tokens)"
+        )
     log(f"{'=' * 60}")
 
-    log(f"\nDone. {len(processed_prs)} PRs processed, "
+    log(
+        f"\nDone. {len(processed_prs)} PRs processed, "
         f"{total_prompts} total subagent prompts, "
         f"{len(processed_cached)} cached PRs processed, "
-        f"{len(errors)} errors.")
+        f"{len(errors)} errors."
+    )
 
     # Output just the work_dir path to stdout (tiny — the LLM only needs this)
     print(json.dumps({"work_dir": work_dir, "manifest": manifest_path}))

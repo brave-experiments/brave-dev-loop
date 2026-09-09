@@ -50,8 +50,10 @@ def collect_violations(pr):
 
         if not os.path.isfile(results_file):
             chunk_id = prompt_entry.get("chunk_id", "unknown")
-            log(f"WARNING: results file missing for PR #{pr['number']} "
-                f"chunk {chunk_id}: {results_file}")
+            log(
+                f"WARNING: results file missing for PR #{pr['number']} "
+                f"chunk {chunk_id}: {results_file}"
+            )
             continue
 
         try:
@@ -59,8 +61,10 @@ def collect_violations(pr):
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             chunk_id = prompt_entry.get("chunk_id", "unknown")
-            log(f"WARNING: invalid results file for PR #{pr['number']} "
-                f"chunk {chunk_id}: {e}")
+            log(
+                f"WARNING: invalid results file for PR #{pr['number']} "
+                f"chunk {chunk_id}: {e}"
+            )
             continue
 
         all_violations.extend(data.get("violations", []))
@@ -76,14 +80,16 @@ def build_post_review_input(manifest):
     for pr in manifest.get("prs", []):
         violations, validation_log = collect_violations(pr)
 
-        pr_results.append({
-            "number": pr["number"],
-            "title": pr.get("title", ""),
-            "headRefOid": pr.get("headRefOid", ""),
-            "hasApproval": pr.get("hasApproval", False),
-            "violations": violations,
-            "validation_log": validation_log,
-        })
+        pr_results.append(
+            {
+                "number": pr["number"],
+                "title": pr.get("title", ""),
+                "headRefOid": pr.get("headRefOid", ""),
+                "hasApproval": pr.get("hasApproval", False),
+                "violations": violations,
+                "validation_log": validation_log,
+            }
+        )
 
     return {"pr_results": pr_results}
 
@@ -100,13 +106,24 @@ def cleanup_worktrees(manifest):
         if not os.path.isdir(worktree_path):
             continue
         result = subprocess.run(
-            ["git", "-C", target_repo_path, "worktree", "remove",
-             worktree_path, "--force"],
-            capture_output=True, text=True, timeout=30,
+            [
+                "git",
+                "-C",
+                target_repo_path,
+                "worktree",
+                "remove",
+                worktree_path,
+                "--force",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
-            log(f"WARNING: failed to remove worktree {worktree_path}: "
-                f"{result.stderr.strip()}")
+            log(
+                f"WARNING: failed to remove worktree {worktree_path}: "
+                f"{result.stderr.strip()}"
+            )
         else:
             log(f"Removed worktree: {worktree_path}")
 
@@ -127,10 +144,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Collect subagent results and run post-review.py"
     )
-    parser.add_argument("--work-dir", required=True,
-                        help="Temp directory with manifest.json and results")
-    parser.add_argument("--auto", action="store_true",
-                        help="Pass --auto to post-review.py")
+    parser.add_argument(
+        "--work-dir",
+        required=True,
+        help="Temp directory with manifest.json and results",
+    )
+    parser.add_argument(
+        "--auto", action="store_true", help="Pass --auto to post-review.py"
+    )
     args = parser.parse_args()
 
     # Load manifest
@@ -156,8 +177,7 @@ def main():
 
     # Collection stats
     total_chunks = sum(
-        len(pr.get("subagent_prompts", []))
-        for pr in manifest.get("prs", [])
+        len(pr.get("subagent_prompts", [])) for pr in manifest.get("prs", [])
     )
     results_found = 0
     results_missing = 0
@@ -204,9 +224,12 @@ def main():
     cmd = [
         "python3",
         os.path.join(SCRIPT_DIR, "post-review.py"),
-        "--pr-repo", pr_repo,
-        "--bot-username", bot_username,
-        "--input", input_path,
+        "--pr-repo",
+        pr_repo,
+        "--bot-username",
+        bot_username,
+        "--input",
+        input_path,
     ]
     if auto_mode:
         cmd.append("--auto")

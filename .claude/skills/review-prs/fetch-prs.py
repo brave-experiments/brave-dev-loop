@@ -274,7 +274,9 @@ def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):
             updated = datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00"))
             if updated < cutoff:
                 # Don't filter out PRs where the bot is explicitly requested
-                if not (reviewer_priority and is_requested_reviewer(pr, reviewer_priority)):
+                if not (
+                    reviewer_priority and is_requested_reviewer(pr, reviewer_priority)
+                ):
                     skipped_filtered += 1
                     continue
 

@@ -23,7 +23,9 @@ def load_config(config_path=None):
         with open(config_path) as f:
             return json.load(f)
 
-    bot_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    bot_dir = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
     for name in ("config.json", "config.example.json"):
         path = os.path.join(bot_dir, name)
         if os.path.exists(path):
@@ -51,6 +53,9 @@ def require_config(config, dotted_key):
     """Read a dotted key from the config dict, exit with error if missing or empty."""
     value = get_config(config, dotted_key)
     if not value:
-        print(f"Error: '{dotted_key}' not set in config.json. Run 'make setup'.", file=sys.stderr)
+        print(
+            f"Error: '{dotted_key}' not set in config.json. Run 'make setup'.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return value

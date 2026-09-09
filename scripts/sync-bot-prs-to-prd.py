@@ -81,8 +81,15 @@ def fetch_bot_prs(pr_number=None, state="open"):
     """Fetch bot-authored PRs from the PR repository."""
     if pr_number is not None:
         pr = run_gh(
-            ["pr", "view", str(pr_number), "--repo", _pr_repo, "--json",
-             PR_FIELDS + ",author,state"]
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                _pr_repo,
+                "--json",
+                PR_FIELDS + ",author,state",
+            ]
         )
         author = (pr.get("author") or {}).get("login")
         if author != _bot_user:
@@ -100,8 +107,20 @@ def fetch_bot_prs(pr_number=None, state="open"):
         return [pr]
 
     return run_gh(
-        ["pr", "list", "--repo", _pr_repo, "--author", _bot_user, "--state", state,
-         "--json", PR_FIELDS, "--limit", "100"]
+        [
+            "pr",
+            "list",
+            "--repo",
+            _pr_repo,
+            "--author",
+            _bot_user,
+            "--state",
+            state,
+            "--json",
+            PR_FIELDS,
+            "--limit",
+            "100",
+        ]
     )
 
 
@@ -214,20 +233,26 @@ def main():
         description="Add stories for untracked bot-authored PRs"
     )
     parser.add_argument(
-        "--prd", default=os.path.join(_bot_dir, "data", "prd.json"),
-        help="Path to prd.json"
+        "--prd",
+        default=os.path.join(_bot_dir, "data", "prd.json"),
+        help="Path to prd.json",
     )
     parser.add_argument(
-        "--archived-prd", default=os.path.join(_bot_dir, "data", "prd.archived.json"),
-        help="Path to prd.archived.json (checked for already-tracked PRs)"
+        "--archived-prd",
+        default=os.path.join(_bot_dir, "data", "prd.archived.json"),
+        help="Path to prd.archived.json (checked for already-tracked PRs)",
     )
     parser.add_argument("--pr", type=int, help="Only consider this PR number")
     parser.add_argument(
-        "--state", default="open", choices=["open", "closed", "merged", "all"],
-        help="PR state to sync (default: open)"
+        "--state",
+        default="open",
+        choices=["open", "closed", "merged", "all"],
+        help="PR state to sync (default: open)",
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="Report what would be added, write nothing"
+        "--dry-run",
+        action="store_true",
+        help="Report what would be added, write nothing",
     )
     args = parser.parse_args()
 
@@ -296,15 +321,23 @@ def main():
             file=sys.stderr,
         )
 
-    print(json.dumps({
-        "added": [
-            {"id": s["id"], "prNumber": s["prNumber"], "prUrl": s["prUrl"],
-             "title": s["title"]}
-            for s in new_stories
-        ],
-        "checked": len(prs),
-        "dryRun": args.dry_run,
-    }))
+    print(
+        json.dumps(
+            {
+                "added": [
+                    {
+                        "id": s["id"],
+                        "prNumber": s["prNumber"],
+                        "prUrl": s["prUrl"],
+                        "title": s["title"],
+                    }
+                    for s in new_stories
+                ],
+                "checked": len(prs),
+                "dryRun": args.dry_run,
+            }
+        )
+    )
     return 0
 
 

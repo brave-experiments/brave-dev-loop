@@ -5,14 +5,17 @@ Usage: uv run --with faster-whisper scripts/transcribe-audio.py <audio_file>
 
 Outputs the transcribed text to stdout. Exits with code 1 on failure.
 """
+
 import sys
 
 
 def transcribe(audio_path):
     from faster_whisper import WhisperModel
+
     model = WhisperModel("tiny", device="cpu", compute_type="int8")
     segments, _ = model.transcribe(audio_path, beam_size=5)
     return " ".join(segment.text.strip() for segment in segments)
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
