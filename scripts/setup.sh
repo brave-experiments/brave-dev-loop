@@ -439,11 +439,21 @@ if [ "$SKIP_GIT" = false ]; then
     EXPECTED_SSH_CFG=$(bot_ssh_command "$SSH_KEY")
   fi
 
+  # Defaults to the key the bot pushes with, so the signature belongs to the
+  # same account as the authorship. Without this the repo inherits the machine
+  # owner's global signing key and GitHub marks every bot commit unverified.
+  SIGNING_KEY=$(bot_signing_key "$BOT_SIGNING_KEY_PATH" "$SSH_KEY")
+  GIT_SIGNING_KEY=$(git -C "$GIT_REPO" config --local user.signingkey || echo "")
+
   if [ "$GIT_USER" = "$BOT_USERNAME" ] && [ "$GIT_EMAIL" = "$BOT_EMAIL" ] &&
-     [ "$GIT_SSH_CFG" = "$EXPECTED_SSH_CFG" ]; then
+     [ "$GIT_SSH_CFG" = "$EXPECTED_SSH_CFG" ] &&
+     [ "$GIT_SIGNING_KEY" = "$SIGNING_KEY" ]; then
     echo "  ✓ Git identity: $GIT_USER <$GIT_EMAIL>"
     if [ -n "$EXPECTED_SSH_CFG" ]; then
       echo "  ✓ SSH key pinned: $SSH_KEY"
+    fi
+    if [ -n "$SIGNING_KEY" ]; then
+      echo "  ✓ Commits signed with: $SIGNING_KEY"
     fi
   else
     echo "  Repo-local git identity needs updating:"
@@ -454,11 +464,14 @@ if [ "$SKIP_GIT" = false ]; then
     elif [ -n "$GIT_SSH_CFG" ]; then
       echo "    core.sshCommand → unset (falls back to this machine's default key)"
     fi
+    if [ -n "$SIGNING_KEY" ]; then
+      echo "    user.signingkey → signs commits and tags with $SIGNING_KEY"
+    fi
     echo "  These are written to $GIT_REPO/.git/config only."
     read -p "  Apply? (Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-      bot_apply_repo_identity "$GIT_REPO" "$BOT_USERNAME" "$BOT_EMAIL" "$SSH_KEY"
+      bot_apply_repo_identity "$GIT_REPO" "$BOT_USERNAME" "$BOT_EMAIL" "$SSH_KEY" "$BOT_SIGNING_KEY_PATH"
       GIT_USER="$BOT_USERNAME"
       GIT_EMAIL="$BOT_EMAIL"
       echo "  ✓ Git identity configured"
@@ -468,6 +481,11 @@ if [ "$SKIP_GIT" = false ]; then
       echo "    git -C $GIT_REPO config --local user.email \"$BOT_EMAIL\""
       if [ -n "$EXPECTED_SSH_CFG" ]; then
         echo "    git -C $GIT_REPO config --local core.sshCommand \"$EXPECTED_SSH_CFG\""
+      fi
+      if [ -n "$SIGNING_KEY" ]; then
+        echo "    git -C $GIT_REPO config --local gpg.format ssh"
+        echo "    git -C $GIT_REPO config --local user.signingkey \"$SIGNING_KEY\""
+        echo "    git -C $GIT_REPO config --local commit.gpgsign true"
       fi
       GIT_USER="${GIT_USER:-$BOT_USERNAME}"
     fi
@@ -681,7 +699,43 @@ cp "$BOT_HOOK_SOURCE" "$BOT_HOOK_DEST"
 chmod +x "$BOT_HOOK_DEST"
 echo "✓ Bot repo pre-commit hook installed"
 echo "  (Prevents committing data/prd.json, data/progress.txt, data/run-state.json)"
+
+# The bot commits to this repo too (learned patterns, best-practice updates), so
+# it needs the same identity here. Without it these commits inherit the machine
+# owner's name and signing key.
+BOT_REPO_SIGNING_KEY=$(bot_signing_key "$BOT_SIGNING_KEY_PATH" "$BOT_SSH_KEY_PATH")
+bot_apply_repo_identity "$PROJECT_ROOT" "$BOT_USERNAME" "$BOT_EMAIL" "$BOT_SSH_KEY_PATH" "$BOT_SIGNING_KEY_PATH"
+echo "✓ Bot repo git identity: $BOT_USERNAME <$BOT_EMAIL>"
+if [ -n "$BOT_REPO_SIGNING_KEY" ]; then
+  echo "  Commits signed with: $BOT_REPO_SIGNING_KEY"
+fi
 echo ""
+
+# A signing key GitHub does not know about produces "Unverified" on every
+# commit, which looks identical to a broken signature. It must be registered as
+# a *signing* key, which is a separate list from authentication keys.
+if [ -n "$BOT_REPO_SIGNING_KEY" ] && [ -f "$BOT_REPO_SIGNING_KEY" ]; then
+  SIGNING_PUB=$(awk '{print $1" "$2}' "$BOT_REPO_SIGNING_KEY" 2>/dev/null)
+  # Reading this list needs the admin:ssh_signing_key scope. Distinguish "not
+  # registered" from "cannot tell": warning about a key that is in fact
+  # registered just trains the operator to ignore the warning.
+  if ! SIGNING_KEYS=$(gh api user/ssh_signing_keys --jq '.[].key' 2>/dev/null); then
+    echo "ℹ️  Could not check whether the signing key is registered for $BOT_USERNAME"
+    echo "   (the gh token lacks the admin:ssh_signing_key scope — this does not"
+    echo "   mean the key is missing). To check:"
+    echo "     GH_CONFIG_DIR=${BOT_GH_CONFIG_DIR:-~/.config/gh} gh auth refresh -h github.com -s admin:ssh_signing_key"
+    echo ""
+  elif printf '%s\n' "$SIGNING_KEYS" | awk '{print $1" "$2}' | grep -Fxq "$SIGNING_PUB"; then
+    echo "✓ Signing key is registered on the bot's GitHub account"
+  else
+    echo "⚠️  The signing key is not registered as a signing key for $BOT_USERNAME."
+    echo "   Commits will be signed but show as Unverified on GitHub."
+    echo "   Register it (authentication keys are a separate list — adding it"
+    echo "   there is not enough):"
+    echo "     GH_CONFIG_DIR=${BOT_GH_CONFIG_DIR:-~/.config/gh} gh ssh-key add $BOT_REPO_SIGNING_KEY --type signing --title \"$BOT_USERNAME signing key\""
+  fi
+  echo ""
+fi
 
 # ─── Step 6: GitHub CLI account ──────────────────────────────────────────────
 # The ssh key only covers git transport. gh carries its own stored token, so

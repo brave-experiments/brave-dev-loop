@@ -101,6 +101,8 @@ BOT_PRD_MODE="${BOT_PRD_MODE:-curated}"
 BOT_USERNAME=$(bot_config '.bot.username')
 BOT_EMAIL=$(bot_config '.bot.email')
 BOT_SSH_KEY_PATH=$(bot_config '.bot.sshKeyPath')
+# null means: sign with the same key the bot pushes with.
+BOT_SIGNING_KEY_PATH=$(bot_config '.bot.signingKeyPath')
 BOT_GH_ACCOUNT=$(bot_config '.bot.ghAccount')
 BOT_GH_CONFIG_DIR=$(bot_config '.bot.ghConfigDir')
 # BOT_AGENT env var (if set) takes precedence over config
@@ -166,6 +168,6 @@ fi
 
 export BOT_DIR BOT_CONFIG_FILE
 export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BOT_TARGET_REPO_PATH BOT_TARGET_REPO_DIR BOT_PRD_MODE
-export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
+export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_SIGNING_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
 export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS

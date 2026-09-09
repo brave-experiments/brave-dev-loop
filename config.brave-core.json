@@ -15,6 +15,7 @@
     "username": "netzenbot",
     "email": "netzenbot@agentmail.to",
     "sshKeyPath": null,
+    "signingKeyPath": null,
     "ghAccount": null,
     "agent": "claude",
     "claudeModel": "opus",
