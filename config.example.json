@@ -11,6 +11,8 @@
   "bot": {
     "username": "my-bot",
     "email": "my-bot@example.com",
+    "sshKeyPath": null,
+    "ghAccount": null,
     "agent": "claude",
     "claudeModel": "opus",
     "claudeBin": null,

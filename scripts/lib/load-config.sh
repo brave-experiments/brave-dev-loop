@@ -7,6 +7,7 @@
 # Exports:
 #   BOT_PROJECT_NAME, BOT_ORG, BOT_PR_REPO, BOT_ISSUE_REPO,
 #   BOT_DEFAULT_BRANCH, BOT_USERNAME, BOT_EMAIL,
+#   BOT_SSH_KEY_PATH, BOT_GH_ACCOUNT,
 #   BOT_AGENT, BOT_CLAUDE_MODEL, BOT_CLAUDE_BIN,
 #   BOT_CODEX_MODEL, BOT_CODEX_BIN,
 #   BOT_CURSOR_MODEL, BOT_CURSOR_BIN, BOT_BP_DOCS_DIR
@@ -39,6 +40,8 @@ BOT_TARGET_REPO_PATH=$(bot_config '.project.targetRepoPath')
 
 BOT_USERNAME=$(bot_config '.bot.username')
 BOT_EMAIL=$(bot_config '.bot.email')
+BOT_SSH_KEY_PATH=$(bot_config '.bot.sshKeyPath')
+BOT_GH_ACCOUNT=$(bot_config '.bot.ghAccount')
 # BOT_AGENT env var (if set) takes precedence over config
 _BOT_AGENT_ENV="${BOT_AGENT:-}"
 BOT_AGENT=$(bot_config '.bot.agent')
@@ -91,8 +94,13 @@ fi
 # Default agent is 'claude' if not configured. BOT_AGENT env var overrides config.
 BOT_AGENT="${BOT_AGENT:-claude}"
 
+# The gh account defaults to the bot's GitHub username.
+if [ -z "$BOT_GH_ACCOUNT" ]; then
+  BOT_GH_ACCOUNT="$BOT_USERNAME"
+fi
+
 export BOT_DIR BOT_CONFIG_FILE
 export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BOT_TARGET_REPO_PATH
-export BOT_USERNAME BOT_EMAIL
+export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_GH_ACCOUNT
 export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN
 export BOT_BP_DOCS_DIR

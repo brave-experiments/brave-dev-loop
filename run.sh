@@ -80,6 +80,10 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/scripts/lib/load-config.sh"
+source "$SCRIPT_DIR/scripts/lib/git-identity.sh"
+
+# Pin this run to the bot's GitHub identity before anything can touch GitHub.
+bot_export_identity_env "$BOT_SSH_KEY_PATH" "$BOT_GH_ACCOUNT" || exit 1
 
 # CLI --agent flag has the final say (overrides env + config)
 if [ -n "$CLI_AGENT" ]; then

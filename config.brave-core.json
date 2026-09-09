@@ -11,6 +11,8 @@
   "bot": {
     "username": "netzenbot",
     "email": "netzenbot@agentmail.to",
+    "sshKeyPath": null,
+    "ghAccount": null,
     "agent": "claude",
     "claudeModel": "opus",
     "claudeBin": null,
