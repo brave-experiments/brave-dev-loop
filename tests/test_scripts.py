@@ -11,6 +11,8 @@ import sys
 from argparse import Namespace
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 SCRIPT_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts")
 UPDATE_PRD_SCRIPT = os.path.join(SCRIPT_DIR, "update-prd-status.py")
 
@@ -1615,3 +1617,131 @@ def _bc_tail(test_step):
         "Run presubmit checks (must pass)",
         _BC_FORMAT,
     ]
+
+
+# ── Project profiles ─────────────────────────────────────────────────────────
+
+# The exact acceptance-criteria tail add-backlog-to-prd.py emitted before the
+# validations moved into projects/brave-core/profile.json. brave-core bots must
+# keep getting these byte-for-byte.
+_BC_REVIEW = (
+    "Commit changes, then run the /review skill from the target repo in a fresh "
+    "subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); "
+    "report all findings back to the main context; fix any violations and commit "
+    "the fixes (must pass)"
+)
+_BC_FORMAT = (
+    "Run pnpm run format one final time; if it makes any changes, amend the last "
+    "commit with the formatting fixes"
+)
+
+
+def _bc_tail(test_step):
+    return [
+        "Build the project (must pass)",
+        "Format the code (must pass)",
+        _BC_REVIEW,
+        test_step,
+        "Run presubmit checks (must pass)",
+        _BC_FORMAT,
+    ]
+
+
+class TestBraveCoreProfileIsUnchanged:
+    """Guards the promise that moving validations into a profile changed
+    nothing for brave-core. Compares against strings captured pre-refactor."""
+
+    @pytest.fixture(autouse=True)
+    def _pin_brave_core(self, add_backlog, monkeypatch):
+        """The module binds its profile at import from the live config.json.
+        Pin brave-core so this suite means the same on every deployment."""
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import load_profile
+
+        monkeypatch.setattr(
+            add_backlog,
+            "_profile",
+            load_profile({"project": {"profile": "brave-core"}}),
+        )
+
+    def test_test_failure_story_tail(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "brave")
+        story = add_backlog.build_test_story(
+            1, 2, {"number": 42, "title": "Test failure: Foo.Bar"}
+        )
+        assert story["acceptanceCriteria"][-6:] == _bc_tail(
+            "Run the test: brave_browser_tests --gtest_filter=Foo.Bar (must pass - "
+            "run 5 times to verify consistency, unless this is a filter file change only)"
+        )
+
+    def test_disabled_test_story_tail(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "brave")
+        story = add_backlog.build_disabled_test_story(
+            1, 2, {"number": 42, "title": "Disabled test: Foo.Bar"}
+        )
+        assert story["acceptanceCriteria"][-6:] == _bc_tail(
+            "Run the test: brave_browser_tests --gtest_filter=Foo.Bar "
+            "(must pass - run 5 times to verify consistency)"
+        )
+
+    def test_generic_story_tail(self, add_backlog):
+        story = add_backlog.build_generic_story(
+            1, 2, {"number": 42, "title": "Do a thing"}
+        )
+        assert story["acceptanceCriteria"][-6:] == _bc_tail(
+            "Find and run relevant tests to verify the change (must pass)"
+        )
+
+    def test_upstream_test_uses_unprefixed_binary(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "chromium")
+        story = add_backlog.build_test_story(
+            1, 2, {"number": 42, "title": "Test failure: Foo.Bar"}
+        )
+        assert "browser_tests --gtest_filter=Foo.Bar" in story["acceptanceCriteria"][-3]
+        assert "brave_browser_tests" not in story["acceptanceCriteria"][-3]
+
+    def test_unit_suite_selection(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "brave")
+        story = add_backlog.build_test_story(
+            1, 2, {"number": 42, "title": "Test failure: Foo.PartitionAlloc"}
+        )
+        assert story["testType"] == "unit_test"
+        assert "brave_unit_tests" in story["acceptanceCriteria"][-3]
+
+
+class TestProfileLoading:
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        import lib.load_config as m
+
+        return m
+
+    def test_absent_profile_defaults_to_brave_core(self):
+        """Deployments predating profiles must not change behaviour."""
+        m = self._lib()
+        assert m.profile_dir({}).endswith(os.path.join("projects", "brave-core"))
+
+    def test_named_profile_is_used(self):
+        m = self._lib()
+        got = m.profile_dir({"project": {"profile": "default"}})
+        assert got.endswith(os.path.join("projects", "default"))
+
+    def test_unknown_profile_falls_back_to_default_profile_json(self):
+        """A half-created profile directory must not strand a bot."""
+        m = self._lib()
+        profile = m.load_profile({"project": {"profile": "does-not-exist"}})
+        assert profile.get("validations")
+
+    def test_test_step_placeholder_dropped_when_absent(self):
+        m = self._lib()
+        profile = {"validations": ["a", "{testStep}", "b"]}
+        assert m.build_validations(profile, None) == ["a", "b"]
+        assert m.build_validations(profile, "run it") == ["a", "run it", "b"]
+
+    def test_default_profile_has_no_chromium_assumptions(self):
+        m = self._lib()
+        profile = m.load_profile({"project": {"profile": "default"}})
+        blob = json.dumps(profile).lower()
+        for term in ("pnpm", "gtest", "chromium", "brave", "presubmit"):
+            assert term not in blob, f"default profile leaks {term!r}"

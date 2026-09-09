@@ -1,0 +1,20 @@
+{
+  "description": "brave-core: a Chromium-derived checkout built with pnpm, gtest binaries, and chromium_src overrides.",
+  "validations": [
+    "Build the project (must pass)",
+    "Format the code (must pass)",
+    "Commit changes, then run the /review skill from the target repo in a fresh subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); report all findings back to the main context; fix any violations and commit the fixes (must pass)",
+    "{testStep}",
+    "Run presubmit checks (must pass)",
+    "Run pnpm run format one final time; if it makes any changes, amend the last commit with the formatting fixes"
+  ],
+  "testSteps": {
+    "testFix": "Run the test: {testBinary} --gtest_filter={testFilter} (must pass - run 5 times to verify consistency, unless this is a filter file change only)",
+    "disabledTest": "Run the test: {testBinary} --gtest_filter={testFilter} (must pass - run 5 times to verify consistency)",
+    "generic": "Find and run relevant tests to verify the change (must pass)"
+  },
+  "testTargets": {
+    "unit": { "local": "brave_unit_tests", "upstream": "unit_tests" },
+    "browser": { "local": "brave_browser_tests", "upstream": "browser_tests" }
+  }
+}
