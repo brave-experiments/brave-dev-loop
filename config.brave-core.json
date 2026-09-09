@@ -6,7 +6,8 @@
     "issueRepository": "brave/brave-browser",
     "defaultBranch": "master",
     "targetRepoPath": "src/brave",
-    "botOwnerGithubHandle": "bbondy"
+    "botOwnerGithubHandle": "bbondy",
+    "useFork": true
   },
   "bot": {
     "username": "netzenbot",
@@ -22,8 +23,12 @@
     "cursorBin": null
   },
   "labels": {
-    "prLabels": ["ai-generated"],
-    "issueLabels": ["bot/type/test"],
+    "prLabels": [
+      "ai-generated"
+    ],
+    "issueLabels": [
+      "bot/type/test"
+    ],
     "disabledTestLabel": "disabled-brave-test"
   },
   "bestPractices": {
