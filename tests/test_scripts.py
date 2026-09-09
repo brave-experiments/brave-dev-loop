@@ -1373,6 +1373,9 @@ class TestAddBacklogEndToEnd:
         assert len(prd["stories"]) == 1
 
 
+# ── resolve_target_repo ──────────────────────────────────────────────────────
+
+
 class TestResolveTargetRepo:
     """project.targetRepoPath is stored against two different bases in the
     wild: config.brave-core.json uses "src/brave" (relative to the bot dir's
@@ -1589,34 +1592,6 @@ class TestShippedConfigs:
             docs = cfg["bestPractices"]["docsDir"]
             assert docs.endswith("/docs"), (name, docs)
             assert target.split("/")[-1] in docs, (name, target, docs)
-
-
-# ── Project profiles ─────────────────────────────────────────────────────────
-
-# The exact acceptance-criteria tail add-backlog-to-prd.py emitted before the
-# validations moved into projects/brave-core/profile.json. brave-core bots must
-# keep getting these byte-for-byte.
-_BC_REVIEW = (
-    "Commit changes, then run the /review skill from the target repo in a fresh "
-    "subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); "
-    "report all findings back to the main context; fix any violations and commit "
-    "the fixes (must pass)"
-)
-_BC_FORMAT = (
-    "Run pnpm run format one final time; if it makes any changes, amend the last "
-    "commit with the formatting fixes"
-)
-
-
-def _bc_tail(test_step):
-    return [
-        "Build the project (must pass)",
-        "Format the code (must pass)",
-        _BC_REVIEW,
-        test_step,
-        "Run presubmit checks (must pass)",
-        _BC_FORMAT,
-    ]
 
 
 # ── Project profiles ─────────────────────────────────────────────────────────

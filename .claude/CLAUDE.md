@@ -28,11 +28,14 @@ This documentation is split into focused files for better performance. Read only
 - **[docs/workflow-merged.md](../docs/workflow-merged.md)** - Status: "merged" (post-merge monitoring)
 - **[docs/workflow-skipped-invalid.md](../docs/workflow-skipped-invalid.md)** - Status: "skipped" and "invalid"
 
+### Project-Specific Rules
+- **projects/<profile>/docs/** - Rules that apply to this project only (build commands, test targets, upstream test handling). The profile is `project.profile` in the bot config; the prompt gives the path. Where a workflow doc says a step is project-specific, read the named file there.
+
 ### Development Guidelines
 - **[docs/testing-requirements.md](../docs/testing-requirements.md)** - Test execution requirements, C++ best practices, RunUntilIdle patterns
 - **[docs/git-repository.md](../docs/git-repository.md)** - Git operations, branch management, dependency restrictions
 - **[docs/progress-reporting.md](../docs/progress-reporting.md)** - Progress.txt format for all status transitions
-- **best_practices.md** (in target repo's docs dir, per `bestPractices.docsDir` config) - Index of all best practices (testing, coding standards, architecture, build system, chromium_src). Read the relevant sub-docs based on what you're working on.
+- **best_practices.md** (in target repo's docs dir, per `bestPractices.docsDir` config) - Index of all best practices for the target codebase. Read the relevant sub-docs based on what you're working on.
 
 ### Continuous Improvement
 - **[docs/learnable-patterns.md](../docs/learnable-patterns.md)** - Identifying, evaluating, and capturing reusable patterns

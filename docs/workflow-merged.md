@@ -66,7 +66,7 @@ $BOT_DIR/scripts/filter-pr-reviews.sh <pr-number> markdown <pr-repository>
 ### 2. Filter to Comments AFTER Merge
 
 - Only look at comments with timestamp > `mergedAt`
-- Only consider comments from Brave org members (filtered script handles this)
+- Only consider comments from org members (filtered script handles this)
 
 ### 3. Analyze for Follow-Up Requests
 

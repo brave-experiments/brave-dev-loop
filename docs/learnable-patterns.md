@@ -8,7 +8,7 @@ Patterns can be discovered from two sources:
 
 ### 1. Review Feedback on the PR Repository's PRs
 
-When reviewers comment on bot PRs, their feedback often encodes team conventions, coding standards, or Brave-specific idioms that apply beyond the current PR.
+When reviewers comment on bot PRs, their feedback often encodes team conventions, coding standards, or project-specific idioms that apply beyond the current PR.
 
 ### 2. Previous Fix Attempts (GitHub PR History)
 
@@ -39,8 +39,8 @@ Review comments or past failures that indicate general rules:
 - "We always do X when Y" or "Our convention is..."
 - "This is a common mistake" or "Watch out for this pattern"
 - Feedback about coding style, naming conventions, or architectural approaches
-- Test patterns or testing requirements specific to Brave
-- API usage patterns or Brave-specific idioms
+- Test patterns or testing requirements specific to this project
+- API usage patterns or project-specific idioms
 - Security practices or review requirements
 - Patterns of why previous fix attempts failed (e.g., "timing-based fixes never work for this class of problem")
 

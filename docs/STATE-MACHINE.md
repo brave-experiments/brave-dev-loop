@@ -148,7 +148,7 @@ This document describes the complete state machine for user story progression th
 - If ALL true → Merge PR and move to `merged`
 
 **Priority 2: Check for Review Comments**
-- Fetch PR reviews (filtered to Brave org only)
+- Fetch PR reviews (filtered to the configured org only)
 - Compare timestamps: last review vs last bot push
 - Determine who went last
 
@@ -158,7 +158,7 @@ This document describes the complete state machine for user story progression th
 
   Enter **Implementation Sub-Cycle** (same rigor as initial development):
 
-  1. **Read & Understand**: Parse review feedback from Brave org members
+  1. **Read & Understand**: Parse review feedback from org members
   2. **Implement**: Make the requested changes to the code
   3. **Test**: Re-run ALL acceptance criteria tests from original story
   4. **Validate**: ALL tests MUST pass (same requirement as `pending → committed`)

@@ -11,9 +11,7 @@ APPEND to $BOT_DIR/data/progress.txt (never replace, always append).
 - What was implemented
 - Files changed
 - Branch created: [branch-name]
-- [If filter file modification] **Test Type**: [Chromium test / Brave test]
-- [If Chromium test] **Chromium Status**: [Chromium has also disabled this test / Not disabled by Chromium / Upstream bug: crbug.com/XXXXX]
-- [If Chromium test] **Brave Modifications**: [No Brave modifications in this area / Brave modifies [path] via chromium_src]
+- [If filter file modification] **Project-specific test fields**: see the project profile's `docs/progress.md`
 - **Test Results** (REQUIRED):
   - [List all acceptance criteria tests and their results]
   - All tests MUST pass before transitioning to "committed"
@@ -41,7 +39,7 @@ APPEND to $BOT_DIR/data/progress.txt (never replace, always append).
 ```
 ## [Date/Time] - [Story ID] - Status: pushed (review iteration)
 - Review comments addressed:
-  - [Summary of feedback from Brave org members]
+  - [Summary of feedback from org members]
   - [Changes made]
 - **Test Results** (REQUIRED):
   - [Re-ran all acceptance criteria tests]
@@ -85,7 +83,7 @@ APPEND to $BOT_DIR/data/progress.txt (never replace, always append).
 ## [Date/Time] - [Story ID] - Status: merged (post-merge check #[N])
 - Checked PR #[pr-number] for post-merge follow-up comments
 - Comments found since merge: [count]
-- New comments from Brave org members: [list usernames or "none"]
+- New comments from org members: [list usernames or "none"]
 - Follow-up work needed: [Yes/No]
 - [If yes: Created follow-up work:
   - Story US-XXX: "[title]" (GitHub issue #YYYY - [issue URL])
