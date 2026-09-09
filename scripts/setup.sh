@@ -522,7 +522,7 @@ if [ "$SKIP_GIT" = false ]; then
   REMOTE_ACTIONS=()
   REMOTES_OK=true
 
-  USE_FORK=$(bot_config '.project.useFork')
+  USE_FORK=$(bot_config_bool '.project.useFork')
   if [ -z "$USE_FORK" ]; then
     USE_FORK=true
   fi

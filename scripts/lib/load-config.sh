@@ -32,6 +32,14 @@ bot_config() {
   jq -r "$1 // empty" "$BOT_CONFIG_FILE"
 }
 
+# Boolean-safe read. jq's `//` yields the right-hand side when the left is
+# null *or false*, so bot_config on a `false` value returns empty and every
+# caller falls through to its default — silently inverting the setting.
+# Prints "true"/"false", or nothing when the key is genuinely absent.
+bot_config_bool() {
+  jq -r "if $1 == null then empty else ($1 | tostring) end" "$BOT_CONFIG_FILE"
+}
+
 # Resolve bestPractices.docsDir to an absolute directory. Stored relative to
 # the bot dir, but the same base ambiguity that affects targetRepoPath has
 # produced parent-relative values in the wild, so both bases are tried.

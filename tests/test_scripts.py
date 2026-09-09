@@ -1247,10 +1247,35 @@ class TestAddBacklogClassification:
         issue = make_issue(title="Disabled test: FooTest.Bar")
         assert add_backlog.is_disabled_test_issue(issue) is True
 
-    def test_disabled_test_label_is_a_disabled_issue(self, add_backlog):
+    def test_disabled_test_label_is_a_disabled_issue(self, add_backlog, monkeypatch):
+        """The label is project-specific, so the profile decides what it is."""
+        monkeypatch.setattr(
+            add_backlog,
+            "_profile",
+            {"labels": {"disabledTest": "disabled-brave-test"}},
+        )
         issue = make_issue(
             title="Re-enable FooTest.Bar", labels=("disabled-brave-test",)
         )
+        assert add_backlog.is_disabled_test_issue(issue) is True
+
+    def test_disabled_test_label_ignored_when_profile_defines_none(
+        self, add_backlog, monkeypatch
+    ):
+        """A project with no such label must not inherit Brave's."""
+        monkeypatch.setattr(add_backlog, "_profile", {"labels": {"disabledTest": ""}})
+        issue = make_issue(
+            title="Re-enable FooTest.Bar", labels=("disabled-brave-test",)
+        )
+        assert add_backlog.is_disabled_test_issue(issue) is False
+
+    def test_disabled_test_label_falls_back_to_config(self, add_backlog, monkeypatch):
+        """Deployments that set labels.disabledTestLabel by hand keep working."""
+        monkeypatch.setattr(add_backlog, "_profile", {})
+        monkeypatch.setattr(
+            add_backlog, "_config", {"labels": {"disabledTestLabel": "legacy-label"}}
+        )
+        issue = make_issue(title="Re-enable FooTest.Bar", labels=("legacy-label",))
         assert add_backlog.is_disabled_test_issue(issue) is True
 
     def test_plain_issue_is_neither(self, add_backlog):
@@ -1776,3 +1801,52 @@ class TestPrdMode:
             body = f.read()
         assert "add-backlog -- ./scripts/refresh-prd-cache.sh" in body
         assert "/add-backlog-to-prd'" not in body
+
+
+class TestBotConfigBool:
+    """jq's `//` treats false like null, so reading a boolean with it makes a
+    `false` setting indistinguishable from an absent one — every caller then
+    falls through to its default and the setting silently inverts."""
+
+    @staticmethod
+    def _read(tmp_dir, value, reader):
+        bot = os.path.join(tmp_dir, "bot")
+        os.makedirs(os.path.join(bot, "scripts", "lib"), exist_ok=True)
+        with open(os.path.join(SCRIPT_DIR, "lib", "load-config.sh")) as f:
+            src = f.read()
+        with open(os.path.join(bot, "scripts", "lib", "load-config.sh"), "w") as f:
+            f.write(src)
+        cfg = {
+            "project": {
+                "name": "p",
+                "org": "o",
+                "prRepository": "o/p",
+                "issueRepository": "o/p",
+            },
+            "bot": {"username": "b"},
+        }
+        if value is not ...:
+            cfg["project"]["useFork"] = value
+        with open(os.path.join(bot, "config.json"), "w") as f:
+            json.dump(cfg, f)
+        probe = os.path.join(bot, "probe.sh")
+        with open(probe, "w") as f:
+            f.write(
+                '#!/bin/bash\nsource "$(dirname "$0")/scripts/lib/load-config.sh"\n'
+                f"printf '%s' \"$({reader} '.project.useFork')\"\n"
+            )
+        os.chmod(probe, 0o755)
+        return subprocess.run([probe], capture_output=True, text=True).stdout
+
+    def test_false_reads_as_false_not_empty(self, tmp_dir):
+        assert self._read(tmp_dir, False, "bot_config_bool") == "false"
+
+    def test_true_reads_as_true(self, tmp_dir):
+        assert self._read(tmp_dir, True, "bot_config_bool") == "true"
+
+    def test_absent_reads_as_empty_so_defaults_apply(self, tmp_dir):
+        assert self._read(tmp_dir, ..., "bot_config_bool") == ""
+
+    def test_plain_bot_config_still_loses_false(self, tmp_dir):
+        """Documents why bot_config must not be used for booleans."""
+        assert self._read(tmp_dir, False, "bot_config") == ""

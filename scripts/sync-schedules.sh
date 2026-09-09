@@ -18,7 +18,7 @@ mkdir -p "$LOG_DIR"
 CLAUDE_BIN_DIR=$(dirname "$CLAUDE_BIN")
 
 # Resolve sync repo path from config (optional — only for projects that sync from upstream)
-SYNC_REPO_ENABLED=$(bot_config '.schedules.syncRepo')
+SYNC_REPO_ENABLED=$(bot_config_bool '.schedules.syncRepo')
 SYNC_REPO_PATH=$(bot_config '.schedules.syncRepoPath')
 
 # Use project name for cron block marker to allow multiple projects on same machine
