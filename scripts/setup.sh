@@ -193,6 +193,7 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_DEFAULT_BRANCH="$CFG_DEFAULT_BRANCH" \
   CFG_TARGET_REPO="$CFG_TARGET_REPO" \
   CFG_USE_FORK="${CFG_USE_FORK:-true}" \
+  CFG_PROFILE="${CFG_PROFILE:-}" \
   CFG_OWNER_HANDLE="$CFG_OWNER_HANDLE" \
   CFG_BOT_USER="$CFG_BOT_USER" \
   CFG_BOT_EMAIL="$CFG_BOT_EMAIL" \
@@ -235,6 +236,7 @@ config = {
         'defaultBranch': os.environ['CFG_DEFAULT_BRANCH'],
         'targetRepoPath': target_repo,
         'useFork': os.environ.get('CFG_USE_FORK', 'true') == 'true',
+        'profile': os.environ.get('CFG_PROFILE') or 'default',
         'botOwnerGithubHandle': val('CFG_OWNER_HANDLE'),
     },
     'bot': {

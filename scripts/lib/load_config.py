@@ -137,3 +137,69 @@ def best_practices_index(config, base_dir=None):
         return None
     index = get_config(config, "bestPractices.indexFile", "best_practices.md")
     return os.path.join(docs, index)
+
+
+# Absent project.profile means a deployment that predates profiles. Those are
+# all brave-core, so default there rather than to the generic profile -- an
+# unattended bot must not change behaviour just because a key is missing.
+DEFAULT_PROFILE = "brave-core"
+
+
+def profile_dir(config, base_dir=None):
+    """Absolute path to the selected project profile directory."""
+    name = get_config(config, "project.profile") or DEFAULT_PROFILE
+    return os.path.join(base_dir or bot_dir(), "projects", name)
+
+
+def load_profile(config, base_dir=None):
+    """Load the selected profile's profile.json.
+
+    Falls back to the default profile when the configured one has no
+    profile.json, so a half-created profile directory cannot strand a bot.
+    """
+    path = os.path.join(profile_dir(config, base_dir), "profile.json")
+    if not os.path.exists(path):
+        path = os.path.join(
+            base_dir or bot_dir(), "projects", DEFAULT_PROFILE, "profile.json"
+        )
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def build_validations(profile, test_step=None):
+    """Render a profile's validation steps into acceptance criteria.
+
+    `{testStep}` is replaced with `test_step`; the entry is dropped entirely
+    when there is no test step for this kind of story.
+    """
+    steps = []
+    for entry in profile.get("validations") or []:
+        if entry == "{testStep}":
+            if test_step:
+                steps.append(test_step)
+            continue
+        steps.append(entry.replace("{testStep}", test_step or ""))
+    return steps
+
+
+def test_step(profile, kind, test_binary=None, test_filter=None):
+    """Render the profile's test step for a story kind, or None."""
+    template = (profile.get("testSteps") or {}).get(kind)
+    if not template:
+        return None
+    return template.replace("{testBinary}", test_binary or "").replace(
+        "{testFilter}", test_filter or ""
+    )
+
+
+def test_binary(profile, suite, location):
+    """Resolve the test target for a suite ('unit'/'browser') and location.
+
+    `location` is 'brave' for a test defined in the target repo, anything else
+    for one inherited from the surrounding checkout.
+    """
+    targets = (profile.get("testTargets") or {}).get(suite) or {}
+    return targets.get("local" if location == "brave" else "upstream")

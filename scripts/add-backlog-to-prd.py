@@ -31,9 +31,13 @@ _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
 from lib.load_config import (
     best_practices_index,
+    build_validations,
     load_config,
+    load_profile,
     require_config,
     resolve_target_repo,
+    test_binary,
+    test_step,
 )
 
 _config = load_config()
@@ -41,6 +45,7 @@ _issue_repo = require_config(_config, "project.issueRepository")
 _bot_user = require_config(_config, "bot.username")
 _project_name = require_config(_config, "project.name")
 _best_practices_path = best_practices_index(_config, _bot_dir)
+_profile = load_profile(_config, _bot_dir)
 
 ISSUE_FIELDS = "number,title,url,labels"
 
@@ -168,24 +173,25 @@ def build_test_story(story_id, priority, issue):
 
     if "AlternateTestParams" in test_name or "PartitionAlloc" in test_name:
         test_type = "unit_test"
-        test_binary = "brave_unit_tests" if test_location == "brave" else "unit_tests"
+        suite = "unit"
     else:
         test_type = "browser_test"
-        test_binary = (
-            "brave_browser_tests" if test_location == "brave" else "browser_tests"
-        )
+        suite = "browser"
 
     acceptance_criteria = [
         f"Read {_best_practices_path} to identify which best practice sub-documents apply, then read those sub-documents",
         f"Fetch issue #{issue_num} details from {_issue_repo} GitHub API",
         "Analyze stack trace and identify root cause - determine whether this is a real bug in production code, a test-only issue, or both. Read the production code being tested, not just the test. If the test is catching a genuine bug, fix the production code",
         "Implement fix targeting the correct layer (production code, test code, or both)",
-        "Build the project (must pass)",
-        "Format the code (must pass)",
-        "Commit changes, then run the /review skill from the target repo in a fresh subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); report all findings back to the main context; fix any violations and commit the fixes (must pass)",
-        f"Run the test: {test_binary} --gtest_filter={test_name} (must pass - run 5 times to verify consistency, unless this is a filter file change only)",
-        "Run presubmit checks (must pass)",
-        "Run pnpm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
+        *build_validations(
+            _profile,
+            test_step(
+                _profile,
+                "testFix",
+                test_binary(_profile, suite, test_location),
+                test_name,
+            ),
+        ),
     ]
 
     return {
@@ -224,12 +230,10 @@ def build_disabled_test_story(story_id, priority, issue):
         or "PartitionAlloc" in test_name
     ):
         test_type = "unit_test"
-        test_binary = "brave_unit_tests" if test_location == "brave" else "unit_tests"
+        suite = "unit"
     else:
         test_type = "browser_test"
-        test_binary = (
-            "brave_browser_tests" if test_location == "brave" else "browser_tests"
-        )
+        suite = "browser"
 
     acceptance_criteria = [
         f"Read {_best_practices_path} to identify which best practice sub-documents apply, then read those sub-documents",
@@ -238,12 +242,15 @@ def build_disabled_test_story(story_id, priority, issue):
         "Use git blame on the line that disables the test to find the commit that disabled it, and read the commit message to understand WHY it was disabled",
         "Investigate whether the original reason for disabling has been resolved (e.g., upstream fix landed, dependency updated, flaky infrastructure fixed)",
         "If the underlying issue is fixed: re-enable the test by removing the DISABLED_ prefix. If the issue is NOT yet fixed: fix the root cause first, then re-enable the test",
-        "Build the project (must pass)",
-        "Format the code (must pass)",
-        "Commit changes, then run the /review skill from the target repo in a fresh subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); report all findings back to the main context; fix any violations and commit the fixes (must pass)",
-        f"Run the test: {test_binary} --gtest_filter={test_name} (must pass - run 5 times to verify consistency)",
-        "Run presubmit checks (must pass)",
-        "Run pnpm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
+        *build_validations(
+            _profile,
+            test_step(
+                _profile,
+                "disabledTest",
+                test_binary(_profile, suite, test_location),
+                test_name,
+            ),
+        ),
     ]
 
     return {
@@ -273,12 +280,7 @@ def build_generic_story(story_id, priority, issue):
         f"Fetch issue #{issue_num} details from {_issue_repo} GitHub API",
         "Analyze the issue and identify what needs to change",
         "Implement the fix or feature",
-        "Build the project (must pass)",
-        "Format the code (must pass)",
-        "Commit changes, then run the /review skill from the target repo in a fresh subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); report all findings back to the main context; fix any violations and commit the fixes (must pass)",
-        "Find and run relevant tests to verify the change (must pass)",
-        "Run presubmit checks (must pass)",
-        "Run pnpm run format one final time; if it makes any changes, amend the last commit with the formatting fixes",
+        *build_validations(_profile, test_step(_profile, "generic")),
     ]
 
     return {

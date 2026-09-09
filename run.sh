@@ -289,9 +289,15 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   # We point them all at the same workflow docs via the prompt itself.
   BOT_DIRNAME=$(basename "$SCRIPT_DIR")
   BOT_CONFIG=$(cat "$SCRIPT_DIR/config.json")
+  # Absent project.profile means a deployment predating profiles — all brave-core.
+  BOT_PROFILE=$(bot_config '.project.profile')
+  BOT_PROFILE="${BOT_PROFILE:-brave-core}"
   AGENT_PROMPT="You are working on story $STORY_ID (current status: $STORY_STATUS).
 Follow ./$BOT_DIRNAME/docs/workflow-${STORY_STATUS}.md for the workflow.
 Follow the general instructions in ./$BOT_DIRNAME/.claude/CLAUDE.md.
+
+Project-specific rules live in ./$BOT_DIRNAME/projects/$BOT_PROFILE/docs/.
+Where a workflow doc says a step is project-specific, read the named file there.
 
 Story details:
 $STORY_DETAILS
