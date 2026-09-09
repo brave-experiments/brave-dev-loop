@@ -20,7 +20,8 @@
     "codexModel": null,
     "codexBin": null,
     "cursorModel": null,
-    "cursorBin": null
+    "cursorBin": null,
+    "ghConfigDir": null
   },
   "labels": {
     "prLabels": [

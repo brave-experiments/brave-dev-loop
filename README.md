@@ -248,6 +248,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `bot.email`: Bot's email for git commits
 - `bot.sshKeyPath`: SSH identity the bot pushes with (`null` = this machine's default key). See [Bot Identity Isolation](#bot-identity-isolation)
 - `bot.ghAccount`: `gh` account whose token the bot uses (`null` = same as `bot.username`)
+- `bot.ghConfigDir`: isolated `gh` config directory for the bot (`null` = use `~/.config/gh`). Set this to keep the bot's GitHub login out of your personal `gh` config entirely — no account is added, switched, or made active outside this repo. Create it with `GH_CONFIG_DIR=<dir> gh auth login`
 - `bot.agent`: Which agent to run, `claude` (default), `codex`, or `cursor`
 - `bot.claudeModel`: Claude model to use (`opus`, `sonnet`, etc.; overridden by `./run.sh --model` for Claude runs)
 - `bot.claudeBin`: Path to the `claude` binary (`null` = found on PATH)
