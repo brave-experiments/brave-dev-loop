@@ -194,7 +194,7 @@ for name in "${LOCK_NAMES[@]}"; do
   [ -f "$lockfile" ] || continue
 
   # Try to acquire the lock — if we can't, something is holding it
-  if ! ( flock -n 9 ) 9<"$lockfile" 2>/dev/null; then
+  if command -v flock >/dev/null 2>&1 && ! ( flock -n 9 ) 9<"$lockfile" 2>/dev/null; then
     if [ "$has_running" = false ]; then
       echo -e "${BOLD}Running Jobs${RESET}"
       has_running=true

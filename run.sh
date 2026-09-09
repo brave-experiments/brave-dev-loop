@@ -15,8 +15,13 @@ set -e
 
 # Prevent concurrent runs — acquire an exclusive lock or exit immediately
 LOCKFILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.run.lock"
-exec 200>"$LOCKFILE"
-flock -n 200 || { echo "Another run.sh is already running. Exiting."; exit 0; }
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/lock.sh"
+bot_acquire_lock "$LOCKFILE"
+case $? in
+  0) ;;
+  1) echo "Another run.sh is already running. Exiting."; exit 0 ;;
+  *) echo "Could not acquire the run lock. Exiting." >&2; exit 1 ;;
+esac
 
 # Parse arguments
 MAX_ITERATIONS=10
@@ -126,6 +131,7 @@ fi
 
 # Function to switch back to master branch on exit
 cleanup_and_return_to_master() {
+  bot_release_lock
   if [ -n "$GIT_REPO" ] && [ -d "$GIT_REPO/.git" ]; then
     echo ""
     echo "Switching back to $BOT_DEFAULT_BRANCH branch in $GIT_REPO..."
@@ -136,7 +142,7 @@ cleanup_and_return_to_master() {
 }
 
 # Register cleanup function to run on exit
-trap cleanup_and_return_to_master EXIT
+trap cleanup_and_return_to_master EXIT INT TERM HUP
 
 # Initialize progress file if it doesn't exist
 if [ ! -f "$PROGRESS_FILE" ]; then

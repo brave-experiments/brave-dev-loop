@@ -34,7 +34,7 @@ full state machine and selection tiers.
 - **GitHub CLI** (`gh`), authenticated
 - **Git**, **Python 3**
 - **jq** — `brew install jq` / `apt install jq`
-- **flock** — `brew install flock` (already present on Linux)
+- **flock** (optional) — used for run locking when present; without it a directory-based lock is used instead
 - Access to the target GitHub repositories
 
 ## Setup

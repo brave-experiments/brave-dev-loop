@@ -1850,3 +1850,78 @@ class TestBotConfigBool:
     def test_plain_bot_config_still_loses_false(self, tmp_dir):
         """Documents why bot_config must not be used for booleans."""
         assert self._read(tmp_dir, False, "bot_config") == ""
+
+
+class TestRunLocking:
+    """A missing flock used to exit 127, which `|| exit 0` reported as "already
+    running" — so on a machine without flock every run and every cron job
+    exited successfully having done nothing."""
+
+    LOCK_LIB = os.path.join(SCRIPT_DIR, "lib", "lock.sh")
+
+    def _run(self, body, path_prefix=None):
+        env = dict(os.environ)
+        if path_prefix:
+            env["PATH"] = f"{path_prefix}:{env['PATH']}"
+        return subprocess.run(
+            ["bash", "-c", f"source {self.LOCK_LIB}\n{body}"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def test_acquires_and_blocks_a_second_holder(self, tmp_dir):
+        lock = os.path.join(tmp_dir, "a.lock")
+        r = self._run(
+            f'bot_acquire_lock "{lock}"; echo "first=$?"\n'
+            f'( source {self.LOCK_LIB}; bot_acquire_lock "{lock}"; echo "second=$?" )'
+        )
+        assert "first=0" in r.stdout, r.stdout
+        assert "second=1" in r.stdout, r.stdout
+
+    def test_release_allows_reacquisition(self, tmp_dir):
+        lock = os.path.join(tmp_dir, "b.lock")
+        r = self._run(
+            f'bot_acquire_lock "{lock}"; bot_release_lock\n'
+            f'bot_acquire_lock "{lock}"; echo "again=$?"'
+        )
+        assert "again=0" in r.stdout, r.stdout
+
+    def test_stale_lock_from_a_dead_holder_is_reclaimed(self, tmp_dir):
+        """A process killed before cleanup must not wedge the bot forever."""
+        lock = os.path.join(tmp_dir, "c.lock")
+        os.makedirs(lock + ".d")
+        with open(os.path.join(lock + ".d", "pid"), "w") as f:
+            f.write("999999")
+        r = self._run(f'bot_acquire_lock "{lock}"; echo "stale=$?"')
+        assert "stale=0" in r.stdout, r.stdout + r.stderr
+
+    def test_missing_flock_is_not_reported_as_contention(self, tmp_dir):
+        """The actual bug: no flock must still acquire, not claim 'already running'."""
+        lock = os.path.join(tmp_dir, "d.lock")
+        r = self._run(
+            "_bot_have_flock() { return 1; }\n"
+            f'bot_acquire_lock "{lock}"; echo "got=$?"'
+        )
+        assert "got=0" in r.stdout, r.stdout + r.stderr
+
+    def test_flock_path_reports_contention_from_flock(self, tmp_dir):
+        """When flock is present its exit status is what decides, unchanged."""
+        lock = os.path.join(tmp_dir, "e.lock")
+        held = self._run(
+            "_bot_have_flock() { return 0; }\nflock() { return 1; }\n"
+            f'bot_acquire_lock "{lock}"; echo "held=$?"'
+        )
+        free = self._run(
+            "_bot_have_flock() { return 0; }\nflock() { return 0; }\n"
+            f'bot_acquire_lock "{lock}"; echo "free=$?"'
+        )
+        assert "held=1" in held.stdout, held.stdout + held.stderr
+        assert "free=0" in free.stdout, free.stdout + free.stderr
+
+    def test_no_call_site_still_uses_bare_flock(self):
+        for name in ("../run.sh", "with-lock.sh"):
+            with open(os.path.join(SCRIPT_DIR, name)) as f:
+                body = f.read()
+            assert "flock -n 200" not in body, name
+            assert "bot_acquire_lock" in body, name
