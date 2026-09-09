@@ -835,3 +835,360 @@ class TestSelectTaskCandidateSummary:
     def test_one_line_per_candidate(self, select_task):
         stories = [make_story(id="US-001"), make_story(id="US-002")]
         assert len(select_task.candidate_summary(stories).splitlines()) == 2
+
+
+# ── scripts/lib/git-identity.sh ──────────────────────────────────────────────
+
+GIT_IDENTITY_LIB = os.path.join(SCRIPT_DIR, "lib", "git-identity.sh")
+
+
+def run_identity_snippet(snippet, home=None, env=None):
+    """Source git-identity.sh and run a bash snippet against it."""
+    full_env = dict(os.environ)
+    if home is not None:
+        full_env["HOME"] = str(home)
+    if env:
+        full_env.update(env)
+    # /bin/bash, not PATH bash: the scripts run under macOS's bash 3.2, so
+    # bash 4+ builtins must fail here rather than in production.
+    return subprocess.run(
+        ["/bin/bash", "-c", f'source "{GIT_IDENTITY_LIB}"\n{snippet}'],
+        capture_output=True,
+        text=True,
+        env=full_env,
+    )
+
+
+class TestBotSshCommand:
+    def test_includes_identities_only(self):
+        # Without IdentitiesOnly, ssh-agent offers the machine owner's key and
+        # GitHub authenticates as them regardless of -i.
+        out = run_identity_snippet("bot_ssh_command /home/bot/.ssh/k").stdout
+        assert "-o IdentitiesOnly=yes" in out
+        assert "-i /home/bot/.ssh/k" in out
+
+    def test_quotes_paths_with_spaces(self):
+        # git runs core.sshCommand through a shell, so the path must survive it.
+        out = run_identity_snippet("bot_ssh_command '/home/my bot/.ssh/k'").stdout
+        probe = subprocess.run(
+            ["bash", "-c", f'set -- {out}; echo "${{@: -1}}"'],
+            capture_output=True,
+            text=True,
+        )
+        assert probe.stdout.strip() == "/home/my bot/.ssh/k"
+
+    def test_fails_on_empty_key(self):
+        assert run_identity_snippet("bot_ssh_command ''").returncode != 0
+
+
+class TestBotSshLogin:
+    def _fake_ssh(self, tmp_path, greeting, *, slurp_stdin=True):
+        """Stub ssh. Real GitHub exits non-zero even on success, so does this.
+
+        The stub drains stdin by default, which is what real `ssh -T` does and
+        what the </dev/null guard in bot_ssh_login exists to prevent.
+        """
+        bindir = tmp_path / "bin"
+        bindir.mkdir(exist_ok=True)
+        drain = "cat >/dev/null" if slurp_stdin else "true"
+        (bindir / "ssh").write_text(
+            f"#!/bin/bash\n{drain}\necho {greeting!r}\nexit 1\n"
+        )
+        (bindir / "ssh").chmod(0o755)
+        return {"PATH": f"{bindir}:{os.environ['PATH']}"}
+
+    def test_parses_login_from_greeting(self, tmp_path):
+        env = self._fake_ssh(
+            tmp_path,
+            "Hi widgetbot! You've successfully authenticated, but GitHub does "
+            "not provide shell access.",
+        )
+        result = run_identity_snippet("bot_ssh_login /keys/bot", env=env)
+        assert result.stdout == "widgetbot"
+
+    def test_rejected_key_yields_empty(self, tmp_path):
+        env = self._fake_ssh(tmp_path, "git@github.com: Permission denied (publickey).")
+        result = run_identity_snippet("bot_ssh_login /keys/bot", env=env)
+        assert result.stdout == ""
+
+    def test_rejected_key_does_not_trip_set_e(self, tmp_path):
+        # The caller runs under `set -e`. A key GitHub rejects is an expected
+        # outcome reported via empty stdout, not a fatal error.
+        env = self._fake_ssh(tmp_path, "git@github.com: Permission denied (publickey).")
+        result = run_identity_snippet(
+            'set -e\nlogin=$(bot_ssh_login /keys/bot)\necho "reached:[$login]"',
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "reached:[]" in result.stdout
+
+    def test_does_not_consume_caller_stdin(self, tmp_path):
+        # `ssh -T` slurps stdin, which would eat the setup wizard's remaining
+        # answers when input is piped rather than typed.
+        env = self._fake_ssh(tmp_path, "Hi widgetbot!")
+        full_env = dict(os.environ)
+        full_env.update(env)
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                f'source "{GIT_IDENTITY_LIB}"\n'
+                "bot_ssh_login /keys/bot >/dev/null\n"
+                'read -r answer\necho "answer=$answer"',
+            ],
+            input="still-here\n",
+            capture_output=True,
+            text=True,
+            env=full_env,
+        )
+        assert "answer=still-here" in result.stdout
+
+
+class TestBotListSshKeys:
+    def _fake_home(self, tmp_path, files):
+        ssh = tmp_path / ".ssh"
+        ssh.mkdir()
+        for name, content in files.items():
+            (ssh / name).write_text(content)
+        return tmp_path
+
+    def test_sniffs_content_not_extension(self, tmp_path):
+        # A PEM key named *.ppk is still a usable key; id_* globbing misses it.
+        home = self._fake_home(
+            tmp_path,
+            {
+                "github.ppk": "-----BEGIN RSA PRIVATE KEY-----\nx\n",
+                "id_ed25519": "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
+            },
+        )
+        out = run_identity_snippet("bot_list_ssh_keys", home=home).stdout
+        assert sorted(os.path.basename(line) for line in out.split()) == [
+            "github.ppk",
+            "id_ed25519",
+        ]
+
+    def test_prefers_public_key_over_its_private_half(self, tmp_path):
+        # ssh matches a .pub against ssh-agent and falls back to the private
+        # file beside it, so the .pub is the strictly more capable -i target.
+        home = self._fake_home(
+            tmp_path,
+            {
+                "id_rsa": "-----BEGIN RSA PRIVATE KEY-----\nx\n",
+                "id_rsa.pub": "ssh-rsa AAAA...\n",
+            },
+        )
+        out = run_identity_snippet("bot_list_ssh_keys", home=home).stdout
+        assert [os.path.basename(line) for line in out.split()] == ["id_rsa.pub"]
+
+    def test_lists_public_key_whose_private_half_is_named_differently(self, tmp_path):
+        # The real case this was written for: an encrypted PEM key held in
+        # ssh-agent, whose public half is github.pub rather than github.ppk.pub.
+        # -i github.ppk cannot reach the agent copy; -i github.pub can.
+        home = self._fake_home(
+            tmp_path,
+            {
+                "github.ppk": "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n",
+                "github.pub": "ssh-rsa AAAA...\n",
+            },
+        )
+        out = run_identity_snippet("bot_list_ssh_keys", home=home).stdout
+        assert sorted(os.path.basename(line) for line in out.split()) == [
+            "github.ppk",
+            "github.pub",
+        ]
+
+    def test_collapses_pair_whose_halves_are_named_differently(self, tmp_path):
+        # netzenbot.pub / netzenbot.ppk. The name rule cannot see this pair, so
+        # both halves were offered as if they were two keys — and with opposite
+        # [needs ssh-agent] markers, since ssh finds no `netzenbot` beside the
+        # .pub to fall back to. Matching fingerprints collapse them to the half
+        # that still authenticates from cron.
+        ssh = tmp_path / ".ssh"
+        ssh.mkdir()
+        key = ssh / "netzenbot"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
+        )
+        key.rename(ssh / "netzenbot.ppk")
+        out = run_identity_snippet("bot_list_ssh_keys", home=tmp_path).stdout
+        listed = out.split()
+        assert [os.path.basename(line) for line in listed] == ["netzenbot.ppk"]
+        # The surviving entry is the one that does not depend on ssh-agent.
+        assert (
+            run_identity_snippet(f"bot_identity_needs_agent '{listed[0]}'").returncode
+            == 1
+        )
+
+    def test_real_name_matched_pair_still_prefers_the_pub(self, tmp_path):
+        # Same assertion as above one level up, but with a real key: the
+        # fingerprint pass must not undo the name rule for id_rsa / id_rsa.pub.
+        ssh = tmp_path / ".ssh"
+        ssh.mkdir()
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(ssh / "id_x")],
+            check=True,
+        )
+        out = run_identity_snippet("bot_list_ssh_keys", home=tmp_path).stdout
+        assert [os.path.basename(line) for line in out.split()] == ["id_x.pub"]
+
+    def test_excludes_non_keys(self, tmp_path):
+        home = self._fake_home(
+            tmp_path,
+            {
+                "id_rsa": "-----BEGIN RSA PRIVATE KEY-----\nx\n",
+                "config": "Host github.com\n  IdentityFile ~/.ssh/id_rsa\n",
+                "known_hosts": "github.com ssh-ed25519 AAAA...\n",
+                "cert.pem": "-----BEGIN CERTIFICATE-----\nx\n",
+            },
+        )
+        out = run_identity_snippet("bot_list_ssh_keys", home=home).stdout
+        assert [os.path.basename(line) for line in out.split()] == ["id_rsa"]
+
+
+class TestBotIdentityNeedsAgent:
+    def test_missing_private_half_needs_agent(self, tmp_path):
+        pub = tmp_path / "k.pub"
+        pub.write_text("ssh-rsa AAAA...\n")
+        result = run_identity_snippet(f"bot_identity_needs_agent '{pub}'")
+        assert result.returncode == 0
+
+    def test_unencrypted_key_works_without_agent(self, tmp_path):
+        key = tmp_path / "k"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
+        )
+        # Both the private path and its .pub resolve to the same usable key.
+        assert run_identity_snippet(f"bot_identity_needs_agent '{key}'").returncode == 1
+        assert (
+            run_identity_snippet(f"bot_identity_needs_agent '{key}.pub'").returncode
+            == 1
+        )
+
+    def test_encrypted_key_needs_agent(self, tmp_path):
+        key = tmp_path / "k"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "hunter2", "-f", str(key)],
+            check=True,
+        )
+        # Must not hang waiting for a passphrase prompt.
+        result = run_identity_snippet(f"bot_identity_needs_agent '{key}'")
+        assert result.returncode == 0
+
+    def test_empty_when_no_ssh_dir(self, tmp_path):
+        result = run_identity_snippet("bot_list_ssh_keys", home=tmp_path)
+        assert result.stdout.strip() == ""
+        assert result.returncode == 0
+
+
+class TestBotApplyRepoIdentity:
+    def _repo(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        return repo
+
+    def test_writes_local_config_only(self, tmp_path):
+        repo = self._repo(tmp_path)
+        # Redirect global config at a throwaway file so the assertion below
+        # proves nothing leaked, rather than reading the developer's real one.
+        fake_global = tmp_path / "gitconfig"
+        fake_global.write_text("")
+        env = {"GIT_CONFIG_GLOBAL": str(fake_global)}
+        run_identity_snippet(
+            f"bot_apply_repo_identity '{repo}' bot bot@example.com /keys/bot", env=env
+        )
+        local = (repo / ".git" / "config").read_text()
+        assert "bot@example.com" in local
+        assert "IdentitiesOnly=yes" in local
+        # The point of the whole exercise: no global state touched.
+        assert fake_global.read_text() == ""
+
+    def test_unsets_ssh_command_when_key_cleared(self, tmp_path):
+        repo = self._repo(tmp_path)
+        run_identity_snippet(f"bot_apply_repo_identity '{repo}' bot b@e.com /keys/bot")
+        run_identity_snippet(f"bot_apply_repo_identity '{repo}' bot b@e.com ''")
+        result = subprocess.run(
+            ["git", "-C", str(repo), "config", "--local", "--get", "core.sshCommand"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout.strip() == ""
+
+    def test_succeeds_with_no_key_configured(self, tmp_path):
+        repo = self._repo(tmp_path)
+        result = run_identity_snippet(
+            f"set -e\nbot_apply_repo_identity '{repo}' bot b@e.com ''"
+        )
+        assert result.returncode == 0, result.stderr
+
+
+class TestBotExportIdentityEnv:
+    def _fake_gh(self, tmp_path, tokens):
+        """A stub gh that knows tokens for the given accounts."""
+        bindir = tmp_path / "bin"
+        bindir.mkdir(exist_ok=True)
+        cases = "\n".join(
+            f'    {acct}) echo "{tok}" ;;' for acct, tok in tokens.items()
+        )
+        (bindir / "gh").write_text(
+            "#!/bin/bash\n"
+            'if [ "$1 $2" = "auth token" ]; then\n'
+            '  case "$4" in\n'
+            f"{cases}\n"
+            "    *) exit 1 ;;\n"
+            "  esac\n"
+            "  exit 0\n"
+            "fi\n"
+            "exit 1\n"
+        )
+        (bindir / "gh").chmod(0o755)
+        return bindir
+
+    def test_exports_ssh_command_and_token(self, tmp_path):
+        key = tmp_path / "botkey.pub"
+        key.write_text("ssh-ed25519 AAAA...\n")
+        bindir = self._fake_gh(tmp_path, {"widgetbot": "gho_bot"})
+        result = run_identity_snippet(
+            f"bot_export_identity_env '{key}' widgetbot\n"
+            'echo "ssh=$GIT_SSH_COMMAND"\necho "tok=$GH_TOKEN"',
+            env={"PATH": f"{bindir}:{os.environ['PATH']}", "GH_TOKEN": ""},
+        )
+        assert f"ssh=ssh -o IdentitiesOnly=yes -i {key}" in result.stdout
+        assert "tok=gho_bot" in result.stdout
+
+    def test_existing_gh_token_wins(self, tmp_path):
+        bindir = self._fake_gh(tmp_path, {"widgetbot": "gho_bot"})
+        result = run_identity_snippet(
+            "bot_export_identity_env '' widgetbot\necho \"tok=$GH_TOKEN\"",
+            env={"PATH": f"{bindir}:{os.environ['PATH']}", "GH_TOKEN": "gho_ci"},
+        )
+        assert "tok=gho_ci" in result.stdout
+
+    def test_unreadable_key_fails_loudly(self, tmp_path):
+        result = run_identity_snippet(
+            "bot_export_identity_env '/nope/missing.pub' ''", env={"GH_TOKEN": ""}
+        )
+        assert result.returncode == 1
+        assert "not readable" in result.stderr
+
+    def test_missing_gh_account_warns_but_continues(self, tmp_path):
+        key = tmp_path / "botkey.pub"
+        key.write_text("ssh-ed25519 AAAA...\n")
+        bindir = self._fake_gh(tmp_path, {"someone-else": "gho_other"})
+        result = run_identity_snippet(
+            f"bot_export_identity_env '{key}' widgetbot\necho \"tok=[$GH_TOKEN]\"",
+            env={"PATH": f"{bindir}:{os.environ['PATH']}", "GH_TOKEN": ""},
+        )
+        # A missing bot token is degraded, not fatal — the run still proceeds.
+        assert result.returncode == 0
+        assert "no stored token for 'widgetbot'" in result.stderr
+        assert "tok=[]" in result.stdout
+
+    def test_no_key_configured_leaves_ssh_alone(self, tmp_path):
+        bindir = self._fake_gh(tmp_path, {})
+        result = run_identity_snippet(
+            "set -e\nbot_export_identity_env '' ''\necho \"ssh=[$GIT_SSH_COMMAND]\"",
+            env={"PATH": f"{bindir}:{os.environ['PATH']}", "GH_TOKEN": ""},
+        )
+        assert result.returncode == 0
+        assert "ssh=[]" in result.stdout
