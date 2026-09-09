@@ -11,6 +11,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-commit"
 CONFIG_FILE="$PROJECT_ROOT/config.json"
 
+source "$SCRIPT_DIR/lib/git-identity.sh"
+
 echo "==================================="
 echo "  Brave Bot Setup"
 echo "==================================="
@@ -45,6 +47,8 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_BOT_USER=$(_prev '.bot.username')
     PREV_BOT_EMAIL=$(_prev '.bot.email')
     PREV_LABELS=$(jq -r '(.labels.issueLabels // []) | join(",")' "$CONFIG_FILE" 2>/dev/null)
+    PREV_SSH_KEY=$(_prev '.bot.sshKeyPath')
+    PREV_GH_ACCOUNT=$(_prev '.bot.ghAccount')
   fi
 
   prompt_required() {
@@ -98,22 +102,125 @@ if [ "$WRITE_CONFIG" = true ]; then
   read -p "Issue labels (comma-separated) [${PREV_LABELS:-}]: " CFG_LABELS_RAW
   CFG_LABELS_RAW="${CFG_LABELS_RAW:-$PREV_LABELS}"
 
-  # Build config.json safely via Python to avoid JSON injection from user input
+  echo ""
+  echo "─── SSH Key ───"
+  echo "The bot pushes over SSH as $CFG_BOT_USER. If this machine's default key"
+  echo "belongs to a different GitHub account, those pushes are rejected."
+  echo "The choice is stored in the target repo's .git/config and in the bot's"
+  echo "own environment — your ~/.ssh/config and other repos are not touched."
+  echo ""
+
+  # No mapfile: /bin/bash on macOS is 3.2.
+  SSH_KEYS=()
+  while IFS= read -r _key; do
+    SSH_KEYS+=("$_key")
+  done < <(bot_list_ssh_keys)
+  CFG_SSH_KEY=""
+
+  if [ ${#SSH_KEYS[@]} -eq 0 ]; then
+    echo "  No private keys found in ~/.ssh."
+    echo "  Generate one for the bot, add the public half to $CFG_BOT_USER on GitHub,"
+    echo "  then re-run 'make setup':"
+    echo "    ssh-keygen -t ed25519 -C \"$CFG_BOT_EMAIL\" -f ~/.ssh/${CFG_BOT_USER}_ed25519"
+  else
+    DEFAULT_CHOICE=0
+    for i in "${!SSH_KEYS[@]}"; do
+      marker=""
+      if bot_identity_needs_agent "${SSH_KEYS[$i]}"; then
+        marker="  [needs ssh-agent]"
+      fi
+      if [ "${SSH_KEYS[$i]}" = "$PREV_SSH_KEY" ]; then
+        marker="$marker  (current)"
+        DEFAULT_CHOICE=$((i + 1))
+      fi
+      echo "  $((i + 1))) ${SSH_KEYS[$i]}$marker"
+    done
+    echo "  0) Use this machine's default key (no pinning)"
+    echo ""
+
+    while true; do
+      read -p "Select the key the bot pushes with [$DEFAULT_CHOICE]: " KEY_CHOICE
+      KEY_CHOICE="${KEY_CHOICE:-$DEFAULT_CHOICE}"
+
+      if [ "$KEY_CHOICE" = "0" ]; then
+        CFG_SSH_KEY=""
+        echo "  Skipped — git will use whatever ~/.ssh/config resolves for github.com."
+        break
+      fi
+
+      if ! [[ "$KEY_CHOICE" =~ ^[0-9]+$ ]] || [ "$KEY_CHOICE" -gt ${#SSH_KEYS[@]} ]; then
+        echo "  ⚠️  Enter a number between 0 and ${#SSH_KEYS[@]}."
+        continue
+      fi
+
+      CANDIDATE="${SSH_KEYS[$((KEY_CHOICE - 1))]}"
+      echo "  Checking which account $CANDIDATE authenticates as..."
+      SSH_LOGIN=$(bot_ssh_login "$CANDIDATE")
+
+      if [ "$SSH_LOGIN" = "$CFG_BOT_USER" ]; then
+        echo "  ✓ Authenticates as $SSH_LOGIN"
+        if bot_identity_needs_agent "$CANDIDATE"; then
+          echo "  ⚠️  This key is passphrase-protected and only works while"
+          echo "     ssh-agent holds it. Scheduled runs (make schedules) start"
+          echo "     without an agent and will fail to push."
+        fi
+        CFG_SSH_KEY="$CANDIDATE"
+        break
+      fi
+
+      if [ -z "$SSH_LOGIN" ]; then
+        echo "  ⚠️  GitHub rejected this key — it is not registered on any account,"
+        echo "     or it is passphrase-protected and not loaded in ssh-agent."
+      else
+        echo "  ⚠️  This key authenticates as '$SSH_LOGIN', not '$CFG_BOT_USER'."
+        echo "     Pushes to $CFG_BOT_USER's fork would be rejected."
+      fi
+      read -p "  Use it anyway? (y/N) " -n 1 -r
+      echo
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        CFG_SSH_KEY="$CANDIDATE"
+        break
+      fi
+    done
+  fi
+
+  # Values go through the environment, not argv or string interpolation, so no
+  # user input can be read as JSON or as shell.
+  CFG_PROJECT_NAME="$CFG_PROJECT_NAME" \
+  CFG_ORG="$CFG_ORG" \
+  CFG_PR_REPO="$CFG_PR_REPO" \
+  CFG_ISSUE_REPO="$CFG_ISSUE_REPO" \
+  CFG_DEFAULT_BRANCH="$CFG_DEFAULT_BRANCH" \
+  CFG_TARGET_REPO="$CFG_TARGET_REPO" \
+  CFG_OWNER_HANDLE="$CFG_OWNER_HANDLE" \
+  CFG_BOT_USER="$CFG_BOT_USER" \
+  CFG_BOT_EMAIL="$CFG_BOT_EMAIL" \
+  CFG_SSH_KEY="$CFG_SSH_KEY" \
+  CFG_GH_ACCOUNT="${PREV_GH_ACCOUNT:-}" \
+  CFG_LABELS_RAW="$CFG_LABELS_RAW" \
+  CONFIG_FILE="$CONFIG_FILE" \
   python3 -c "
-import json, sys
+import json, os
+
+def val(name):
+    return os.environ.get(name) or None
+
+target_repo = os.environ['CFG_TARGET_REPO']
 config = {
     'project': {
-        'name': sys.argv[1],
-        'org': sys.argv[2],
-        'prRepository': sys.argv[3],
-        'issueRepository': sys.argv[4],
-        'defaultBranch': sys.argv[5],
-        'targetRepoPath': sys.argv[6],
-        'botOwnerGithubHandle': sys.argv[11],
+        'name': os.environ['CFG_PROJECT_NAME'],
+        'org': os.environ['CFG_ORG'],
+        'prRepository': os.environ['CFG_PR_REPO'],
+        'issueRepository': os.environ['CFG_ISSUE_REPO'],
+        'defaultBranch': os.environ['CFG_DEFAULT_BRANCH'],
+        'targetRepoPath': target_repo,
+        'botOwnerGithubHandle': val('CFG_OWNER_HANDLE'),
     },
     'bot': {
-        'username': sys.argv[7],
-        'email': sys.argv[8],
+        'username': os.environ['CFG_BOT_USER'],
+        'email': os.environ['CFG_BOT_EMAIL'],
+        'sshKeyPath': val('CFG_SSH_KEY'),
+        'ghAccount': val('CFG_GH_ACCOUNT'),
         'agent': 'claude',
         'claudeModel': 'opus',
         'claudeBin': None,
@@ -124,11 +231,11 @@ config = {
     },
     'labels': {
         'prLabels': ['ai-generated'],
-        'issueLabels': [l.strip() for l in sys.argv[9].split(',') if l.strip()],
+        'issueLabels': [l.strip() for l in os.environ['CFG_LABELS_RAW'].split(',') if l.strip()],
         'disabledTestLabel': '',
     },
     'bestPractices': {
-        'docsDir': '../' + sys.argv[6] + '/docs',
+        'docsDir': '../' + target_repo + '/docs',
         'indexFile': 'best_practices.md',
         'securityFile': 'SECURITY.md',
     },
@@ -137,12 +244,10 @@ config = {
         'syncRepoPath': None,
     },
 }
-with open(sys.argv[10], 'w') as f:
+with open(os.environ['CONFIG_FILE'], 'w') as f:
     json.dump(config, f, indent=2)
-    f.write('\n')
-" "$CFG_PROJECT_NAME" "$CFG_ORG" "$CFG_PR_REPO" "$CFG_ISSUE_REPO" \
-  "$CFG_DEFAULT_BRANCH" "$CFG_TARGET_REPO" "$CFG_BOT_USER" "$CFG_BOT_EMAIL" "$CFG_LABELS_RAW" \
-  "$CONFIG_FILE" "$CFG_OWNER_HANDLE"
+    f.write('\\n')
+"
   echo ""
   echo "✓ Config written to $CONFIG_FILE"
   echo ""
@@ -175,7 +280,7 @@ create_if_missing "$PROJECT_ROOT/data/progress.txt" \
   "$PROJECT_ROOT/data/progress.example.txt" "data/progress.txt"
 echo ""
 
-# ─── Step 4: Org members cache ───────────────────────────────────────────────
+# ─── Step 3: Org members cache ───────────────────────────────────────────────
 
 ORG_MEMBERS_FILE="$PROJECT_ROOT/.ignore/org-members.txt"
 mkdir -p "$PROJECT_ROOT/.ignore"
@@ -202,7 +307,7 @@ else
 fi
 echo ""
 
-# ─── Step 5: Target repo git config + hooks ──────────────────────────────────
+# ─── Step 4: Target repo git config + hooks ──────────────────────────────────
 
 SKIP_GIT=false
 
@@ -235,27 +340,57 @@ if [ "$SKIP_GIT" = false ]; then
   echo "Target git repository: $GIT_REPO"
   cd "$GIT_REPO"
 
-  GIT_USER=$(git config user.name || echo "")
-  GIT_EMAIL=$(git config user.email || echo "")
+  # --local, not plain `git config`: a plain read falls through to ~/.gitconfig,
+  # so a machine owner with a global identity would look already-configured and
+  # the bot would silently commit under their name.
+  GIT_USER=$(git -C "$GIT_REPO" config --local user.name || echo "")
+  GIT_EMAIL=$(git -C "$GIT_REPO" config --local user.email || echo "")
+  GIT_SSH_CFG=$(git -C "$GIT_REPO" config --local core.sshCommand || echo "")
 
-  if [ -z "$GIT_USER" ] || [ -z "$GIT_EMAIL" ]; then
-    echo "  Git user not configured in target repo."
-    read -p "  Set user.name to '$BOT_USERNAME' and user.email to '$BOT_EMAIL'? (Y/n) " -n 1 -r
+  # Use the key from the wizard if it just ran, otherwise the stored one.
+  if [ -n "${CFG_TARGET_REPO:-}" ]; then
+    SSH_KEY="${CFG_SSH_KEY:-}"
+  else
+    SSH_KEY="$BOT_SSH_KEY_PATH"
+  fi
+
+  EXPECTED_SSH_CFG=""
+  if [ -n "$SSH_KEY" ]; then
+    EXPECTED_SSH_CFG=$(bot_ssh_command "$SSH_KEY")
+  fi
+
+  if [ "$GIT_USER" = "$BOT_USERNAME" ] && [ "$GIT_EMAIL" = "$BOT_EMAIL" ] &&
+     [ "$GIT_SSH_CFG" = "$EXPECTED_SSH_CFG" ]; then
+    echo "  ✓ Git identity: $GIT_USER <$GIT_EMAIL>"
+    if [ -n "$EXPECTED_SSH_CFG" ]; then
+      echo "  ✓ SSH key pinned: $SSH_KEY"
+    fi
+  else
+    echo "  Repo-local git identity needs updating:"
+    echo "    user.name       $GIT_USER → $BOT_USERNAME"
+    echo "    user.email      $GIT_EMAIL → $BOT_EMAIL"
+    if [ -n "$EXPECTED_SSH_CFG" ]; then
+      echo "    core.sshCommand → pins pushes to $SSH_KEY"
+    elif [ -n "$GIT_SSH_CFG" ]; then
+      echo "    core.sshCommand → unset (falls back to this machine's default key)"
+    fi
+    echo "  These are written to $GIT_REPO/.git/config only."
+    read -p "  Apply? (Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-      git config user.name "$BOT_USERNAME"
-      git config user.email "$BOT_EMAIL"
+      bot_apply_repo_identity "$GIT_REPO" "$BOT_USERNAME" "$BOT_EMAIL" "$SSH_KEY"
       GIT_USER="$BOT_USERNAME"
       GIT_EMAIL="$BOT_EMAIL"
       echo "  ✓ Git identity configured"
     else
       echo "  Skipped. Configure manually:"
-      echo "    cd $GIT_REPO"
-      echo "    git config user.name \"$BOT_USERNAME\""
-      echo "    git config user.email \"$BOT_EMAIL\""
+      echo "    git -C $GIT_REPO config --local user.name \"$BOT_USERNAME\""
+      echo "    git -C $GIT_REPO config --local user.email \"$BOT_EMAIL\""
+      if [ -n "$EXPECTED_SSH_CFG" ]; then
+        echo "    git -C $GIT_REPO config --local core.sshCommand \"$EXPECTED_SSH_CFG\""
+      fi
+      GIT_USER="${GIT_USER:-$BOT_USERNAME}"
     fi
-  else
-    echo "  ✓ Git user: $GIT_USER <$GIT_EMAIL>"
   fi
 
   # ─── Configure git remotes ────────────────────────────────────────────────
@@ -402,7 +537,7 @@ if [ "$SKIP_GIT" = false ]; then
   echo ""
 fi
 
-# ─── Step 6: Bot repo hook ───────────────────────────────────────────────────
+# ─── Step 5: Bot repo hook ───────────────────────────────────────────────────
 
 BOT_HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-commit-bot-repo"
 BOT_HOOK_DEST="$PROJECT_ROOT/.git/hooks/pre-commit"
@@ -411,6 +546,32 @@ cp "$BOT_HOOK_SOURCE" "$BOT_HOOK_DEST"
 chmod +x "$BOT_HOOK_DEST"
 echo "✓ Bot repo pre-commit hook installed"
 echo "  (Prevents committing data/prd.json, data/progress.txt, data/run-state.json)"
+echo ""
+
+# ─── Step 6: GitHub CLI account ──────────────────────────────────────────────
+# The ssh key only covers git transport. gh carries its own stored token, so
+# without a matching account the bot's PRs and comments are posted by whoever
+# owns this machine.
+
+if gh auth token --user "$BOT_GH_ACCOUNT" >/dev/null 2>&1; then
+  echo "✓ gh account '$BOT_GH_ACCOUNT' is authenticated"
+  echo "  run.sh exports its token as GH_TOKEN for the bot process only —"
+  echo "  gh's active account for your other terminals is left alone."
+else
+  ACTIVE_GH=$(gh api user --jq .login 2>/dev/null || echo "")
+  if [ -n "$ACTIVE_GH" ]; then
+    echo "⚠️  gh has no stored token for '$BOT_GH_ACCOUNT' (active account: $ACTIVE_GH)"
+    echo "   Without one, PRs and comments are posted as $ACTIVE_GH, not the bot."
+    echo "   Add the account, then switch back — 'gh auth login' makes the new"
+    echo "   account active, but both tokens stay stored:"
+    echo "     gh auth login --hostname github.com"
+    echo "     gh auth switch --user $ACTIVE_GH"
+  else
+    echo "⚠️  gh is not authenticated for any account."
+    echo "   Log in as $BOT_GH_ACCOUNT so the bot can open PRs and comment:"
+    echo "     gh auth login --hostname github.com"
+  fi
+fi
 echo ""
 
 # ─── Step 7: Environment checks ──────────────────────────────────────────────

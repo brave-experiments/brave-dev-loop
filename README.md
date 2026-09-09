@@ -89,11 +89,12 @@ make setup
 
 The setup wizard handles everything interactively and is fully idempotent — safe to re-run at any time. It will:
 
-1. **Create `config.json`** (if missing) — prompts for project name, GitHub org, PR/issue repositories, bot username/email, and issue labels. If `config.json` already exists, shows current values and skips unless you explicitly choose to reconfigure.
+1. **Create `config.json`** (if missing) — prompts for project name, GitHub org, PR/issue repositories, bot username/email, issue labels, and the SSH key the bot pushes with. If `config.json` already exists, current values are offered as defaults.
 2. **Create data files** (`prd.json`, `run-state.json`, `progress.txt`) from templates if missing. Never overwrites existing files.
 3. **Generate org members cache** (`.ignore/org-members.txt`) via GitHub API if missing.
-4. **Configure git identity** in the target repo if not already set (using the bot username/email from config).
+4. **Configure git identity** in the target repo — repo-local `user.name`, `user.email`, and `core.sshCommand`.
 5. **Install pre-commit hooks** for both the target repo and bot repo.
+6. **Check the `gh` account** matching `bot.ghAccount` is authenticated.
 
 **For existing brave-core deployments:** You can skip the wizard entirely by copying the reference config: `cp config.brave-core.json config.json`, then run `make setup` to complete the remaining steps.
 
@@ -244,6 +245,8 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `project.targetRepoPath`: Path to the target git repo (relative to parent dir or absolute)
 - `bot.username`: Bot's GitHub username
 - `bot.email`: Bot's email for git commits
+- `bot.sshKeyPath`: SSH identity the bot pushes with (`null` = this machine's default key). See [Bot Identity Isolation](#bot-identity-isolation)
+- `bot.ghAccount`: `gh` account whose token the bot uses (`null` = same as `bot.username`)
 - `bot.agent`: Which agent to run, `claude` (default), `codex`, or `cursor`
 - `bot.claudeModel`: Claude model to use (`opus`, `sonnet`, etc.; overridden by `./run.sh --model` for Claude runs)
 - `bot.claudeBin`: Path to the `claude` binary (`null` = found on PATH)
@@ -300,6 +303,34 @@ See `best_practices.md` in the target repo's docs directory (configured via `bes
 ### Branch Management
 
 Each user story gets its own branch, created automatically by the bot from `data/prd.json`.
+
+### Bot Identity Isolation
+
+The bot commits and pushes as a different GitHub account than the person who owns the machine. Left alone, git and `gh` both default to the machine owner: pushes to the bot's fork get rejected, and any that succeed are attributed to the wrong person.
+
+Setup pins the bot's identity without touching anything global. Nothing here modifies `~/.gitconfig`, `~/.ssh/config`, or `gh`'s active account, so other repos and other terminals behave exactly as before.
+
+| What | Where it is set | Scope |
+| --- | --- | --- |
+| `user.name`, `user.email` | `<target-repo>/.git/config` | That repo only |
+| `core.sshCommand` | `<target-repo>/.git/config` | That repo only |
+| `GIT_SSH_COMMAND` | exported by `run.sh` | The bot process and its children |
+| `GH_TOKEN` | exported by `run.sh` | The bot process and its children |
+
+The ssh command is `ssh -o IdentitiesOnly=yes -i <key>`. `IdentitiesOnly=yes` is required, not decoration: without it ssh-agent offers whatever keys it holds and GitHub authenticates as the owner of the first one accepted, ignoring `-i` entirely.
+
+Setup verifies the chosen key with `ssh -T git@github.com` and warns if it authenticates as someone other than `bot.username`.
+
+**Choosing a key.** Setup lists one entry per key, not one per file. Where a private key sits beside its `<key>.pub`, the `.pub` is offered: ssh matches it against ssh-agent and falls back to the private file beside it, so it works either way. Where the two halves are named differently (`netzenbot.ppk` + `netzenbot.pub`), the private file is offered instead — `-i` on that `.pub` has no `netzenbot` beside it to fall back to, so it only works while the agent holds the key. A pair setup cannot match by fingerprint, such as an encrypted PEM key, is listed under both names; there, prefer the `.pub`, since `-i` on the private file cannot reach the agent copy.
+
+**Scheduled runs.** A passphrase-protected key only works while ssh-agent holds it. Runs started by `make schedules` have no agent, so use a dedicated passphrase-less key for the bot if you schedule it. Setup flags keys with `[needs ssh-agent]`.
+
+**`gh` is separate.** The SSH key covers git transport only; `gh` carries its own stored token. `run.sh` reads the bot's token with `gh auth token --user <account>` and exports it as `GH_TOKEN` for that process. This reads the token without switching accounts — `gh auth switch` would change global state. To add the bot account:
+
+```bash
+gh auth login --hostname github.com   # makes the new account active
+gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
+```
 
 ### Pre-commit Hooks
 
