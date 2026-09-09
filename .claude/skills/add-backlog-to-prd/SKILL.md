@@ -6,73 +6,66 @@ allowed-tools: Bash, Read, Grep, Glob
 
 # PRD - Add Backlog Issues
 
-Automatically fetch open issues assigned to the bot from the configured issue repository and add any missing ones to the PRD.
+Fetch open issues assigned to the bot from the configured issue repository and add any missing ones to the PRD.
 
 ---
 
 ## The Job
 
-**Step 0: Read project config.** Read `config.json` (in the bot repo root) to determine:
-- `project.issueRepository` — the repo to fetch issues from (e.g. `brave/brave-browser`)
-- `bot.username` — the GitHub username of the bot
-
-1. Get the bot username from `config.json`
-2. Fetch all open issues assigned to the bot username from the issue repository
-3. Compare with existing issues in the PRD (`./data/prd.json`)
-4. Add any missing issues as new user stories
-5. Provide a recap of what was added
+The issue sync itself is deterministic and needs no LLM: `scripts/add-backlog-to-prd.py`
+does the whole thing, and `make backlog` is the same script. Run it, then do the
+parts that do need judgment — the recap and the Signal notification.
 
 ---
 
-## Step 1: Bot Username
-
-The bot username is already available from `config.json` (read in Step 0) via `bot.username`. Use this as the GitHub username for fetching assigned issues.
-
----
-
-## Step 2: Fetch GitHub Issues
-
-Read `config.json` to get the issue repository and bot username. Fetch issues assigned to the bot:
+## Step 1: Sync Assigned Issues Into the PRD
 
 ```bash
-gh issue list --repo <issueRepository> --assignee "$BOT_USER" --state open --json number,title,url,labels --limit 100
+python3 ./scripts/add-backlog-to-prd.py
 ```
 
----
+The script reads `config.json` itself (`project.issueRepository`, `bot.username`,
+`project.targetRepoPath`, `bestPractices.*`), fetches every open issue assigned to
+the bot, and appends a story for each one that isn't already tracked. It prints a
+human summary on stderr and a JSON summary on stdout:
 
-## Step 3: Process Issues and Update PRD
-
-A single helper script handles both new and existing PRDs:
-
-```bash
-ISSUE_REPO=$(jq -r '.project.issueRepository' config.json)
-BOT_USER=$(jq -r '.bot.username' config.json)
-# Note: both values above come from config.json (already read in Step 0)
-gh issue list --repo "$ISSUE_REPO" --assignee "$BOT_USER" --state open --json number,title,url,labels --limit 100 | \
-  .claude/skills/add-backlog-to-prd/update-prd-with-issues.py ./data/prd.json > /tmp/prd_updated.json && \
-  mv /tmp/prd_updated.json ./data/prd.json
+```json
+{"added": [{"id": "US-016", "issueNumber": 52439, "title": "...", "status": "pending", "priority": 16}],
+ "checked": 15, "alreadyTracked": 8, "issueRepository": "brave/brave-browser", "dryRun": false}
 ```
 
-If `./data/prd.json` doesn't exist yet, the script creates a new PRD. If it already exists, it only appends missing issues and never modifies existing stories.
+Use that JSON for the recap — don't re-fetch the issue list.
+
+Flags: `--dry-run` (report only), `--prd PATH`, `--issues-file -` (read issue JSON
+from stdin instead of calling `gh`).
 
 ### What the script does:
 
-- **Detect issue type**: Issues with "Test failure:" title prefix or `bot/type/test` label are treated as test issues; all others get generic stories
+- **Dedupe**: skips issues already referenced as `issue #N` by a story in
+  `data/prd.json` or `data/prd.archived.json`, so archived (merged) work is not
+  re-added
+- **Detect issue type**: issues titled `Disabled test:` (or labeled
+  `disabled-brave-test`) become re-enable stories; `Test failure:` (or
+  `bot/type/test`) become test-fix stories; everything else gets a generic story
 - **For test issues**:
   - Extract test names from issue titles (handles multiple prefixes)
-  - Determine test location at generation time by running `git grep` to find if the test is in `src/brave` or `src` (Chromium)
+  - Determine test location at generation time by running `git grep` against the
+    configured target repo and its parent checkout
   - Generate test-specific acceptance criteria with correct test binary and filter
   - Include `testType`, `testLocation`, and `testFilter` fields
 - **For generic issues**:
   - Use the issue title directly as the story title
-  - Generate standard acceptance criteria (fetch issue, analyze, implement, build, format, presubmit, gn_check, find and run relevant tests)
-- Generate proper user story structure with sequential US-XXX IDs and priority ordering
-- Skip issues already in the PRD
-- Safety check verifies existing stories were not modified
+  - Generate standard acceptance criteria (fetch issue, analyze, implement, build,
+    format, review, run relevant tests, presubmit)
+- Generate proper user story structure with sequential US-XXX IDs and priority
+  ordering
+- Create `data/prd.json` from scratch if it doesn't exist
+- Write atomically, and abort with a safety-check error if any existing story
+  would have been modified
 
 ---
 
-## Step 3b: Sync Untracked Bot PRs
+## Step 2: Sync Untracked Bot PRs
 
 Some cron skills (`learnable-pattern-search`, `update-best-practices`) open PRs
 directly against the PR repository without creating a story. Those PRs are
@@ -93,7 +86,7 @@ Include anything it added in the recap below.
 
 ---
 
-## Step 4: Provide Recap
+## Step 3: Provide Recap
 
 Generate a comprehensive recap showing:
 
@@ -111,7 +104,7 @@ Generate a comprehensive recap showing:
    - Skipped
    - Invalid
 
-3. **Untracked Bot PRs Added** (from Step 3b): US-XXX, PR number, and PR title
+3. **Untracked Bot PRs Added** (from Step 2): US-XXX, PR number, and PR title
    for each one
 
 4. **Total PRD Statistics**:
@@ -169,16 +162,17 @@ Successfully fetched 15 open issues assigned to the bot and added 7 missing issu
 ## Important Notes
 
 - Always preserve the exact structure of existing user stories
+- The script owns story structure — never hand-write stories into `data/prd.json`; if a story comes out wrong, fix `scripts/add-backlog-to-prd.py`
 - Test issues include a best_practices.md read step in acceptance criteria; the path is derived from `bestPractices.docsDir` + `bestPractices.indexFile` in `config.json` (e.g. `../src/brave/docs/best_practices.md`)
 - Test type determination is critical for generating correct test commands
 - Priority numbers must be sequential and not conflict with existing ones
-- All new issue-derived stories start in "pending" status; PR-derived stories from Step 3b start in "pushed" status because their PR already exists
+- All new issue-derived stories start in "pending" status; PR-derived stories from Step 2 start in "pushed" status because their PR already exists
 
 ---
 
-## Step 5: Signal Notification
+## Step 4: Signal Notification
 
-After the recap, send a Signal notification summarizing what was added. Each issue link goes on its own line.
+After the recap, send a Signal notification summarizing what was added. Each issue link goes on its own line. The issue numbers and repository come from the Step 1 JSON summary (`added[].issueNumber`, `issueRepository`).
 
 **If new issues were added:**
 
@@ -203,7 +197,7 @@ This is a no-op if Signal is not configured.
 
 ## Error Handling
 
-- If `gh` CLI is not available, report error and exit
-- If `./data/prd.json` doesn't exist, a new one is created automatically
-- If GitHub API rate limit is hit, report error with retry time
-- If `jq` is not available, report error and exit
+The script exits 2 and prints the cause on stderr when `gh` is missing, `gh`
+fails (auth, rate limit, unknown repo), or a PRD file is unreadable. Report the
+error and stop — do not hand-edit `data/prd.json` to work around it. A missing
+`data/prd.json` is not an error; the script creates one.

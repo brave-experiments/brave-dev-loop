@@ -198,7 +198,7 @@ Bot-only skills are available as slash commands in Claude Code. 8 bot-specific s
 | `/prd` | Generate structured PRDs with clarifying questions |
 | `/prd-json` | Convert PRD markdown to `prd.json` format |
 | `/prd-clean` | Archive merged/invalid stories to `prd.archived.json` |
-| `/add-backlog-to-prd` | Fetch open issues from configured issue repo by label and add to PRD |
+| `/add-backlog-to-prd` | Fetch open issues assigned to the bot and add to PRD, then recap and notify. The sync itself is `scripts/add-backlog-to-prd.py` — run it directly with `make backlog` if you don't need the recap |
 
 ### Code Review & Quality
 
@@ -529,7 +529,7 @@ brave-dev-bot/                 # (or your clone name)
 ├── config.example.json        # Config template
 ├── SECURITY.md                # Security guidelines for GitHub data and prompt injection
 ├── LICENSE                    # MPL-2.0 license
-├── Makefile                   # Dev commands: make test, lint, format, setup, schedules
+├── Makefile                   # Dev commands: make test, lint, format, setup, schedules, backlog
 ├── run.sh                     # Main entry point (iterations, TUI mode)
 ├── data/
 │   ├── prd.json               # Product requirements (gitignored)
@@ -546,7 +546,7 @@ brave-dev-bot/                 # (or your clone name)
 │       ├── prd/               # PRD generation
 │       ├── prd-json/          # PRD to JSON converter
 │       ├── prd-clean/         # Archive merged/invalid stories
-│       ├── add-backlog-to-prd/  # Fetch issues from GitHub
+│       ├── add-backlog-to-prd/  # Fetch issues from GitHub (wraps scripts/add-backlog-to-prd.py)
 │       ├── review-prs/        # Batch PR review with caching
 │       ├── check-signal/      # Check incoming Signal messages
 │       ├── update-best-practices/ # Merge upstream Chromium guidelines
@@ -567,6 +567,8 @@ brave-dev-bot/                 # (or your clone name)
 │   ├── pre-commit             # Target repo hook (blocks dependency updates)
 │   └── pre-commit-bot-repo    # Bot repo hook (blocks config file commits)
 ├── scripts/
+│   ├── add-backlog-to-prd.py  # Sync assigned issues into prd.json (no LLM)
+│   ├── sync-bot-prs-to-prd.py # Track untracked bot PRs as stories
 │   ├── fetch-issue.sh         # Fetch filtered GitHub issues
 │   ├── filter-issue-json.sh   # Filter issues to org members
 │   ├── filter-pr-reviews.sh   # Filter PR reviews to org members
