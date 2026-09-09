@@ -16,10 +16,8 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -32,11 +30,11 @@ _BOT_DIR = os.path.normpath(_BOT_DIR)
 sys.path.insert(0, os.path.join(_BOT_DIR, "scripts"))
 sys.path.insert(0, _SCRIPT_DIR)
 
-from lib.load_config import get_config, load_config, require_config
-
-# Import fetch-prs functions (the module uses if __name__ guard)
 import importlib.util
 
+from lib.load_config import load_config, require_config
+
+# Import fetch-prs functions (the module uses if __name__ guard)
 _fp_spec = importlib.util.spec_from_file_location(
     "fetch_prs", os.path.join(_SCRIPT_DIR, "fetch-prs.py")
 )
@@ -180,7 +178,7 @@ def is_feature_branch(base_ref):
         return False
     if base_ref == DEFAULT_BRANCH:
         return False
-    if re.match(VERSION_BRANCH_RE, base_ref):
+    if re.match(_fp_mod.VERSION_BRANCH_RE, base_ref):
         return False
     return True
 
@@ -1196,8 +1194,6 @@ def main():
         }
 
     # Build PR entry dicts for processing
-    rp_val = bot_username if reviewer_priority else None
-
     def pr_entry(pr):
         author = pr.get("author", {}).get("login", "unknown")
         entry = {
@@ -1322,7 +1318,7 @@ def main():
 
     # Cost summary
     log(f"\n{'=' * 60}")
-    log(f"COST SUMMARY")
+    log("COST SUMMARY")
     log(f"{'=' * 60}")
     log(f"PRs to review: {len(processed_prs)}")
     log(f"Total subagent prompts: {total_prompts}")
