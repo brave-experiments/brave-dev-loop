@@ -52,7 +52,7 @@ Only skip a test fix story as "duplicate" if ALL of these are verified:
    - Check issue comments for reports of continued failures
    - Check CI/build logs if available
 4. **Version/environment matches** (if specified in the issue)
-   - If the issue mentions a specific Chromium version, verify the fix covers that version
+   - If the issue mentions a specific upstream version, verify the fix covers that version
 
 ### Timestamp Verification Commands
 

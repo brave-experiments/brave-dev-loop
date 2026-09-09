@@ -68,7 +68,6 @@ cd "$GIT_REPO"
 git stash --include-untracked 2>/dev/null || true
 git checkout "$BOT_DEFAULT_BRANCH"
 
-
 # No-fork deployments have no separate upstream remote — sync from origin.
 SYNC_REMOTE=upstream
 if ! git remote get-url upstream >/dev/null 2>&1; then

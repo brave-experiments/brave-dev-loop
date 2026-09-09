@@ -59,25 +59,13 @@ Closes $ISSUE_REPO#<issue-number>
 ## Summary
 [Brief description of what this PR does and why]
 
-[If this is a Chromium test being disabled, add a clear note:]
-**Note: This is a Chromium test** (located in `./src/` not `./src/brave/`).
-
-## Root Cause
-[Description of the underlying issue that needed to be fixed]
-
-[If this is a Chromium test, include:]
-- **Chromium upstream status**: [Chromium has also disabled this test / Chromium has not disabled this test / Evidence of upstream bug: crbug.com/XXXXX]
-- **Brave modifications**: [Brave does not modify this code area / Brave has modifications in ./src/brave/chromium_src/[path] that may affect this test]
+[If the project inherits tests from an upstream: see the project profile's `docs/testing.md` for the extra PR-body fields.]
 
 ## Fix
 [Description of how the fix addresses the root cause]
 
 ## Test Plan
-- [x] Ran pnpm run format - passed
-- [x] Ran pnpm run presubmit - passed
-- [x] Ran pnpm run gn_check - passed
-- [x] Ran pnpm run build - passed
-- [x] Ran pnpm run test [test-name] - passed [N/N times]
+- [x] Ran the project's presubmit sequence - passed (list the actual commands; see the project profile's `docs/testing.md`)
 - [ ] CI passes cleanly
 EOF
 )"
@@ -86,7 +74,7 @@ EOF
    **IMPORTANT**:
    - **The `Closes` line MUST be the very first line of the PR body**, above `## Summary`. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config). Issues live in the issue repository and PRs in the PR repository, so a bare `Closes #<n>` will NOT auto-close the cross-repo issue. Put the closing keyword + issue link at the TOP, never at the bottom.
    - Fill in actual test commands and results from acceptance criteria
-   - If `.ts`/`.tsx`/`.js` files were changed, add checkboxes for `pnpm run test-unit` and `pnpm run build-storybook` to the test plan
+   - If front-end files were changed, add checkboxes for the project's front-end test commands to the test plan
    - Keep the last checkbox "CI passes cleanly" unchecked
    - Do NOT add "Generated with Claude Code" or similar attribution
    - Capture the PR number from the output
