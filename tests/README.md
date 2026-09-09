@@ -1,18 +1,18 @@
 # Test Suite
 
-Automated tests for brave-dev-bot with proper exit codes.
+Automated tests for brave-dev-loop with proper exit codes.
 
 ## Running Tests
 
 **Python unit tests** (pure logic, fast, no network):
 ```bash
-cd brave-dev-bot
+cd brave-dev-loop
 python3 -m pytest tests/
 ```
 
 **Bash integration tests** (GitHub API, file structure, hooks):
 ```bash
-cd brave-dev-bot
+cd brave-dev-loop
 ./tests/test-suite.sh
 ```
 
@@ -65,7 +65,7 @@ To use in CI/CD:
 
 ```bash
 #!/bin/bash
-cd brave-dev-bot
+cd brave-dev-loop
 ./tests/test-suite.sh
 
 if [ $? -eq 0 ]; then

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-commit hook for brave-dev-bot repository
+# Pre-commit hook for brave-dev-loop repository
 # Prevents committing runtime state files that are in .gitignore
 
 # Check if any staged files are in .gitignore
