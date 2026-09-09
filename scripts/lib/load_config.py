@@ -1,4 +1,4 @@
-"""Shared config helper for brave-dev-bot Python scripts.
+"""Shared config helper for brave-dev-loop Python scripts.
 
 Usage:
     from lib.load_config import load_config, get_config, require_config

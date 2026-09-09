@@ -1,4 +1,4 @@
-# Brave Bot
+# Brave Dev Loop
 
 An autonomous coding agent for Brave projects. Built on Claude Code, it reads Product Requirements Documents (PRDs), implements user stories, runs tests, creates PRs, handles review feedback, and manages CI — all autonomously in iterative loops.
 
@@ -77,7 +77,7 @@ merged  └─► (check again next iteration)
 Clone alongside (or near) your target project's repository:
 
 ```bash
-git clone git@github.com:brave-experiments/brave-dev-bot.git my-project-bot
+git clone git@github.com:brave-experiments/brave-dev-loop.git my-project-bot
 cd my-project-bot
 ```
 
@@ -487,7 +487,7 @@ Then reload: `direnv allow`
 ### Test It
 
 ```bash
-./scripts/signal-notify.sh "Hello from brave-dev-bot!"
+./scripts/signal-notify.sh "Hello from brave-dev-loop!"
 ```
 
 You should receive the message on the recipient's Signal account.
@@ -527,7 +527,7 @@ archive/
 ## Project Structure
 
 ```
-brave-dev-bot/                 # (or your clone name)
+brave-dev-loop/                # (or your clone name)
 ├── README.md                  # This file
 ├── config.json                # Project config (gitignored, created by setup)
 ├── config.example.json        # Config template

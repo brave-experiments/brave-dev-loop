@@ -1,4 +1,4 @@
-"""Tests for all Python scripts in brave-dev-bot.
+"""Tests for all Python scripts in brave-dev-loop.
 
 Covers: update-prd-status.py, select-task.py, business-hours-elapsed.py,
 and check-prd-has-work.py.
@@ -1391,8 +1391,8 @@ class TestResolveTargetRepo:
 
     @staticmethod
     def _layout(root, target_rel):
-        """Create <root>/brave-dev-bot and a git repo at <root>/<target_rel>."""
-        bot = os.path.join(root, "brave-dev-bot")
+        """Create <root>/brave-dev-loop and a git repo at <root>/<target_rel>."""
+        bot = os.path.join(root, "brave-dev-loop")
         target = os.path.join(root, target_rel)
         os.makedirs(os.path.join(target, ".git"))
         os.makedirs(bot, exist_ok=True)
@@ -1453,7 +1453,7 @@ class TestResolveTargetRepo:
 
     def test_missing_repo_falls_back_to_documented_base(self, tmp_dir):
         """Neither base exists — return the bot-dir base so errors read sanely."""
-        bot = os.path.join(tmp_dir, "brave-dev-bot")
+        bot = os.path.join(tmp_dir, "brave-dev-loop")
         os.makedirs(bot)
         cfg = {"project": {"targetRepoPath": "nope"}}
         assert self._resolver()(cfg, bot) == os.path.join(bot, "nope")
@@ -1480,7 +1480,7 @@ class TestRepairConfigPaths:
 
     @staticmethod
     def _layout(root, target_rel, docs=True):
-        bot = os.path.join(root, "brave-dev-bot")
+        bot = os.path.join(root, "brave-dev-loop")
         target = os.path.join(root, target_rel)
         os.makedirs(os.path.join(target, ".git"))
         if docs:
@@ -1511,7 +1511,7 @@ class TestRepairConfigPaths:
         assert cfg["bestPractices"]["docsDir"] == "../src/brave/docs"
 
     def test_noop_when_target_repo_missing(self, repair_config_paths, tmp_dir):
-        bot = os.path.join(tmp_dir, "brave-dev-bot")
+        bot = os.path.join(tmp_dir, "brave-dev-loop")
         os.makedirs(bot)
         cfg = {
             "project": {"targetRepoPath": "nowhere"},

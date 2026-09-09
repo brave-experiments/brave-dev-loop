@@ -1,5 +1,5 @@
 #!/bin/bash
-# Display a human-readable summary of brave-dev-bot scheduled tasks
+# Display a human-readable summary of brave-dev-loop scheduled tasks
 # Parses sync-schedules.sh to show what runs when
 
 set -e
@@ -64,7 +64,7 @@ cron_to_human() {
   echo "${freq_part}${time_part:+ $time_part}"
 }
 
-echo -e "${BOLD}Brave Bot Scheduled Tasks${RESET}"
+echo -e "${BOLD}Brave Dev Loop Scheduled Tasks${RESET}"
 echo -e "${DIM}Source: scripts/sync-schedules.sh${RESET}"
 echo ""
 
@@ -86,7 +86,7 @@ while IFS= read -r line; do
   fi
 
   # Skip boilerplate lines
-  if [[ "$line" =~ ^(SHELL|PATH)= ]] || [[ "$line" == *"do not edit"* ]] || [[ "$line" == *"=== brave-dev-bot"* ]] || [[ "$line" == *"=== end brave-dev-bot"* ]]; then
+  if [[ "$line" =~ ^(SHELL|PATH)= ]] || [[ "$line" == *"do not edit"* ]] || [[ "$line" == *"=== brave-dev-loop"* ]] || [[ "$line" == *"=== end brave-dev-loop"* ]]; then
     continue
   fi
 

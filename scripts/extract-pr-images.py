@@ -165,7 +165,7 @@ def download_image(url, dest_path):
         req = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "brave-dev-bot/1.0",
+                "User-Agent": "brave-dev-loop/1.0",
                 "Accept": "image/*",
             },
         )

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Idempotent cron job setup for brave-dev-bot
+# Idempotent cron job setup for brave-dev-loop
 # Run this script to install/update all cron jobs.
 # All schedule changes should be made here and committed to source control.
 
@@ -28,7 +28,7 @@ SYNC_REPO_PATH=$(bot_config '.schedules.syncRepoPath')
 BOT_REPO_BRANCH=$(bot_config '.project.botRepoBranch')
 BOT_REPO_BRANCH="${BOT_REPO_BRANCH:-master}"
 
-CRON_MARKER="brave-dev-bot ($BOT_PROJECT_NAME)"
+CRON_MARKER="brave-dev-loop ($BOT_PROJECT_NAME)"
 
 # Build the crontab content
 # Note: add-backlog-to-prd runs 15 min before each run.sh invocation

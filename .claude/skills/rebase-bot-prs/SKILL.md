@@ -47,7 +47,7 @@ skipped only when no configured remote points at its head repo — add one with
 
 ## Steps
 
-`BOT_DIR` = absolute path to the `brave-dev-bot` directory.
+`BOT_DIR` = absolute path to the `brave-dev-loop` directory.
 
 ### Step 1: Plan (dry run)
 

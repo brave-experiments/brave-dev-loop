@@ -37,7 +37,7 @@ When invoked with `/review-prs [days|page<N>|#<PR>] [open|closed|all] [auto] [re
 Run the prepare script with all arguments:
 
 ```bash
-BOT_DIR="<absolute path to brave-dev-bot directory>"
+BOT_DIR="<absolute path to brave-dev-loop directory>"
 python3 $BOT_DIR/.claude/skills/review-prs/prepare-review.py [days|page<N>|#<PR>] [open|closed|all] [--auto] [--reviewer-priority]
 ```
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup script for brave-dev-bot
+# Setup script for brave-dev-loop
 # Fully idempotent — safe to re-run at any time.
 # Creates config.json, data files, hooks, and org-members cache as needed.
 # Never overwrites existing files without an explicit confirmation.
@@ -14,7 +14,7 @@ CONFIG_FILE="$PROJECT_ROOT/config.json"
 source "$SCRIPT_DIR/lib/git-identity.sh"
 
 echo "==================================="
-echo "  Brave Bot Setup"
+echo "  Brave Dev Loop Setup"
 echo "==================================="
 echo ""
 
