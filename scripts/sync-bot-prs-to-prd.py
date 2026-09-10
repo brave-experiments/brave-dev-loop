@@ -29,16 +29,19 @@ import sys
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
-from lib.load_config import get_config, load_config, require_config
+from lib.load_config import (
+    best_practices_index,
+    get_config,
+    load_config,
+    require_config,
+)
 
 _config = load_config()
 _pr_repo = require_config(_config, "project.prRepository")
 _issue_repo = require_config(_config, "project.issueRepository")
 _bot_user = require_config(_config, "bot.username")
 _default_branch = get_config(_config, "project.defaultBranch", "master")
-_bp_docs_dir = get_config(_config, "bestPractices.docsDir", ".")
-_bp_index_file = get_config(_config, "bestPractices.indexFile", "best_practices.md")
-_best_practices_path = os.path.join(_bp_docs_dir, _bp_index_file)
+_best_practices_path = best_practices_index(_config)
 
 PR_FIELDS = "number,title,url,headRefName,isDraft,body,files"
 

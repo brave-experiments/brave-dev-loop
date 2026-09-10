@@ -4,8 +4,9 @@
 # Project config - user-specific (template: config.example.json)
 config.json
 
-# Runtime lock file
+# Runtime lock file (and the mkdir-based fallback lock)
 .run.lock
+.run.lock.d/
 
 # Runtime files - user-specific state
 data/prd.json

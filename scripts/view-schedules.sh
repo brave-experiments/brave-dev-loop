@@ -1,5 +1,5 @@
 #!/bin/bash
-# Display a human-readable summary of brave-dev-bot scheduled tasks
+# Display a human-readable summary of brave-dev-loop scheduled tasks
 # Parses sync-schedules.sh to show what runs when
 
 set -e
@@ -64,7 +64,7 @@ cron_to_human() {
   echo "${freq_part}${time_part:+ $time_part}"
 }
 
-echo -e "${BOLD}Brave Bot Scheduled Tasks${RESET}"
+echo -e "${BOLD}Brave Dev Loop Scheduled Tasks${RESET}"
 echo -e "${DIM}Source: scripts/sync-schedules.sh${RESET}"
 echo ""
 
@@ -86,7 +86,7 @@ while IFS= read -r line; do
   fi
 
   # Skip boilerplate lines
-  if [[ "$line" =~ ^(SHELL|PATH)= ]] || [[ "$line" == *"do not edit"* ]] || [[ "$line" == *"=== brave-dev-bot"* ]] || [[ "$line" == *"=== end brave-dev-bot"* ]]; then
+  if [[ "$line" =~ ^(SHELL|PATH)= ]] || [[ "$line" == *"do not edit"* ]] || [[ "$line" == *"=== brave-dev-loop"* ]] || [[ "$line" == *"=== end brave-dev-loop"* ]]; then
     continue
   fi
 
@@ -194,7 +194,7 @@ for name in "${LOCK_NAMES[@]}"; do
   [ -f "$lockfile" ] || continue
 
   # Try to acquire the lock — if we can't, something is holding it
-  if ! ( flock -n 9 ) 9<"$lockfile" 2>/dev/null; then
+  if command -v flock >/dev/null 2>&1 && ! ( flock -n 9 ) 9<"$lockfile" 2>/dev/null; then
     if [ "$has_running" = false ]; then
       echo -e "${BOLD}Running Jobs${RESET}"
       has_running=true

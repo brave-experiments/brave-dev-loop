@@ -6,12 +6,16 @@
     "issueRepository": "my-org/my-project",
     "defaultBranch": "main",
     "targetRepoPath": "../my-project",
-    "botOwnerGithubHandle": ""
+    "botOwnerGithubHandle": "",
+    "useFork": true,
+    "profile": "default",
+    "prdMode": "curated"
   },
   "bot": {
     "username": "my-bot",
     "email": "my-bot@example.com",
     "sshKeyPath": null,
+    "signingKeyPath": null,
     "ghAccount": null,
     "agent": "claude",
     "claudeModel": "opus",
@@ -19,10 +23,13 @@
     "codexModel": null,
     "codexBin": null,
     "cursorModel": null,
-    "cursorBin": null
+    "cursorBin": null,
+    "ghConfigDir": null
   },
   "labels": {
-    "prLabels": ["ai-generated"],
+    "prLabels": [
+      "ai-generated"
+    ],
     "issueLabels": [],
     "disabledTestLabel": ""
   },

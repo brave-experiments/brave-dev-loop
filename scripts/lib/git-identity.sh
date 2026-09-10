@@ -108,8 +108,53 @@ bot_identity_needs_agent() {
 }
 
 # Pin identity and ssh key on a repo. Writes only to <repo>/.git/config.
+# Resolve the public key the bot signs commits with.
+#
+# Defaults to the key it pushes with: one identity for the account means a
+# commit authored by the bot is signed by that same bot, which is what makes
+# GitHub mark it Verified. Signing with the machine owner's key instead yields
+# "unknown_key" on every bot commit.
+#
+# ssh signing wants the *public* half. Accepts both the id_ed25519 ->
+# id_ed25519.pub and the netzenbot.ppk -> netzenbot.pub spellings, and falls
+# back to the private key, from which ssh-keygen derives the public part.
+bot_signing_key() {
+  local override="$1" ssh_key="$2" key
+  key="${override:-$ssh_key}"
+  [ -n "$key" ] || return 0
+
+  case "$key" in
+    *.pub) printf '%s\n' "$key"; return 0 ;;
+  esac
+  if [ -f "$key.pub" ]; then
+    printf '%s\n' "$key.pub"
+  elif [ -f "${key%.*}.pub" ]; then
+    printf '%s\n' "${key%.*}.pub"
+  else
+    printf '%s\n' "$key"
+  fi
+}
+
+# Configure a repo to sign commits and tags as the bot.
+#
+# Set locally, never globally: the machine owner's own signing config is left
+# alone, and this repo stops inheriting it.
+bot_apply_repo_signing() {
+  local repo="$1" signing_key="$2"
+  if [ -z "$signing_key" ]; then
+    # No bot key configured — leave whatever the owner has set rather than
+    # half-configuring signing.
+    return 0
+  fi
+  git -C "$repo" config --local gpg.format ssh
+  git -C "$repo" config --local user.signingkey "$signing_key"
+  git -C "$repo" config --local commit.gpgsign true
+  git -C "$repo" config --local tag.gpgsign true
+  return 0
+}
+
 bot_apply_repo_identity() {
-  local repo="$1" user="$2" email="$3" key="$4"
+  local repo="$1" user="$2" email="$3" key="$4" signing_override="$5"
   [ -n "$user" ] && git -C "$repo" config --local user.name "$user"
   [ -n "$email" ] && git -C "$repo" config --local user.email "$email"
   if [ -n "$key" ]; then
@@ -117,6 +162,7 @@ bot_apply_repo_identity() {
   else
     git -C "$repo" config --local --unset core.sshCommand 2>/dev/null || true
   fi
+  bot_apply_repo_signing "$repo" "$(bot_signing_key "$5" "$key")"
   return 0
 }
 

@@ -69,7 +69,7 @@
       - There is a merged PR that attempted to fix this test
       - The GitHub issue was created BEFORE that PR was merged (check timestamps)
       - No new test failures reported since the PR merge date (check issue comments/activity)
-      - The Chromium version in the issue matches or is older than the fix version
+      - The upstream version in the issue matches or is older than the fix version
 
    3. **How to check timestamps:**
       ```bash
@@ -209,59 +209,9 @@
 
    See [testing-requirements.md](./testing-requirements.md) for complete test execution requirements.
 
-7. **CHROMIUM TEST DETECTION** (for filter file modifications only):
+7. **UPSTREAM TEST DETECTION** (for filter file modifications only):
 
-   If your fix involves adding a test to a filter file (e.g., `test/filters/browser_tests.filter`), determine if it's a Chromium test:
-
-   **Detection Logic:**
-   - Look at which test file the test is defined in:
-     - If the test is in `./src/brave/chromium_src/**` or `./src/**` but NOT in `./src/brave/**`:
-       - This is a **Chromium test** (upstream test that Brave inherits from Chromium)
-     - If the test is in `./src/brave/**` (excluding chromium_src):
-       - This is a **Brave test** (Brave-specific test)
-
-   **For Chromium Tests - Additional Verification:**
-
-   1. **Check if Chromium has already disabled this test:**
-      ```bash
-      # Search in upstream Chromium source for the test being disabled or marked flaky
-      cd [workingDirectory]/..
-      # Check for DISABLED_ prefix
-      git grep "DISABLED_<TestName>" chromium/src/
-      # Check Chromium's test expectations/filter files
-      git grep "<TestName>" chromium/src/testing/buildbot/filters/
-      ```
-      - If found: **Document that Chromium has also disabled this test**
-      - If not found: Note that this is a Brave-specific disable of a Chromium test
-
-   2. **Verify Brave modifications aren't causing the failure:**
-      - Extract the directory path of the test file (e.g., if test is in `./src/chrome/browser/ui/test.cc`, directory is `chrome/browser/ui/`)
-      - Check if there are Brave-specific modifications in `./src/brave/chromium_src/` for files in that directory:
-        ```bash
-        # Example: If test is in chrome/browser/ui/tabs/test.cc
-        find ./src/brave/chromium_src/chrome/browser/ui/ -type f 2>/dev/null | head -20
-        ```
-      - If Brave modifications exist in related directories, analyze whether they could be causing the test failure
-      - Document findings - this helps determine if the test fails due to Brave changes or is an upstream issue
-
-   3. **Check upstream flakiness data (Chromium tests only):**
-      This step only applies to upstream Chromium tests — skip it for Brave-specific tests (defined in `src/brave/`), which will not appear in the Chromium database.
-      ```bash
-      python3 $TARGET_REPO/script/check-upstream-flake.py "<TestClassName.TestMethod>"
-      ```
-      - If the verdict is "Known upstream flake" or "Occasional upstream failures":
-        Document this finding in the filter file comment and commit message
-      - If the verdict is "Stable upstream":
-        Investigate Brave-specific causes before disabling
-      - Include the flake rate and lookback period in your documentation
-
-   **Store Detection Results for Commit Message and PR:**
-   - Make note of whether this is a **Chromium test** or **Brave test**
-   - Note whether **Chromium has also disabled it** (include evidence)
-   - Note any **Brave modifications** in related code paths
-   - This information will be used for commit message and later for PR body
-
-8. Update CLAUDE.md files if you discover reusable patterns (see below)
+   Project-specific. See the project profile's `docs/testing.md` (path given in the prompt). Projects without an upstream to inherit tests from can skip this step.
 
 9. **REQUIRED: Self-review using the target repo's `/review` skill (local mode):**
 
@@ -292,39 +242,14 @@
 10. **If ALL tests pass:**
    - Commit ALL changes (must be in `[targetRepoPath from bot config]`)
    - **IMPORTANT**: If fixing security-sensitive issues (XSS, CSRF, buffer overflows, sanitizer issues, etc.), use discretion in commit messages - see [SECURITY.md](../SECURITY.md#public-security-messaging) for guidance
-   - **For Chromium test disables (filter file modifications)**: If you detected this is a Chromium test in step 7, include in commit message:
-     - State clearly that it's a **Chromium test** (e.g., "Disable Chromium test..." or "This is an upstream Chromium test...")
-     - If Chromium has also disabled it, mention that explicitly (e.g., "Chromium has also disabled this test" or "Already disabled upstream")
-     - If Brave modifications might be related, mention what was found (e.g., "Brave modifies chrome/browser/ui/ via chromium_src")
-
+   - **For upstream test disables**: see the project profile's `docs/testing.md` for the required commit-message fields.
 11. **CRITICAL: Run presubmit verification AFTER commit, BEFORE creating PR:**
 
    After committing, you MUST run the full verification cycle to ensure the commit is valid:
    ```bash
-   cd [targetRepoPath from bot config]
-   pnpm run format      # Check/fix formatting
-   pnpm run presubmit   # Run presubmit checks
-   pnpm run gn_check    # Verify GN configuration (skip for filter-file-only changes)
-   pnpm run build       # Verify build succeeds (skip for filter-file-only changes)
-   # If any .ts/.tsx/.js files were changed:
-   pnpm run test-unit        # Run front-end unit tests
-   pnpm run build-storybook  # Verify Storybook builds
-   ```
-
-   **For filter-file-only changes** (only `test/filters/*.filter` modified): run only `pnpm run format` and `pnpm run presubmit`. Skip `gn_check`, `build`, and all test runs — filter files don't affect build configuration or compiled code.
-
-   **If presubmit or any verification fails:**
-   - Fix the issues
-   - Stage and commit the fixes
-   - **Re-run the ENTIRE verification cycle again** (format, presubmit, gn_check, build, tests)
-   - Repeat until ALL verifications pass consecutively
-
-   **IMPORTANT: Multiple iterations require full re-verification.** If you make ANY changes after initial commit (including formatting fixes, presubmit fixes, or any other modifications), you MUST re-run:
-   1. `pnpm run format`
-   2. `pnpm run presubmit`
-   3. `pnpm run gn_check` (skip for filter-file-only changes)
-   4. `pnpm run build` (skip for filter-file-only changes)
-   5. If any `.ts`/`.tsx`/`.js` files changed: `pnpm run test-unit` and `pnpm run build-storybook`
+   Run the project's presubmit sequence. The exact commands and their order are
+   project-specific — see the project profile's `docs/testing.md` (path given in
+   the prompt). Filter-file-only changes may skip build and test steps.
    6. ALL acceptance criteria tests (skip for filter-file-only changes)
 
    This ensures the final committed state is fully verified. Do NOT create a PR until all checks pass on the final committed state.
@@ -366,7 +291,7 @@ When multiple attempts have failed, consider whether the fundamental approach is
 - Could the intermittent behavior indicate a real underlying problem rather than a test issue?
 - Is there a race condition that no amount of waiting will reliably fix?
 
-**Consider alternative approaches (for Brave code):**
+**Consider alternative approaches :**
 - **Refactor the test approach**: If a browser test is flaky, could the same functionality be verified with a more reliable unit test?
 - **Fix the underlying code**: Sometimes the test is revealing a real bug in the production code
 - **Add proper synchronization**: If there's a race condition, add explicit signaling rather than waits
@@ -376,7 +301,7 @@ If the failure shows any of the infrastructure/build/CI signals listed in step 5
 
 **Last resort - disable with full documentation:**
 If no fix is viable after thorough investigation AND you have ruled out an infrastructure root cause, you may create a PR to disable the test, but you MUST:
-- For Chromium tests (not Brave-specific tests): run `python3 $TARGET_REPO/script/check-upstream-flake.py "<TestName>"` and include the results
+- If the project has an upstream flakiness database, include its verdict (see the project profile's `docs/testing.md`)
 - Document all previous fix attempts (including PRs by others)
 - Explain why each approach failed
 - Describe the fundamental issue that makes the test unfixable

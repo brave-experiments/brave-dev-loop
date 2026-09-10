@@ -50,8 +50,14 @@ fi
 LOCKFILE="$LOCK_DIR/.${LOCK_NAME}.lock"
 
 # Acquire exclusive lock or exit
-exec 200>"$LOCKFILE"
-flock -n 200 || { echo "Another $LOCK_NAME job is already running. Exiting."; exit 0; }
+source "$SCRIPT_DIR/lib/lock.sh"
+bot_acquire_lock "$LOCKFILE"
+case $? in
+  0) ;;
+  1) echo "Another $LOCK_NAME job is already running. Exiting."; exit 0 ;;
+  *) echo "Could not acquire the $LOCK_NAME lock. Exiting." >&2; exit 1 ;;
+esac
+trap bot_release_lock EXIT INT TERM HUP
 
 # Log the model being used (extract --model value from command args)
 _model=""

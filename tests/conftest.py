@@ -1,4 +1,4 @@
-"""Shared fixtures for brave-dev-bot tests."""
+"""Shared fixtures for brave-dev-loop tests."""
 
 import importlib.util
 import json
@@ -112,3 +112,11 @@ def read_json():
             return json.load(f)
 
     return _read
+
+
+@pytest.fixture
+def repair_config_paths():
+    return _load_module(
+        "repair_config_paths",
+        os.path.join(SCRIPTS_DIR, "repair-config-paths.py"),
+    )

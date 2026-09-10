@@ -8,10 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCKFILE="$SCRIPT_DIR/.run.lock"
 source "$SCRIPT_DIR/scripts/lib/load-config.sh"
 
-GIT_REPO="${BOT_TARGET_REPO_PATH:-}"
-if [[ "$GIT_REPO" != /* ]]; then
-  GIT_REPO="$(cd "$SCRIPT_DIR/.." && pwd)/$GIT_REPO"
-fi
+GIT_REPO="$BOT_TARGET_REPO_DIR"
 
 # Recursively kill a process and all its descendants (leaf-first)
 kill_tree() {
@@ -70,8 +67,14 @@ fi
 cd "$GIT_REPO"
 git stash --include-untracked 2>/dev/null || true
 git checkout "$BOT_DEFAULT_BRANCH"
-git fetch upstream
-git reset --hard "upstream/$BOT_DEFAULT_BRANCH"
+
+# No-fork deployments have no separate upstream remote — sync from origin.
+SYNC_REMOTE=upstream
+if ! git remote get-url upstream >/dev/null 2>&1; then
+  SYNC_REMOTE=origin
+fi
+git fetch "$SYNC_REMOTE"
+git reset --hard "$SYNC_REMOTE/$BOT_DEFAULT_BRANCH"
 
 echo ""
 echo "=== Reset complete. Ready to run ./run.sh ==="

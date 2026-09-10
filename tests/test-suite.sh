@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test suite for brave-dev-bot
+# Test suite for brave-dev-loop
 # Returns 0 if all tests pass, non-zero if any fail
 
 set -e
@@ -382,7 +382,7 @@ test_prd_json_has_user_stories() {
 
 run_all_tests() {
   echo "=========================================="
-  echo "Brave Core Bot - Test Suite"
+  echo "Brave Dev Loop - Test Suite"
   echo "=========================================="
   echo ""
 

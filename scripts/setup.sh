@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup script for brave-dev-bot
+# Setup script for brave-dev-loop
 # Fully idempotent — safe to re-run at any time.
 # Creates config.json, data files, hooks, and org-members cache as needed.
 # Never overwrites existing files without an explicit confirmation.
@@ -14,7 +14,7 @@ CONFIG_FILE="$PROJECT_ROOT/config.json"
 source "$SCRIPT_DIR/lib/git-identity.sh"
 
 echo "==================================="
-echo "  Brave Bot Setup"
+echo "  Brave Dev Loop Setup"
 echo "==================================="
 echo ""
 
@@ -46,7 +46,6 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_ISSUE_REPO=$(_prev '.project.issueRepository')
     PREV_BOT_USER=$(_prev '.bot.username')
     PREV_BOT_EMAIL=$(_prev '.bot.email')
-    PREV_LABELS=$(jq -r '(.labels.issueLabels // []) | join(",")' "$CONFIG_FILE" 2>/dev/null)
     PREV_SSH_KEY=$(_prev '.bot.sshKeyPath')
     PREV_GH_ACCOUNT=$(_prev '.bot.ghAccount')
   fi
@@ -88,6 +87,21 @@ if [ "$WRITE_CONFIG" = true ]; then
   fi
   prompt_required CFG_TARGET_REPO "Target repo path (e.g. ../src/brave, /abs/path/to/repo): " "$PREV_TARGET_REPO"
 
+  echo ""
+  echo "─── PRD Mode ───"
+  echo "curated: you author data/prd.json and the bot works through those stories."
+  echo "auto:    the PRD is a cache — the bot rebuilds it from issues assigned to"
+  echo "         it and its open PRs before each run. No curation, no tokens."
+  PREV_PRD_MODE=""
+  if [ -f "$CONFIG_FILE" ]; then
+    PREV_PRD_MODE=$(jq -r '.project.prdMode // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
+  fi
+  read -p "PRD mode (curated/auto) [${PREV_PRD_MODE:-curated}]: " CFG_PRD_MODE
+  CFG_PRD_MODE="${CFG_PRD_MODE:-${PREV_PRD_MODE:-curated}}"
+  if [ "$CFG_PRD_MODE" != "auto" ]; then
+    CFG_PRD_MODE="curated"
+  fi
+
   PREV_OWNER_HANDLE=""
   if [ -f "$CONFIG_FILE" ]; then
     PREV_OWNER_HANDLE=$(jq -r '.project.botOwnerGithubHandle // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
@@ -96,11 +110,26 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_OWNER_HANDLE="${CFG_OWNER_HANDLE:-$PREV_OWNER_HANDLE}"
 
   echo ""
+  echo "─── Push Layout ───"
+  echo "fork:   the bot pushes branches to its own fork of ${CFG_PR_REPO}."
+  echo "direct: the bot pushes branches straight to ${CFG_PR_REPO}. Requires the"
+  echo "        bot account to have write access there. No fork is created."
+  PREV_USE_FORK=""
+  if [ -f "$CONFIG_FILE" ]; then
+    PREV_USE_FORK=$(jq -r 'if .project.useFork == false then "direct" else "fork" end' "$CONFIG_FILE" 2>/dev/null || echo "")
+  fi
+  read -p "Push layout (fork/direct) [${PREV_USE_FORK:-fork}]: " CFG_LAYOUT
+  CFG_LAYOUT="${CFG_LAYOUT:-${PREV_USE_FORK:-fork}}"
+  if [ "$CFG_LAYOUT" = "direct" ]; then
+    CFG_USE_FORK=false
+  else
+    CFG_USE_FORK=true
+  fi
+
+  echo ""
   echo "─── Bot Identity ───"
   prompt_required CFG_BOT_USER "GitHub username the bot commits as: " "$PREV_BOT_USER"
   prompt_required CFG_BOT_EMAIL "Email for git commits: " "$PREV_BOT_EMAIL"
-  read -p "Issue labels (comma-separated) [${PREV_LABELS:-}]: " CFG_LABELS_RAW
-  CFG_LABELS_RAW="${CFG_LABELS_RAW:-$PREV_LABELS}"
 
   echo ""
   echo "─── SSH Key ───"
@@ -192,13 +221,16 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_ISSUE_REPO="$CFG_ISSUE_REPO" \
   CFG_DEFAULT_BRANCH="$CFG_DEFAULT_BRANCH" \
   CFG_TARGET_REPO="$CFG_TARGET_REPO" \
+  CFG_USE_FORK="${CFG_USE_FORK:-true}" \
+  CFG_PROFILE="${CFG_PROFILE:-}" \
+  CFG_PRD_MODE="${CFG_PRD_MODE:-curated}" \
   CFG_OWNER_HANDLE="$CFG_OWNER_HANDLE" \
   CFG_BOT_USER="$CFG_BOT_USER" \
   CFG_BOT_EMAIL="$CFG_BOT_EMAIL" \
   CFG_SSH_KEY="$CFG_SSH_KEY" \
   CFG_GH_ACCOUNT="${PREV_GH_ACCOUNT:-}" \
-  CFG_LABELS_RAW="$CFG_LABELS_RAW" \
   CONFIG_FILE="$CONFIG_FILE" \
+  BOT_ROOT="$PROJECT_ROOT" \
   python3 -c "
 import json, os
 
@@ -206,6 +238,31 @@ def val(name):
     return os.environ.get(name) or None
 
 target_repo = os.environ['CFG_TARGET_REPO']
+bot_root = os.environ['BOT_ROOT']
+
+existing_labels = {'prLabels': ['ai-generated'], 'issueLabels': [], 'disabledTestLabel': ''}
+try:
+    with open(os.environ['CONFIG_FILE']) as _f:
+        existing_labels = json.load(_f).get('labels') or existing_labels
+except (OSError, ValueError):
+    pass
+
+# Derive docsDir from the *resolved* target repo so it does not depend on which
+# base the operator typed the path against. targetRepoPath is accepted relative
+# to the bot dir or to its parent (see resolve_target_repo in load-config.sh);
+# docsDir is always stored relative to the bot dir.
+if os.path.isabs(target_repo):
+    _target_abs = os.path.normpath(target_repo)
+else:
+    _bot_base = os.path.normpath(os.path.join(bot_root, target_repo))
+    _parent_base = os.path.normpath(os.path.join(os.path.dirname(bot_root), target_repo))
+    if os.path.exists(os.path.join(_bot_base, '.git')):
+        _target_abs = _bot_base
+    elif os.path.exists(os.path.join(_parent_base, '.git')):
+        _target_abs = _parent_base
+    else:
+        _target_abs = _bot_base
+docs_dir = os.path.join(os.path.relpath(_target_abs, bot_root), 'docs')
 config = {
     'project': {
         'name': os.environ['CFG_PROJECT_NAME'],
@@ -214,6 +271,9 @@ config = {
         'issueRepository': os.environ['CFG_ISSUE_REPO'],
         'defaultBranch': os.environ['CFG_DEFAULT_BRANCH'],
         'targetRepoPath': target_repo,
+        'useFork': os.environ.get('CFG_USE_FORK', 'true') == 'true',
+        'profile': os.environ.get('CFG_PROFILE') or 'default',
+        'prdMode': os.environ.get('CFG_PRD_MODE') or 'curated',
         'botOwnerGithubHandle': val('CFG_OWNER_HANDLE'),
     },
     'bot': {
@@ -221,6 +281,7 @@ config = {
         'email': os.environ['CFG_BOT_EMAIL'],
         'sshKeyPath': val('CFG_SSH_KEY'),
         'ghAccount': val('CFG_GH_ACCOUNT'),
+        'ghConfigDir': None,
         'agent': 'claude',
         'claudeModel': 'opus',
         'claudeBin': None,
@@ -229,13 +290,12 @@ config = {
         'cursorModel': None,
         'cursorBin': None,
     },
-    'labels': {
-        'prLabels': ['ai-generated'],
-        'issueLabels': [l.strip() for l in os.environ['CFG_LABELS_RAW'].split(',') if l.strip()],
-        'disabledTestLabel': '',
-    },
+    # Labels belong to the project profile (projects/<name>/profile.json), which
+    # is where anything actually reads them from. This block is carried forward
+    # untouched so deployments that set it by hand keep their values.
+    'labels': existing_labels,
     'bestPractices': {
-        'docsDir': '../' + target_repo + '/docs',
+        'docsDir': docs_dir,
         'indexFile': 'best_practices.md',
         'securityFile': 'SECURITY.md',
     },
@@ -251,6 +311,15 @@ with open(os.environ['CONFIG_FILE'], 'w') as f:
   echo ""
   echo "✓ Config written to $CONFIG_FILE"
   echo ""
+fi
+
+# ─── Step 1b: Repair paths in an existing config ─────────────────────────────
+#
+# Fixes a docsDir left pointing nowhere by the historical base ambiguity
+# between targetRepoPath consumers. No-op when already correct, so it is safe
+# on every run, wizard or not.
+if [ -f "$CONFIG_FILE" ]; then
+  python3 "$SCRIPT_DIR/repair-config-paths.py" --config "$CONFIG_FILE" --bot-root "$PROJECT_ROOT"
 fi
 
 # Source config (needed for all subsequent steps)
@@ -278,6 +347,38 @@ create_if_missing "$PROJECT_ROOT/data/run-state.json" \
   "$PROJECT_ROOT/data/run-state.example.json" "data/run-state.json"
 create_if_missing "$PROJECT_ROOT/data/progress.txt" \
   "$PROJECT_ROOT/data/progress.example.txt" "data/progress.txt"
+
+# ─── Step 2b: .envrc ─────────────────────────────────────────────────────────
+#
+# Every cron line begins `cd $PROJECT_ROOT && source .envrc && ...`, so a
+# missing .envrc returns 1 and silently cancels the whole job. It is also the
+# only hook the scheduled skill jobs have for the bot identity: they invoke
+# claude directly rather than through run.sh, so without this they would act as
+# whichever account gh happens to have active.
+if [ -f "$PROJECT_ROOT/.envrc" ]; then
+  echo "✓ .envrc already exists"
+else
+  cat > "$PROJECT_ROOT/.envrc" <<'ENVRC'
+# Generated by scripts/setup.sh. Gitignored — safe to edit.
+# Pins this repo's git and gh operations to the bot identity from config.json.
+# Sourced by every cron job, and by direnv for interactive shells here.
+_bot_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+_bot_dir="${_bot_dir:-$PWD}"
+source "$_bot_dir/scripts/lib/load-config.sh"
+source "$_bot_dir/scripts/lib/git-identity.sh"
+
+# When bot.ghConfigDir is set, gh reads its credentials from there instead of
+# ~/.config/gh. The bot's login never enters your personal gh config, so no
+# account is ever added, switched, or made active outside this directory.
+if [ -n "$BOT_GH_CONFIG_DIR" ] && [ -d "$BOT_GH_CONFIG_DIR" ]; then
+  export GH_CONFIG_DIR="$BOT_GH_CONFIG_DIR"
+fi
+
+bot_export_identity_env "$BOT_SSH_KEY_PATH" "$BOT_GH_ACCOUNT" || true
+unset _bot_dir
+ENVRC
+  echo "✓ .envrc created (pins git + gh to the bot identity)"
+fi
 echo ""
 
 # ─── Step 3: Org members cache ───────────────────────────────────────────────
@@ -325,10 +426,8 @@ fi
 
 if [ "$SKIP_GIT" = false ]; then
   GIT_REPO_RAW="$GIT_REPO"
-  # Handle relative paths (relative to the bot directory)
-  if [[ "$GIT_REPO" != /* ]]; then
-    GIT_REPO="$PROJECT_ROOT/$GIT_REPO"
-  fi
+  # Accepts a path relative to the bot dir or to its parent, or an absolute one.
+  GIT_REPO="$(resolve_target_repo "$GIT_REPO")"
 
   if [ ! -d "$GIT_REPO/.git" ]; then
     echo "⚠️  $GIT_REPO is not a git repository — skipping target repo setup."
@@ -359,11 +458,21 @@ if [ "$SKIP_GIT" = false ]; then
     EXPECTED_SSH_CFG=$(bot_ssh_command "$SSH_KEY")
   fi
 
+  # Defaults to the key the bot pushes with, so the signature belongs to the
+  # same account as the authorship. Without this the repo inherits the machine
+  # owner's global signing key and GitHub marks every bot commit unverified.
+  SIGNING_KEY=$(bot_signing_key "$BOT_SIGNING_KEY_PATH" "$SSH_KEY")
+  GIT_SIGNING_KEY=$(git -C "$GIT_REPO" config --local user.signingkey || echo "")
+
   if [ "$GIT_USER" = "$BOT_USERNAME" ] && [ "$GIT_EMAIL" = "$BOT_EMAIL" ] &&
-     [ "$GIT_SSH_CFG" = "$EXPECTED_SSH_CFG" ]; then
+     [ "$GIT_SSH_CFG" = "$EXPECTED_SSH_CFG" ] &&
+     [ "$GIT_SIGNING_KEY" = "$SIGNING_KEY" ]; then
     echo "  ✓ Git identity: $GIT_USER <$GIT_EMAIL>"
     if [ -n "$EXPECTED_SSH_CFG" ]; then
       echo "  ✓ SSH key pinned: $SSH_KEY"
+    fi
+    if [ -n "$SIGNING_KEY" ]; then
+      echo "  ✓ Commits signed with: $SIGNING_KEY"
     fi
   else
     echo "  Repo-local git identity needs updating:"
@@ -374,11 +483,14 @@ if [ "$SKIP_GIT" = false ]; then
     elif [ -n "$GIT_SSH_CFG" ]; then
       echo "    core.sshCommand → unset (falls back to this machine's default key)"
     fi
+    if [ -n "$SIGNING_KEY" ]; then
+      echo "    user.signingkey → signs commits and tags with $SIGNING_KEY"
+    fi
     echo "  These are written to $GIT_REPO/.git/config only."
     read -p "  Apply? (Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-      bot_apply_repo_identity "$GIT_REPO" "$BOT_USERNAME" "$BOT_EMAIL" "$SSH_KEY"
+      bot_apply_repo_identity "$GIT_REPO" "$BOT_USERNAME" "$BOT_EMAIL" "$SSH_KEY" "$BOT_SIGNING_KEY_PATH"
       GIT_USER="$BOT_USERNAME"
       GIT_EMAIL="$BOT_EMAIL"
       echo "  ✓ Git identity configured"
@@ -389,12 +501,21 @@ if [ "$SKIP_GIT" = false ]; then
       if [ -n "$EXPECTED_SSH_CFG" ]; then
         echo "    git -C $GIT_REPO config --local core.sshCommand \"$EXPECTED_SSH_CFG\""
       fi
+      if [ -n "$SIGNING_KEY" ]; then
+        echo "    git -C $GIT_REPO config --local gpg.format ssh"
+        echo "    git -C $GIT_REPO config --local user.signingkey \"$SIGNING_KEY\""
+        echo "    git -C $GIT_REPO config --local commit.gpgsign true"
+      fi
       GIT_USER="${GIT_USER:-$BOT_USERNAME}"
     fi
   fi
 
   # ─── Configure git remotes ────────────────────────────────────────────────
-  # Expected layout: origin = bot's fork, upstream = main repo
+  # Two supported layouts, selected by project.useFork:
+  #   true  (default) — origin = bot's fork, upstream = main repo
+  #   false           — origin = upstream = main repo, for a bot with write
+  #                     access. No fork is created and none is expected.
+  # Default true so existing fork-based deployments are unaffected.
   FORK_REPO_NAME="${BOT_PR_REPO##*/}"
   EXPECTED_ORIGIN="https://github.com/$BOT_USERNAME/$FORK_REPO_NAME.git"
   EXPECTED_ORIGIN_SSH="git@github.com:$BOT_USERNAME/$FORK_REPO_NAME.git"
@@ -420,13 +541,64 @@ if [ "$SKIP_GIT" = false ]; then
   REMOTE_ACTIONS=()
   REMOTES_OK=true
 
+  USE_FORK=$(bot_config_bool '.project.useFork')
+  if [ -z "$USE_FORK" ]; then
+    USE_FORK=true
+  fi
+
+  if [ "$USE_FORK" != "true" ]; then
+    # No-fork layout: origin and upstream both point at the main repo. The bot
+    # pushes branches straight to it, and PR refs (refs/pull/N/head) resolve
+    # through origin, which the review worktrees depend on.
+    if [ -z "$CURRENT_ORIGIN" ]; then
+      REMOTE_ACTIONS+=("Add origin → $BOT_PR_REPO ($EXPECTED_UPSTREAM_SSH)")
+    elif ! url_matches "$CURRENT_ORIGIN" "$EXPECTED_UPSTREAM" "$EXPECTED_UPSTREAM_SSH"; then
+      REMOTE_ACTIONS+=("Set origin → $BOT_PR_REPO ($EXPECTED_UPSTREAM_SSH)")
+    fi
+    if [ -n "$CURRENT_UPSTREAM" ] && ! url_matches "$CURRENT_UPSTREAM" "$EXPECTED_UPSTREAM" "$EXPECTED_UPSTREAM_SSH"; then
+      REMOTE_ACTIONS+=("Set upstream → $BOT_PR_REPO ($EXPECTED_UPSTREAM_SSH)")
+    fi
+
+    if [ ${#REMOTE_ACTIONS[@]} -eq 0 ]; then
+      echo "  ✓ origin → $BOT_PR_REPO (no-fork layout)"
+    else
+      echo ""
+      echo "  The following remote changes are needed:"
+      for action in "${REMOTE_ACTIONS[@]}"; do
+        echo "    • $action"
+      done
+      echo ""
+      read -p "  Apply these remote changes? (Y/n) " -n 1 -r
+      echo
+      if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        if [ -z "$CURRENT_ORIGIN" ]; then
+          git -C "$GIT_REPO" remote add origin "$EXPECTED_UPSTREAM_SSH"
+        else
+          git -C "$GIT_REPO" remote set-url origin "$EXPECTED_UPSTREAM_SSH"
+        fi
+        if [ -n "$CURRENT_UPSTREAM" ]; then
+          git -C "$GIT_REPO" remote set-url upstream "$EXPECTED_UPSTREAM_SSH"
+        fi
+        echo "  ✓ origin → $BOT_PR_REPO"
+      else
+        echo "  Skipped. Configure manually:"
+        echo "    cd $GIT_REPO"
+        echo "    git remote set-url origin $EXPECTED_UPSTREAM_SSH"
+      fi
+    fi
+    REMOTES_OK=false   # skip the fork-layout branch below
+    FORK_EXISTS=false
+  fi
+
   # Check if the bot's fork exists on GitHub
   FORK_EXISTS=false
+  if [ "$USE_FORK" = "true" ]; then
   if gh repo view "$BOT_USERNAME/$FORK_REPO_NAME" --json name >/dev/null 2>&1; then
     FORK_EXISTS=true
   fi
+  fi
 
-  if [ "$FORK_EXISTS" = false ]; then
+  if [ "$USE_FORK" = "true" ] && [ "$FORK_EXISTS" = false ]; then
     echo ""
     echo "  Fork $BOT_USERNAME/$FORK_REPO_NAME not found on GitHub."
     read -p "  Create fork now? (Y/n) " -n 1 -r
@@ -479,14 +651,14 @@ if [ "$SKIP_GIT" = false ]; then
   fi
 
   # If everything is already correct, just report it
-  if [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -eq 0 ]; then
+  if [ "$USE_FORK" = "true" ] && [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -eq 0 ]; then
     echo "  ✓ origin → $BOT_USERNAME/$FORK_REPO_NAME"
     echo "  ✓ upstream → $BOT_PR_REPO"
     echo "  ✓ Remotes configured correctly"
   fi
 
   # If there are changes to make, describe them and ask for confirmation
-  if [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -gt 0 ]; then
+  if [ "$USE_FORK" = "true" ] && [ "$REMOTES_OK" = true ] && [ ${#REMOTE_ACTIONS[@]} -gt 0 ]; then
     echo ""
     echo "  The following remote changes are needed:"
     for action in "${REMOTE_ACTIONS[@]}"; do
@@ -546,7 +718,43 @@ cp "$BOT_HOOK_SOURCE" "$BOT_HOOK_DEST"
 chmod +x "$BOT_HOOK_DEST"
 echo "✓ Bot repo pre-commit hook installed"
 echo "  (Prevents committing data/prd.json, data/progress.txt, data/run-state.json)"
+
+# The bot commits to this repo too (learned patterns, best-practice updates), so
+# it needs the same identity here. Without it these commits inherit the machine
+# owner's name and signing key.
+BOT_REPO_SIGNING_KEY=$(bot_signing_key "$BOT_SIGNING_KEY_PATH" "$BOT_SSH_KEY_PATH")
+bot_apply_repo_identity "$PROJECT_ROOT" "$BOT_USERNAME" "$BOT_EMAIL" "$BOT_SSH_KEY_PATH" "$BOT_SIGNING_KEY_PATH"
+echo "✓ Bot repo git identity: $BOT_USERNAME <$BOT_EMAIL>"
+if [ -n "$BOT_REPO_SIGNING_KEY" ]; then
+  echo "  Commits signed with: $BOT_REPO_SIGNING_KEY"
+fi
 echo ""
+
+# A signing key GitHub does not know about produces "Unverified" on every
+# commit, which looks identical to a broken signature. It must be registered as
+# a *signing* key, which is a separate list from authentication keys.
+if [ -n "$BOT_REPO_SIGNING_KEY" ] && [ -f "$BOT_REPO_SIGNING_KEY" ]; then
+  SIGNING_PUB=$(awk '{print $1" "$2}' "$BOT_REPO_SIGNING_KEY" 2>/dev/null)
+  # Reading this list needs the admin:ssh_signing_key scope. Distinguish "not
+  # registered" from "cannot tell": warning about a key that is in fact
+  # registered just trains the operator to ignore the warning.
+  if ! SIGNING_KEYS=$(gh api user/ssh_signing_keys --jq '.[].key' 2>/dev/null); then
+    echo "ℹ️  Could not check whether the signing key is registered for $BOT_USERNAME"
+    echo "   (the gh token lacks the admin:ssh_signing_key scope — this does not"
+    echo "   mean the key is missing). To check:"
+    echo "     GH_CONFIG_DIR=${BOT_GH_CONFIG_DIR:-~/.config/gh} gh auth refresh -h github.com -s admin:ssh_signing_key"
+    echo ""
+  elif printf '%s\n' "$SIGNING_KEYS" | awk '{print $1" "$2}' | grep -Fxq "$SIGNING_PUB"; then
+    echo "✓ Signing key is registered on the bot's GitHub account"
+  else
+    echo "⚠️  The signing key is not registered as a signing key for $BOT_USERNAME."
+    echo "   Commits will be signed but show as Unverified on GitHub."
+    echo "   Register it (authentication keys are a separate list — adding it"
+    echo "   there is not enough):"
+    echo "     GH_CONFIG_DIR=${BOT_GH_CONFIG_DIR:-~/.config/gh} gh ssh-key add $BOT_REPO_SIGNING_KEY --type signing --title \"$BOT_USERNAME signing key\""
+  fi
+  echo ""
+fi
 
 # ─── Step 6: GitHub CLI account ──────────────────────────────────────────────
 # The ssh key only covers git transport. gh carries its own stored token, so
@@ -600,8 +808,9 @@ echo ""
 
 # Show next steps based on what's still needed
 NEXT=()
-if [ ! -f "$PROJECT_ROOT/data/prd.json" ] || \
-   [ "$(jq -r '.stories // .stories | length' "$PROJECT_ROOT/data/prd.json" 2>/dev/null)" = "0" ]; then
+if [ "$BOT_PRD_MODE" != "auto" ] && \
+   { [ ! -f "$PROJECT_ROOT/data/prd.json" ] || \
+     [ "$(jq -r '.stories // .stories | length' "$PROJECT_ROOT/data/prd.json" 2>/dev/null)" = "0" ]; }; then
   NEXT+=("Edit data/prd.json with your user stories (or use /prd-json skill)")
 fi
 if [ "$SKIP_GIT" = true ] && [ -z "${GIT_REPO_RAW:-}" ]; then

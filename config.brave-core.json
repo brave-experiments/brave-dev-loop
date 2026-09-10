@@ -6,12 +6,16 @@
     "issueRepository": "brave/brave-browser",
     "defaultBranch": "master",
     "targetRepoPath": "src/brave",
-    "botOwnerGithubHandle": "bbondy"
+    "botOwnerGithubHandle": "bbondy",
+    "useFork": true,
+    "profile": "brave-core",
+    "prdMode": "curated"
   },
   "bot": {
     "username": "netzenbot",
     "email": "netzenbot@agentmail.to",
     "sshKeyPath": null,
+    "signingKeyPath": null,
     "ghAccount": null,
     "agent": "claude",
     "claudeModel": "opus",
@@ -19,11 +23,16 @@
     "codexModel": null,
     "codexBin": null,
     "cursorModel": null,
-    "cursorBin": null
+    "cursorBin": null,
+    "ghConfigDir": null
   },
   "labels": {
-    "prLabels": ["ai-generated"],
-    "issueLabels": ["bot/type/test"],
+    "prLabels": [
+      "ai-generated"
+    ],
+    "issueLabels": [
+      "bot/type/test"
+    ],
     "disabledTestLabel": "disabled-brave-test"
   },
   "bestPractices": {

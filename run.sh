@@ -15,8 +15,13 @@ set -e
 
 # Prevent concurrent runs — acquire an exclusive lock or exit immediately
 LOCKFILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.run.lock"
-exec 200>"$LOCKFILE"
-flock -n 200 || { echo "Another run.sh is already running. Exiting."; exit 0; }
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/lock.sh"
+bot_acquire_lock "$LOCKFILE"
+case $? in
+  0) ;;
+  1) echo "Another run.sh is already running. Exiting."; exit 0 ;;
+  *) echo "Could not acquire the run lock. Exiting." >&2; exit 1 ;;
+esac
 
 # Parse arguments
 MAX_ITERATIONS=10
@@ -112,18 +117,21 @@ LOGS_DIR="$SCRIPT_DIR/logs"
 RUN_STATE_FILE="$SCRIPT_DIR/data/run-state.json"
 
 # Resolve target repo path from config.json (required)
-GIT_REPO="${BOT_TARGET_REPO_PATH:-}"
-if [ -z "$GIT_REPO" ]; then
+if [ -z "${BOT_TARGET_REPO_PATH:-}" ]; then
   echo "Error: project.targetRepoPath not set in config.json"
   exit 1
 fi
-if [[ "$GIT_REPO" != /* ]]; then
-  PARENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-  GIT_REPO="$PARENT_ROOT/$GIT_REPO"
+GIT_REPO="$BOT_TARGET_REPO_DIR"
+if [ ! -e "$GIT_REPO/.git" ]; then
+  echo "Error: project.targetRepoPath '$BOT_TARGET_REPO_PATH' does not resolve to a git repo."
+  echo "  Tried: $SCRIPT_DIR/$BOT_TARGET_REPO_PATH"
+  echo "     and $(dirname "$SCRIPT_DIR")/$BOT_TARGET_REPO_PATH"
+  exit 1
 fi
 
 # Function to switch back to master branch on exit
 cleanup_and_return_to_master() {
+  bot_release_lock
   if [ -n "$GIT_REPO" ] && [ -d "$GIT_REPO/.git" ]; then
     echo ""
     echo "Switching back to $BOT_DEFAULT_BRANCH branch in $GIT_REPO..."
@@ -134,7 +142,7 @@ cleanup_and_return_to_master() {
 }
 
 # Register cleanup function to run on exit
-trap cleanup_and_return_to_master EXIT
+trap cleanup_and_return_to_master EXIT INT TERM HUP
 
 # Initialize progress file if it doesn't exist
 if [ ! -f "$PROGRESS_FILE" ]; then
@@ -176,6 +184,10 @@ fi
 # Reset run state at the start of each run
 echo "Resetting run state for fresh start..."
 "$SCRIPT_DIR/scripts/reset-run-state.sh"
+
+# In auto mode the PRD is a cache — rebuild it from GitHub before selecting a
+# task. Plain Python against the API; no agent is started, so this costs nothing.
+"$SCRIPT_DIR/scripts/refresh-prd-cache.sh"
 
 # Track both loop count (for max iterations) and work iterations (actual state changes)
 loop_count=0
@@ -287,9 +299,15 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   # We point them all at the same workflow docs via the prompt itself.
   BOT_DIRNAME=$(basename "$SCRIPT_DIR")
   BOT_CONFIG=$(cat "$SCRIPT_DIR/config.json")
+  # Absent project.profile means a deployment predating profiles — all brave-core.
+  BOT_PROFILE=$(bot_config '.project.profile')
+  BOT_PROFILE="${BOT_PROFILE:-brave-core}"
   AGENT_PROMPT="You are working on story $STORY_ID (current status: $STORY_STATUS).
 Follow ./$BOT_DIRNAME/docs/workflow-${STORY_STATUS}.md for the workflow.
 Follow the general instructions in ./$BOT_DIRNAME/.claude/CLAUDE.md.
+
+Project-specific rules live in ./$BOT_DIRNAME/projects/$BOT_PROFILE/docs/.
+Where a workflow doc says a step is project-specific, read the named file there.
 
 Story details:
 $STORY_DETAILS

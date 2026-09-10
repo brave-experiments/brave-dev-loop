@@ -1,0 +1,17 @@
+{
+  "description": "Generic project: no build system or test runner assumed.",
+  "validations": [
+    "Build the project (must pass)",
+    "{testStep}"
+  ],
+  "testSteps": {
+    "testFix": "Run the failing test {testFilter} (must pass)",
+    "disabledTest": "Run the re-enabled test {testFilter} (must pass)",
+    "generic": "Find and run relevant tests to verify the change (must pass)"
+  },
+  "testTargets": {},
+  "labels": {
+    "pr": [],
+    "disabledTest": ""
+  }
+}

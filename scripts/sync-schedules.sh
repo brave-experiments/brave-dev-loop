@@ -1,5 +1,5 @@
 #!/bin/bash
-# Idempotent cron job setup for brave-dev-bot
+# Idempotent cron job setup for brave-dev-loop
 # Run this script to install/update all cron jobs.
 # All schedule changes should be made here and committed to source control.
 
@@ -18,7 +18,7 @@ mkdir -p "$LOG_DIR"
 CLAUDE_BIN_DIR=$(dirname "$CLAUDE_BIN")
 
 # Resolve sync repo path from config (optional — only for projects that sync from upstream)
-SYNC_REPO_ENABLED=$(bot_config '.schedules.syncRepo')
+SYNC_REPO_ENABLED=$(bot_config_bool '.schedules.syncRepo')
 SYNC_REPO_PATH=$(bot_config '.schedules.syncRepoPath')
 
 # Use project name for cron block marker to allow multiple projects on same machine
@@ -28,7 +28,7 @@ SYNC_REPO_PATH=$(bot_config '.schedules.syncRepoPath')
 BOT_REPO_BRANCH=$(bot_config '.project.botRepoBranch')
 BOT_REPO_BRANCH="${BOT_REPO_BRANCH:-master}"
 
-CRON_MARKER="brave-dev-bot ($BOT_PROJECT_NAME)"
+CRON_MARKER="brave-dev-loop ($BOT_PROJECT_NAME)"
 
 # Build the crontab content
 # Note: add-backlog-to-prd runs 15 min before each run.sh invocation
@@ -39,37 +39,40 @@ CRON_JOBS=$(cat <<EOF
 SHELL=/bin/bash
 PATH=$CLAUDE_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 
-# Add backlog to PRD (before first run.sh) — skip if no prd.json
+# Refresh the PRD cache / backlog before the first run.sh of the day.
+# Runs the deterministic sync scripts directly: no agent session, no tokens.
+# In prdMode "auto" run.sh refreshes the cache itself too, so this is only a
+# head start, not a requirement.
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 1x/day
-45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- $CLAUDE_BIN -p '/add-backlog-to-prd' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 # Weekends: once/day (before run.sh)
-45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- $CLAUDE_BIN -p '/add-backlog-to-prd' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 
 # Main agent run — skip if no actionable stories
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 2x/day
-10 8 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
+10 8 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
 # Weekends: once/day at 14:10
-10 14 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
+10 14 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-work.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./run.sh 3 >> $LOG_DIR/run-cron.log 2>&1
 
 # Review PRs — skip if no recent open PRs
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 3x/day
-0 13,20 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
+0 13,20 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
 # Weekends: once/day at noon
-0 12 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
+0 12 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- $CLAUDE_BIN -p '/review-prs 1d open auto reviewer-priority' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/review-prs-cron.log 2>&1
 
 # Learnable pattern search — skip if no recent merged PRs
 # Gate check runs before git sync to avoid wasted fetches
-0 6 * * * cd $PROJECT_ROOT && source .envrc && ./scripts/check-bot-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh learnable-pattern-search -- $CLAUDE_BIN -p '/learnable-pattern-search 2d' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/learnable-pattern-search-cron.log 2>&1
+0 6 * * * cd $PROJECT_ROOT && source .envrc && ./scripts/check-bot-prs.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh learnable-pattern-search -- $CLAUDE_BIN -p '/learnable-pattern-search 2d' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/learnable-pattern-search-cron.log 2>&1
 
 # Check Signal messages (every 5 min, offset to avoid git lock contention with other jobs)
 # Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)
 1,6,11,16,21,26,31,36,41,46,51,56 * * * * cd $PROJECT_ROOT && source .envrc && ./scripts/check-signal-messages.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh check-signal -- $CLAUDE_BIN -p '/check-signal' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/check-signal-cron.log 2>&1
 
 # Update best practices from upstream Chromium docs (monthly, 1st of each month)
-15 4 1 * * cd $PROJECT_ROOT && source .envrc && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-brave-core.sh && ./scripts/with-lock.sh update-best-practices -- $CLAUDE_BIN -p '/update-best-practices' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/update-best-practices-cron.log 2>&1
+15 4 1 * * cd $PROJECT_ROOT && source .envrc && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh update-best-practices -- $CLAUDE_BIN -p '/update-best-practices' --allowedTools '$CLAUDE_TOOLS' >> $LOG_DIR/update-best-practices-cron.log 2>&1
 
 $(if [ "$SYNC_REPO_ENABLED" = "true" ] && [ -n "$SYNC_REPO_PATH" ]; then
 cat <<SYNC
@@ -100,11 +103,11 @@ echo ""
 echo "Current schedule:"
 echo "  Weekdays (Mon-Fri):"
 echo "    08:10 - run.sh (3 iterations)"
-echo "    07:45 - /add-backlog-to-prd"
+echo "    07:45 - PRD/backlog sync (no agent)"
 echo "    13:00, 20:00 - /review-prs"
 echo "  Weekends (Sat-Sun):"
 echo "    14:10 - run.sh (3 iterations)"
-echo "    11:45 - /add-backlog-to-prd"
+echo "    11:45 - PRD/backlog sync (no agent)"
 echo "    12:00 - /review-prs"
 echo "  Daily:"
 echo "    06:00 - /learnable-pattern-search"

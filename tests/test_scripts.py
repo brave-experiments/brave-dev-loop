@@ -1,4 +1,4 @@
-"""Tests for all Python scripts in brave-dev-bot.
+"""Tests for all Python scripts in brave-dev-loop.
 
 Covers: update-prd-status.py, select-task.py, business-hours-elapsed.py,
 and check-prd-has-work.py.
@@ -10,6 +10,8 @@ import subprocess
 import sys
 from argparse import Namespace
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 SCRIPT_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts")
 UPDATE_PRD_SCRIPT = os.path.join(SCRIPT_DIR, "update-prd-status.py")
@@ -1245,10 +1247,35 @@ class TestAddBacklogClassification:
         issue = make_issue(title="Disabled test: FooTest.Bar")
         assert add_backlog.is_disabled_test_issue(issue) is True
 
-    def test_disabled_test_label_is_a_disabled_issue(self, add_backlog):
+    def test_disabled_test_label_is_a_disabled_issue(self, add_backlog, monkeypatch):
+        """The label is project-specific, so the profile decides what it is."""
+        monkeypatch.setattr(
+            add_backlog,
+            "_profile",
+            {"labels": {"disabledTest": "disabled-brave-test"}},
+        )
         issue = make_issue(
             title="Re-enable FooTest.Bar", labels=("disabled-brave-test",)
         )
+        assert add_backlog.is_disabled_test_issue(issue) is True
+
+    def test_disabled_test_label_ignored_when_profile_defines_none(
+        self, add_backlog, monkeypatch
+    ):
+        """A project with no such label must not inherit Brave's."""
+        monkeypatch.setattr(add_backlog, "_profile", {"labels": {"disabledTest": ""}})
+        issue = make_issue(
+            title="Re-enable FooTest.Bar", labels=("disabled-brave-test",)
+        )
+        assert add_backlog.is_disabled_test_issue(issue) is False
+
+    def test_disabled_test_label_falls_back_to_config(self, add_backlog, monkeypatch):
+        """Deployments that set labels.disabledTestLabel by hand keep working."""
+        monkeypatch.setattr(add_backlog, "_profile", {})
+        monkeypatch.setattr(
+            add_backlog, "_config", {"labels": {"disabledTestLabel": "legacy-label"}}
+        )
+        issue = make_issue(title="Re-enable FooTest.Bar", labels=("legacy-label",))
         assert add_backlog.is_disabled_test_issue(issue) is True
 
     def test_plain_issue_is_neither(self, add_backlog):
@@ -1369,3 +1396,532 @@ class TestAddBacklogEndToEnd:
         prd = read_json(prd_path)
         assert prd["projectName"].endswith("Backlog")
         assert len(prd["stories"]) == 1
+
+
+# ── resolve_target_repo ──────────────────────────────────────────────────────
+
+
+class TestResolveTargetRepo:
+    """project.targetRepoPath is stored against two different bases in the
+    wild: config.brave-core.json uses "src/brave" (relative to the bot dir's
+    parent) while the setup wizard documents a bot-dir-relative path. Both
+    must keep resolving, and the shell and Python resolvers must agree."""
+
+    @staticmethod
+    def _resolver():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import resolve_target_repo
+
+        return resolve_target_repo
+
+    @staticmethod
+    def _layout(root, target_rel):
+        """Create <root>/brave-dev-loop and a git repo at <root>/<target_rel>."""
+        bot = os.path.join(root, "brave-dev-loop")
+        target = os.path.join(root, target_rel)
+        os.makedirs(os.path.join(target, ".git"))
+        os.makedirs(bot, exist_ok=True)
+        return bot, target
+
+    def _sh_resolve(self, bot_dir, raw_path):
+        """Run the bash resolver so both implementations stay in sync."""
+        os.makedirs(os.path.join(bot_dir, "scripts", "lib"), exist_ok=True)
+        src = os.path.join(SCRIPT_DIR, "lib", "load-config.sh")
+        dst = os.path.join(bot_dir, "scripts", "lib", "load-config.sh")
+        with open(src) as f:
+            contents = f.read()
+        with open(dst, "w") as f:
+            f.write(contents)
+        with open(os.path.join(bot_dir, "config.json"), "w") as f:
+            json.dump(
+                {
+                    "project": {
+                        "name": "p",
+                        "org": "o",
+                        "prRepository": "o/p",
+                        "issueRepository": "o/p",
+                        "targetRepoPath": raw_path,
+                    },
+                    "bot": {"username": "b"},
+                },
+                f,
+            )
+        probe = os.path.join(bot_dir, "probe.sh")
+        with open(probe, "w") as f:
+            f.write(
+                '#!/bin/bash\nsource "$(dirname "$0")/scripts/lib/load-config.sh"\n'
+                'printf "%s" "$BOT_TARGET_REPO_DIR"\n'
+            )
+        os.chmod(probe, 0o755)
+        return subprocess.run(
+            [probe], capture_output=True, text=True, check=True
+        ).stdout
+
+    def test_parent_relative_brave_core_layout(self, tmp_dir):
+        """ "src/brave" next to the bot dir — the shipped brave-core spelling."""
+        bot, target = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {"project": {"targetRepoPath": "src/brave"}}
+        assert self._resolver()(cfg, bot) == target
+
+    def test_bot_relative_layout(self, tmp_dir):
+        """ "../sibling" relative to the bot dir — what the wizard documents."""
+        bot, target = self._layout(tmp_dir, "sibling")
+        cfg = {"project": {"targetRepoPath": "../sibling"}}
+        assert self._resolver()(cfg, bot) == target
+
+    def test_absolute_path_passthrough(self):
+        cfg = {"project": {"targetRepoPath": "/abs/target"}}
+        assert self._resolver()(cfg, "/bot") == "/abs/target"
+
+    def test_unset_returns_none(self):
+        assert self._resolver()({}, "/bot") is None
+
+    def test_missing_repo_falls_back_to_documented_base(self, tmp_dir):
+        """Neither base exists — return the bot-dir base so errors read sanely."""
+        bot = os.path.join(tmp_dir, "brave-dev-loop")
+        os.makedirs(bot)
+        cfg = {"project": {"targetRepoPath": "nope"}}
+        assert self._resolver()(cfg, bot) == os.path.join(bot, "nope")
+
+    def test_shell_and_python_agree_parent_base(self, tmp_dir):
+        bot, target = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {"project": {"targetRepoPath": "src/brave"}}
+        assert self._sh_resolve(bot, "src/brave") == target
+        assert self._resolver()(cfg, bot) == target
+
+    def test_shell_and_python_agree_bot_base(self, tmp_dir):
+        bot, target = self._layout(tmp_dir, "sibling")
+        cfg = {"project": {"targetRepoPath": "../sibling"}}
+        assert self._sh_resolve(bot, "../sibling") == target
+        assert self._resolver()(cfg, bot) == target
+
+
+# ── repair-config-paths.py ───────────────────────────────────────────────────
+
+
+class TestRepairConfigPaths:
+    """`make setup` repairs a docsDir left pointing nowhere by the historical
+    targetRepoPath base ambiguity. Must be a no-op on healthy configs."""
+
+    @staticmethod
+    def _layout(root, target_rel, docs=True):
+        bot = os.path.join(root, "brave-dev-loop")
+        target = os.path.join(root, target_rel)
+        os.makedirs(os.path.join(target, ".git"))
+        if docs:
+            os.makedirs(os.path.join(target, "docs"))
+        os.makedirs(bot, exist_ok=True)
+        return bot, target
+
+    def test_repairs_broken_docs_dir(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {
+            "project": {"targetRepoPath": "src/brave"},
+            "bestPractices": {"docsDir": "../../src/brave/docs"},
+        }
+        fixed, old = repair_config_paths.repair(cfg, bot)
+        assert fixed == os.path.join("..", "src", "brave", "docs")
+        assert old == "../../src/brave/docs"
+        assert cfg["bestPractices"]["docsDir"] == fixed
+
+    def test_noop_when_docs_dir_already_resolves(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {
+            "project": {"targetRepoPath": "src/brave"},
+            "bestPractices": {"docsDir": "../src/brave/docs"},
+        }
+        fixed, reason = repair_config_paths.repair(cfg, bot)
+        assert fixed is None
+        assert reason == "already resolves"
+        assert cfg["bestPractices"]["docsDir"] == "../src/brave/docs"
+
+    def test_noop_when_target_repo_missing(self, repair_config_paths, tmp_dir):
+        bot = os.path.join(tmp_dir, "brave-dev-loop")
+        os.makedirs(bot)
+        cfg = {
+            "project": {"targetRepoPath": "nowhere"},
+            "bestPractices": {"docsDir": "../../nope/docs"},
+        }
+        fixed, reason = repair_config_paths.repair(cfg, bot)
+        assert fixed is None
+        assert reason == "target repo not found"
+        assert cfg["bestPractices"]["docsDir"] == "../../nope/docs"
+
+    def test_repairs_bot_relative_layout(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, "sibling")
+        cfg = {
+            "project": {"targetRepoPath": "../sibling"},
+            "bestPractices": {"docsDir": "../../sibling/docs"},
+        }
+        fixed, _ = repair_config_paths.repair(cfg, bot)
+        assert fixed == os.path.join("..", "sibling", "docs")
+
+    def test_idempotent_across_two_runs(self, repair_config_paths, tmp_dir):
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        cfg = {
+            "project": {"targetRepoPath": "src/brave"},
+            "bestPractices": {"docsDir": "../../src/brave/docs"},
+        }
+        first, _ = repair_config_paths.repair(cfg, bot)
+        second, reason = repair_config_paths.repair(cfg, bot)
+        assert second is None and reason == "already resolves"
+        assert cfg["bestPractices"]["docsDir"] == first
+
+    def test_writes_valid_json_end_to_end(self, repair_config_paths, tmp_dir):
+        """Guards the inline-python-in-bash escaping bug this was extracted from."""
+        bot, _ = self._layout(tmp_dir, os.path.join("src", "brave"))
+        config_path = os.path.join(bot, "config.json")
+        with open(config_path, "w") as f:
+            json.dump(
+                {
+                    "project": {"targetRepoPath": "src/brave"},
+                    "bestPractices": {"docsDir": "../../src/brave/docs"},
+                },
+                f,
+            )
+        script = os.path.join(SCRIPT_DIR, "repair-config-paths.py")
+        for _ in range(2):
+            res = subprocess.run(
+                [sys.executable, script, "--config", config_path, "--bot-root", bot],
+                capture_output=True,
+                text=True,
+            )
+            assert res.returncode == 0, res.stderr
+            with open(config_path) as f:
+                reloaded = json.load(f)
+        assert reloaded["bestPractices"]["docsDir"] == os.path.join(
+            "..", "src", "brave", "docs"
+        )
+
+
+class TestShippedConfigs:
+    """The reference configs pin behaviour for deployments seeded from them."""
+
+    @staticmethod
+    def _load(name):
+        with open(os.path.join(os.path.dirname(__file__), os.pardir, name)) as f:
+            return json.load(f)
+
+    def test_brave_core_keeps_the_fork_layout(self):
+        """brave-core pushes from a fork; flipping this silently rewires its remotes."""
+        assert self._load("config.brave-core.json")["project"]["useFork"] is True
+
+    def test_example_defaults_to_fork_layout(self):
+        assert self._load("config.example.json")["project"]["useFork"] is True
+
+    def test_docs_dir_matches_target_repo_in_reference_configs(self):
+        """docsDir is bot-dir-relative; targetRepoPath may be either base."""
+        for name in ("config.brave-core.json", "config.example.json"):
+            cfg = self._load(name)
+            target = cfg["project"]["targetRepoPath"].lstrip("./")
+            docs = cfg["bestPractices"]["docsDir"]
+            assert docs.endswith("/docs"), (name, docs)
+            assert target.split("/")[-1] in docs, (name, target, docs)
+
+
+# ── Project profiles ─────────────────────────────────────────────────────────
+
+# The exact acceptance-criteria tail add-backlog-to-prd.py emitted before the
+# validations moved into projects/brave-core/profile.json. brave-core bots must
+# keep getting these byte-for-byte.
+_BC_REVIEW = (
+    "Commit changes, then run the /review skill from the target repo in a fresh "
+    "subagent (read .claude/skills/review/SKILL.md and follow Local Mode steps); "
+    "report all findings back to the main context; fix any violations and commit "
+    "the fixes (must pass)"
+)
+_BC_FORMAT = (
+    "Run pnpm run format one final time; if it makes any changes, amend the last "
+    "commit with the formatting fixes"
+)
+
+
+def _bc_tail(test_step):
+    return [
+        "Build the project (must pass)",
+        "Format the code (must pass)",
+        _BC_REVIEW,
+        test_step,
+        "Run presubmit checks (must pass)",
+        _BC_FORMAT,
+    ]
+
+
+class TestBraveCoreProfileIsUnchanged:
+    """Guards the promise that moving validations into a profile changed
+    nothing for brave-core. Compares against strings captured pre-refactor."""
+
+    @pytest.fixture(autouse=True)
+    def _pin_brave_core(self, add_backlog, monkeypatch):
+        """The module binds its profile at import from the live config.json.
+        Pin brave-core so this suite means the same on every deployment."""
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import load_profile
+
+        monkeypatch.setattr(
+            add_backlog,
+            "_profile",
+            load_profile({"project": {"profile": "brave-core"}}),
+        )
+
+    def test_test_failure_story_tail(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "brave")
+        story = add_backlog.build_test_story(
+            1, 2, {"number": 42, "title": "Test failure: Foo.Bar"}
+        )
+        assert story["acceptanceCriteria"][-6:] == _bc_tail(
+            "Run the test: brave_browser_tests --gtest_filter=Foo.Bar (must pass - "
+            "run 5 times to verify consistency, unless this is a filter file change only)"
+        )
+
+    def test_disabled_test_story_tail(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "brave")
+        story = add_backlog.build_disabled_test_story(
+            1, 2, {"number": 42, "title": "Disabled test: Foo.Bar"}
+        )
+        assert story["acceptanceCriteria"][-6:] == _bc_tail(
+            "Run the test: brave_browser_tests --gtest_filter=Foo.Bar "
+            "(must pass - run 5 times to verify consistency)"
+        )
+
+    def test_generic_story_tail(self, add_backlog):
+        story = add_backlog.build_generic_story(
+            1, 2, {"number": 42, "title": "Do a thing"}
+        )
+        assert story["acceptanceCriteria"][-6:] == _bc_tail(
+            "Find and run relevant tests to verify the change (must pass)"
+        )
+
+    def test_upstream_test_uses_unprefixed_binary(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "chromium")
+        story = add_backlog.build_test_story(
+            1, 2, {"number": 42, "title": "Test failure: Foo.Bar"}
+        )
+        assert "browser_tests --gtest_filter=Foo.Bar" in story["acceptanceCriteria"][-3]
+        assert "brave_browser_tests" not in story["acceptanceCriteria"][-3]
+
+    def test_unit_suite_selection(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "find_test_location", lambda _: "brave")
+        story = add_backlog.build_test_story(
+            1, 2, {"number": 42, "title": "Test failure: Foo.PartitionAlloc"}
+        )
+        assert story["testType"] == "unit_test"
+        assert "brave_unit_tests" in story["acceptanceCriteria"][-3]
+
+
+class TestProfileLoading:
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        import lib.load_config as m
+
+        return m
+
+    def test_absent_profile_defaults_to_brave_core(self):
+        """Deployments predating profiles must not change behaviour."""
+        m = self._lib()
+        assert m.profile_dir({}).endswith(os.path.join("projects", "brave-core"))
+
+    def test_named_profile_is_used(self):
+        m = self._lib()
+        got = m.profile_dir({"project": {"profile": "default"}})
+        assert got.endswith(os.path.join("projects", "default"))
+
+    def test_unknown_profile_falls_back_to_default_profile_json(self):
+        """A half-created profile directory must not strand a bot."""
+        m = self._lib()
+        profile = m.load_profile({"project": {"profile": "does-not-exist"}})
+        assert profile.get("validations")
+
+    def test_test_step_placeholder_dropped_when_absent(self):
+        m = self._lib()
+        profile = {"validations": ["a", "{testStep}", "b"]}
+        assert m.build_validations(profile, None) == ["a", "b"]
+        assert m.build_validations(profile, "run it") == ["a", "run it", "b"]
+
+    def test_default_profile_has_no_chromium_assumptions(self):
+        m = self._lib()
+        profile = m.load_profile({"project": {"profile": "default"}})
+        blob = json.dumps(profile).lower()
+        for term in ("pnpm", "gtest", "chromium", "brave", "presubmit"):
+            assert term not in blob, f"default profile leaks {term!r}"
+
+
+class TestPrdMode:
+    """The PRD is either authored (curated) or a cache the bot refreshes from
+    GitHub (auto). Defaulting matters: deployments predating the key treat
+    their PRD as authored input and must keep doing so."""
+
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        import lib.load_config as m
+
+        return m
+
+    def test_absent_key_defaults_to_curated(self):
+        assert self._lib().prd_mode({}) == "curated"
+
+    def test_explicit_auto(self):
+        assert self._lib().prd_mode({"project": {"prdMode": "auto"}}) == "auto"
+
+    def test_seed_prd_has_no_placeholder_story(self):
+        """A seeded placeholder gets picked up as real work on a bot's first run."""
+        path = os.path.join(
+            os.path.dirname(__file__), os.pardir, "data", "prd.example.json"
+        )
+        with open(path) as f:
+            assert json.load(f)["stories"] == []
+
+    def test_refresh_is_a_noop_in_curated_mode(self, tmp_dir):
+        """Curated PRDs must never be rewritten from GitHub behind the operator."""
+        script = os.path.join(SCRIPT_DIR, "refresh-prd-cache.sh")
+        with open(script) as f:
+            body = f.read()
+        assert 'if [ "$BOT_PRD_MODE" != "auto" ]; then' in body
+        assert body.index('if [ "$BOT_PRD_MODE" != "auto" ]; then') < body.index(
+            "add-backlog-to-prd.py"
+        )
+
+    def test_refresh_starts_no_agent(self):
+        """The whole point: keeping the PRD current must cost no tokens."""
+        for name in (
+            "refresh-prd-cache.sh",
+            "add-backlog-to-prd.py",
+            "sync-bot-prs-to-prd.py",
+        ):
+            with open(os.path.join(SCRIPT_DIR, name)) as f:
+                body = f.read()
+            assert "CLAUDE_BIN" not in body, name
+            assert "claude -p" not in body, name
+
+    def test_cron_backlog_job_starts_no_agent(self):
+        """This job used to spend a whole agent session on a deterministic sync."""
+        with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
+            body = f.read()
+        assert "add-backlog -- ./scripts/refresh-prd-cache.sh" in body
+        assert "/add-backlog-to-prd'" not in body
+
+
+class TestBotConfigBool:
+    """jq's `//` treats false like null, so reading a boolean with it makes a
+    `false` setting indistinguishable from an absent one — every caller then
+    falls through to its default and the setting silently inverts."""
+
+    @staticmethod
+    def _read(tmp_dir, value, reader):
+        bot = os.path.join(tmp_dir, "bot")
+        os.makedirs(os.path.join(bot, "scripts", "lib"), exist_ok=True)
+        with open(os.path.join(SCRIPT_DIR, "lib", "load-config.sh")) as f:
+            src = f.read()
+        with open(os.path.join(bot, "scripts", "lib", "load-config.sh"), "w") as f:
+            f.write(src)
+        cfg = {
+            "project": {
+                "name": "p",
+                "org": "o",
+                "prRepository": "o/p",
+                "issueRepository": "o/p",
+            },
+            "bot": {"username": "b"},
+        }
+        if value is not ...:
+            cfg["project"]["useFork"] = value
+        with open(os.path.join(bot, "config.json"), "w") as f:
+            json.dump(cfg, f)
+        probe = os.path.join(bot, "probe.sh")
+        with open(probe, "w") as f:
+            f.write(
+                '#!/bin/bash\nsource "$(dirname "$0")/scripts/lib/load-config.sh"\n'
+                f"printf '%s' \"$({reader} '.project.useFork')\"\n"
+            )
+        os.chmod(probe, 0o755)
+        return subprocess.run([probe], capture_output=True, text=True).stdout
+
+    def test_false_reads_as_false_not_empty(self, tmp_dir):
+        assert self._read(tmp_dir, False, "bot_config_bool") == "false"
+
+    def test_true_reads_as_true(self, tmp_dir):
+        assert self._read(tmp_dir, True, "bot_config_bool") == "true"
+
+    def test_absent_reads_as_empty_so_defaults_apply(self, tmp_dir):
+        assert self._read(tmp_dir, ..., "bot_config_bool") == ""
+
+    def test_plain_bot_config_still_loses_false(self, tmp_dir):
+        """Documents why bot_config must not be used for booleans."""
+        assert self._read(tmp_dir, False, "bot_config") == ""
+
+
+class TestRunLocking:
+    """A missing flock used to exit 127, which `|| exit 0` reported as "already
+    running" — so on a machine without flock every run and every cron job
+    exited successfully having done nothing."""
+
+    LOCK_LIB = os.path.join(SCRIPT_DIR, "lib", "lock.sh")
+
+    def _run(self, body, path_prefix=None):
+        env = dict(os.environ)
+        if path_prefix:
+            env["PATH"] = f"{path_prefix}:{env['PATH']}"
+        return subprocess.run(
+            ["bash", "-c", f"source {self.LOCK_LIB}\n{body}"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def test_acquires_and_blocks_a_second_holder(self, tmp_dir):
+        lock = os.path.join(tmp_dir, "a.lock")
+        r = self._run(
+            f'bot_acquire_lock "{lock}"; echo "first=$?"\n'
+            f'( source {self.LOCK_LIB}; bot_acquire_lock "{lock}"; echo "second=$?" )'
+        )
+        assert "first=0" in r.stdout, r.stdout
+        assert "second=1" in r.stdout, r.stdout
+
+    def test_release_allows_reacquisition(self, tmp_dir):
+        lock = os.path.join(tmp_dir, "b.lock")
+        r = self._run(
+            f'bot_acquire_lock "{lock}"; bot_release_lock\n'
+            f'bot_acquire_lock "{lock}"; echo "again=$?"'
+        )
+        assert "again=0" in r.stdout, r.stdout
+
+    def test_stale_lock_from_a_dead_holder_is_reclaimed(self, tmp_dir):
+        """A process killed before cleanup must not wedge the bot forever."""
+        lock = os.path.join(tmp_dir, "c.lock")
+        os.makedirs(lock + ".d")
+        with open(os.path.join(lock + ".d", "pid"), "w") as f:
+            f.write("999999")
+        r = self._run(f'bot_acquire_lock "{lock}"; echo "stale=$?"')
+        assert "stale=0" in r.stdout, r.stdout + r.stderr
+
+    def test_missing_flock_is_not_reported_as_contention(self, tmp_dir):
+        """The actual bug: no flock must still acquire, not claim 'already running'."""
+        lock = os.path.join(tmp_dir, "d.lock")
+        r = self._run(
+            "_bot_have_flock() { return 1; }\n"
+            f'bot_acquire_lock "{lock}"; echo "got=$?"'
+        )
+        assert "got=0" in r.stdout, r.stdout + r.stderr
+
+    def test_flock_path_reports_contention_from_flock(self, tmp_dir):
+        """When flock is present its exit status is what decides, unchanged."""
+        lock = os.path.join(tmp_dir, "e.lock")
+        held = self._run(
+            "_bot_have_flock() { return 0; }\nflock() { return 1; }\n"
+            f'bot_acquire_lock "{lock}"; echo "held=$?"'
+        )
+        free = self._run(
+            "_bot_have_flock() { return 0; }\nflock() { return 0; }\n"
+            f'bot_acquire_lock "{lock}"; echo "free=$?"'
+        )
+        assert "held=1" in held.stdout, held.stdout + held.stderr
+        assert "free=0" in free.stdout, free.stdout + free.stderr
+
+    def test_no_call_site_still_uses_bare_flock(self):
+        for name in ("../run.sh", "with-lock.sh"):
+            with open(os.path.join(SCRIPT_DIR, name)) as f:
+                body = f.read()
+            assert "flock -n 200" not in body, name
+            assert "bot_acquire_lock" in body, name
