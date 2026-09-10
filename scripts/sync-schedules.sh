@@ -46,9 +46,9 @@ PATH=$CLAUDE_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bi
 # head start, not a requirement.
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 1x/day
-45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/sync-prd.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 # Weekends: once/day (before run.sh)
-45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/sync-prd.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 
 # Main agent run — skip if no actionable stories
 # Gate check runs before git sync to avoid wasted fetches

@@ -186,8 +186,12 @@ echo "Resetting run state for fresh start..."
 "$SCRIPT_DIR/scripts/reset-run-state.sh"
 
 # In auto mode the PRD is a cache — rebuild it from GitHub before selecting a
-# task. Plain Python against the API; no agent is started, so this costs nothing.
-"$SCRIPT_DIR/scripts/refresh-prd-cache.sh"
+# task. Plain Python against the API; no agent is started, so this costs
+# nothing. A curated PRD is authored, so a run leaves it alone entirely; its
+# backlog top-up belongs to the scheduled job, at a time the operator picked.
+if [ "$BOT_PRD_MODE" = "auto" ]; then
+  "$SCRIPT_DIR/scripts/sync-prd.sh"
+fi
 
 # Track both loop count (for max iterations) and work iterations (actual state changes)
 loop_count=0

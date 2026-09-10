@@ -2019,20 +2019,38 @@ class TestPrdMode:
         with open(path) as f:
             assert json.load(f)["stories"] == []
 
-    def test_refresh_is_a_noop_in_curated_mode(self, tmp_dir):
-        """Curated PRDs must never be rewritten from GitHub behind the operator."""
-        script = os.path.join(SCRIPT_DIR, "refresh-prd-cache.sh")
-        with open(script) as f:
-            body = f.read()
-        assert 'if [ "$BOT_PRD_MODE" != "auto" ]; then' in body
-        assert body.index('if [ "$BOT_PRD_MODE" != "auto" ]; then') < body.index(
-            "add-backlog-to-prd.py"
-        )
+    @staticmethod
+    def _sync_prd():
+        with open(os.path.join(SCRIPT_DIR, "sync-prd.sh")) as f:
+            return f.read()
 
-    def test_refresh_starts_no_agent(self):
+    AUTO_GATE = 'if [ "$BOT_PRD_MODE" = "auto" ]; then'
+
+    def test_curated_prd_is_never_rewritten_from_github(self):
+        """A curated PRD is the operator's document. The bot-PR sync rewrites
+        the status of stories already in it, so it runs in auto alone."""
+        body = self._sync_prd()
+        assert body.index(self.AUTO_GATE) < body.index("sync-bot-prs-to-prd.py")
+
+    def test_curated_prd_still_gets_its_backlog(self):
+        """The backlog sync only appends issues nobody has tracked yet, and it
+        is what the nightly agent session did before this was a script. Behind
+        the auto gate, every curated deployment silently stops picking up newly
+        assigned work the day its schedules are re-synced."""
+        body = self._sync_prd()
+        assert body.index("add-backlog-to-prd.py") < body.index(self.AUTO_GATE)
+
+    def test_a_run_leaves_a_curated_prd_alone(self):
+        """Appending is the scheduled job's business, at an hour the operator
+        chose -- not something a run does to an authored PRD behind them."""
+        with open(os.path.join(os.path.dirname(__file__), os.pardir, "run.sh")) as f:
+            body = f.read()
+        assert body.index(self.AUTO_GATE) < body.index("scripts/sync-prd.sh")
+
+    def test_sync_starts_no_agent(self):
         """The whole point: keeping the PRD current must cost no tokens."""
         for name in (
-            "refresh-prd-cache.sh",
+            "sync-prd.sh",
             "add-backlog-to-prd.py",
             "sync-bot-prs-to-prd.py",
         ):
@@ -2045,7 +2063,7 @@ class TestPrdMode:
         """This job used to spend a whole agent session on a deterministic sync."""
         with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
             body = f.read()
-        assert "add-backlog -- ./scripts/refresh-prd-cache.sh" in body
+        assert "add-backlog -- ./scripts/sync-prd.sh" in body
         assert "/add-backlog-to-prd'" not in body
 
 
