@@ -1842,8 +1842,8 @@ class TestProfileResearch:
                     assert found in known, (name, found)
 
 
-class TestBraveBotProfile:
-    """brave-bot is a Rust workspace, and its checks are the ones its Makefile
+class TestBravebotProfile:
+    """bravebot is a Rust workspace, and its checks are the ones its Makefile
     and ci.yml actually define -- not brave-core's, which is what the generic
     hard-coded steps used to give it."""
 
@@ -1852,7 +1852,7 @@ class TestBraveBotProfile:
         sys.path.insert(0, SCRIPT_DIR)
         from lib.load_config import load_profile
 
-        return load_profile({"project": {"profile": "brave-bot"}})
+        return load_profile({"project": {"profile": "bravebot"}})
 
     def test_covers_every_ci_enforced_check(self):
         """`make check-all` is check + check-spec + check-npm + check-msrv +
@@ -1876,7 +1876,7 @@ class TestBraveBotProfile:
     def test_has_no_chromium_assumptions(self):
         blob = json.dumps(self._profile()).lower()
         for term in ("pnpm", "gtest", "chromium", "presubmit", "best_practices"):
-            assert term not in blob, f"brave-bot profile leaks {term!r}"
+            assert term not in blob, f"bravebot profile leaks {term!r}"
 
     def test_test_steps_are_cargo(self):
         for kind, step in self._profile()["testSteps"].items():

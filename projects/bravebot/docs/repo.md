@@ -1,4 +1,4 @@
-# brave-bot: Repository
+# bravebot: Repository
 
 Project-specific repository rules. Read alongside `docs/git-repository.md`.
 

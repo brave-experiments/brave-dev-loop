@@ -1,5 +1,5 @@
 {
-  "description": "brave-bot: a Rust workspace (cargo) with a thin npm wrapper, checked by ci.yml plus the organization-level brave/security-action scan.",
+  "description": "bravebot: a Rust workspace (cargo) with a thin npm wrapper, checked by ci.yml plus the organization-level brave/security-action scan.",
   "research": [
     "Read {targetRepo}/agents/AGENTS.md — the prompt-injection rule it states overrides every other consideration in this repo",
     "Read {targetRepo}/docs/development.md for the build, check, and security-scan commands"

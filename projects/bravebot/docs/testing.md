@@ -1,4 +1,4 @@
-# brave-bot: Testing
+# bravebot: Testing
 
 Project-specific test and presubmit commands. Read alongside
 `docs/testing-requirements.md`.
