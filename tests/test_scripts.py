@@ -2215,7 +2215,6 @@ class TestProfileResearch:
 
     def test_every_profile_uses_only_known_placeholders(self):
         """A typo'd placeholder would ship to an agent verbatim."""
-        m = self._lib()
         known = {"{bestPractices}", "{targetRepo}"}
         for name in sorted(os.listdir(PROJECTS_DIR)):
             path = os.path.join(PROJECTS_DIR, name, "profile.json")
