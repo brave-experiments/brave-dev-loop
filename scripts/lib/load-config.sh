@@ -7,6 +7,7 @@
 # Exports:
 #   BOT_PROJECT_NAME, BOT_ORG, BOT_PR_REPO, BOT_ISSUE_REPO,
 #   BOT_DEFAULT_BRANCH, BOT_USERNAME, BOT_EMAIL,
+#   BOT_PROFILE, BOT_PROFILE_DIR, BOT_PROFILE_WORKTREES, BOT_MAX_CONCURRENT_RUNS,
 #   BOT_SSH_KEY_PATH, BOT_GH_ACCOUNT,
 #   BOT_AGENT, BOT_CLAUDE_MODEL, BOT_CLAUDE_BIN,
 #   BOT_CODEX_MODEL, BOT_CODEX_BIN,
@@ -105,6 +106,26 @@ BOT_TARGET_REPO_PATH=$(bot_config '.project.targetRepoPath')
 # truth. 'auto' — the PRD is a cache the bot refreshes from GitHub itself.
 BOT_PRD_MODE=$(bot_config '.project.prdMode')
 BOT_PRD_MODE="${BOT_PRD_MODE:-curated}"
+# Absent project.profile means a deployment predating profiles — all brave-core.
+BOT_PROFILE=$(bot_config '.project.profile')
+BOT_PROFILE="${BOT_PROFILE:-brave-core}"
+BOT_PROFILE_DIR="$BOT_DIR/projects/$BOT_PROFILE"
+
+# How many run.sh instances may share this bot directory. See docs/concurrent-runs.md.
+# Default 1: a deployment that never sets it behaves exactly as it did before
+# slots existed, down to the file paths it uses.
+BOT_MAX_CONCURRENT_RUNS=$(bot_config '.bot.maxConcurrentRuns')
+BOT_MAX_CONCURRENT_RUNS="${BOT_MAX_CONCURRENT_RUNS:-1}"
+
+# Whether this profile gives every story its own git worktree. Concurrency is
+# only sound when it does: without worktrees two runs share one working tree
+# and one branch, and they will overwrite each other's work.
+BOT_PROFILE_WORKTREES=false
+if [ -f "$BOT_PROFILE_DIR/profile.json" ]; then
+  if [ "$(jq -r '.worktrees // false' "$BOT_PROFILE_DIR/profile.json" 2>/dev/null)" = "true" ]; then
+    BOT_PROFILE_WORKTREES=true
+  fi
+fi
 
 BOT_USERNAME=$(bot_config '.bot.username')
 BOT_EMAIL=$(bot_config '.bot.email')
@@ -176,6 +197,7 @@ fi
 
 export BOT_DIR BOT_CONFIG_FILE
 export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BOT_TARGET_REPO_PATH BOT_TARGET_REPO_DIR BOT_PRD_MODE
+export BOT_PROFILE BOT_PROFILE_DIR BOT_PROFILE_WORKTREES BOT_MAX_CONCURRENT_RUNS
 export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_SIGNING_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
 export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS
