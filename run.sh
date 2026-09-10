@@ -174,6 +174,22 @@ release_claim() {
   CURRENT_STORY_ID=""
 }
 
+# What the agent does with a story in this status, in one line. Printed in the
+# iteration banner and again when the iteration ends, so the terminal says what
+# is about to happen (and what happens next) rather than only which story was
+# picked. Each phrase is the goal stated at the top of the matching workflow doc.
+story_next_step() {
+  case "$1" in
+    pending)   printf '%s' "implement and test the fix, then commit" ;;
+    committed) printf '%s' "push the branch and open the PR" ;;
+    pushed)    printf '%s' "check CI and reviews, address feedback, wait for the maintainer to merge" ;;
+    merged)    printf '%s' "post-merge check for follow-up requests" ;;
+    skipped)   printf '%s' "nothing — intentionally skipped" ;;
+    invalid)   printf '%s' "nothing — closed as invalid" ;;
+    *)         printf '%s' "follow docs/workflow-$1.md" ;;
+  esac
+}
+
 cleanup_run() {
   release_claim
   bot_slot_meta_clear
@@ -311,7 +327,15 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   TIER_NAME=$(echo "$TASK_JSON" | jq -r '.tierName')
   STORY_TITLE=$(echo "$TASK_JSON" | jq -r '.title')
   STORY_DETAILS=$(echo "$TASK_JSON" | jq -c '.storyDetails')
-  echo "Selected: $STORY_ID - $STORY_TITLE (status: $STORY_STATUS, tier: $TIER_NAME)"
+  STORY_PRIORITY=$(echo "$TASK_JSON" | jq -r '.priority // "-"')
+  STORY_ISSUE=$(echo "$TASK_JSON" | jq -r '.issueNumber // empty')
+  STORY_PR_URL=$(echo "$TASK_JSON" | jq -r '.prUrl // empty')
+  STORY_BRANCH=$(echo "$TASK_JSON" | jq -r '.branchName // empty')
+  # Stories reference their issue by number only, so the link is built here.
+  STORY_ISSUE_URL=""
+  if [ -n "$STORY_ISSUE" ]; then
+    STORY_ISSUE_URL="https://github.com/$BOT_ISSUE_REPO/issues/$STORY_ISSUE"
+  fi
 
   # select-task.py claimed this story under the PRD lock; remember it so the
   # claim is handed back when the iteration ends or this run exits.
@@ -328,22 +352,26 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   # Check if last iteration had state change (default to true for first iteration)
   HAD_STATE_CHANGE=$(jq -r '.lastIterationHadStateChange // true' "$RUN_STATE_FILE" 2>/dev/null || echo "true")
 
+  echo ""
+  echo "==============================================================="
   # Only increment work iteration counter if there was actual state change
   if [ "$HAD_STATE_CHANGE" = "true" ]; then
     ((++work_iteration))
-    echo ""
-    echo "==============================================================="
     echo "  Work Iteration $work_iteration (loop $loop_count of $MAX_ITERATIONS)"
-    echo "==============================================================="
   else
-    echo ""
-    echo "==============================================================="
     echo "  Checking next task (work iteration $work_iteration, loop $loop_count of $MAX_ITERATIONS)"
     echo "  Previous check had no state change - continuing without incrementing work iteration"
-    echo "==============================================================="
   fi
-
-  echo "Logging to: $ITERATION_LOG"
+  echo "---------------------------------------------------------------"
+  echo "  Story:     $STORY_ID  $STORY_TITLE"
+  echo "  Status:    $STORY_STATUS (tier $TIER_NAME, priority $STORY_PRIORITY)"
+  [ -n "$STORY_ISSUE_URL" ] && echo "  Issue:     $STORY_ISSUE_URL"
+  [ -n "$STORY_PR_URL" ] && echo "  PR:        $STORY_PR_URL"
+  [ -n "$STORY_BRANCH" ] && echo "  Branch:    $STORY_BRANCH"
+  echo "  Next step: $(story_next_step "$STORY_STATUS")"
+  echo "  Workflow:  docs/workflow-$STORY_STATUS.md"
+  echo "  Log:       $ITERATION_LOG"
+  echo "==============================================================="
 
   # Run Claude Code with the agent prompt
   # Use a temp file to capture output while allowing real-time streaming
@@ -484,6 +512,23 @@ Additional context: $EXTRA_PROMPT"
     echo "To continue this session: cursor-agent resume"
   else
     echo "To continue this session: codex resume --last"
+  fi
+
+  # Where the story actually landed. The agent moved it (or did not) via
+  # update-prd-status.py, so the PRD is the only honest answer -- and the next
+  # step follows from the new status, not the one this iteration started on.
+  END_STATUS=$(jq -r --arg id "$STORY_ID" 'first(.stories[] | select(.id == $id)) | .status // empty' "$PRD_FILE" 2>/dev/null || echo "")
+  END_PR_URL=$(jq -r --arg id "$STORY_ID" 'first(.stories[] | select(.id == $id)) | .prUrl // empty' "$PRD_FILE" 2>/dev/null || echo "")
+  echo ""
+  if [ -z "$END_STATUS" ]; then
+    echo "$STORY_ID: could not read status back from $PRD_FILE."
+  elif [ "$END_STATUS" != "$STORY_STATUS" ]; then
+    echo "$STORY_ID: $STORY_STATUS -> $END_STATUS. Next: $(story_next_step "$END_STATUS")"
+  else
+    echo "$STORY_ID: still $STORY_STATUS. Next: $(story_next_step "$END_STATUS")"
+  fi
+  if [ -n "$END_PR_URL" ] && [ "$END_PR_URL" != "$STORY_PR_URL" ]; then
+    echo "$STORY_ID: PR $END_PR_URL"
   fi
 
   # Check for completion signal (print mode only — TUI mode skips this since user is watching).

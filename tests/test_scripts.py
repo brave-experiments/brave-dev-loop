@@ -344,6 +344,18 @@ class TestSelectTaskParseIso:
         assert select_task.parse_iso("not-a-date") == select_task.EPOCH
 
 
+class TestSelectTaskIssueNumber:
+    def test_parses_description_reference(self, select_task):
+        story = {"description": "Resolve issue #133: rename the thing"}
+        assert select_task.issue_number(story) == 133
+
+    def test_none_without_reference(self, select_task):
+        assert select_task.issue_number({"description": "no reference here"}) is None
+
+    def test_none_without_description(self, select_task):
+        assert select_task.issue_number({}) is None
+
+
 class TestSelectTaskTiers:
     def test_pushed_reviewer_is_urgent(self, select_task):
         assert (
