@@ -507,6 +507,124 @@ class TestSelectTaskSortKey:
         ) < select_task.sort_key(pending, promote_pending=True)
 
 
+class TestSelectTaskTriageOrder:
+    """Pending work is ordered by the triage axes the issue carries. An
+    unlabelled backlog has to sort exactly as it did before the axes existed,
+    because most projects never label anything."""
+
+    def test_more_urgent_first(self, select_task):
+        stories = [
+            make_story("pending", id="US-LATER", triage={"urgency": 4}),
+            make_story("pending", id="US-NOW", triage={"urgency": 2}),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-NOW"
+
+    def test_urgency_interrupts_importance(self, select_task):
+        """The two axes are separate on purpose: urgency is the interrupt, so
+        it decides first even against work that matters more."""
+        stories = [
+            make_story(
+                "pending", id="US-BIGGER", triage={"urgency": 3, "importance": 1}
+            ),
+            make_story(
+                "pending", id="US-SOONER", triage={"urgency": 2, "importance": 5}
+            ),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-SOONER"
+
+    def test_importance_orders_equal_urgency(self, select_task):
+        stories = [
+            make_story(
+                "pending", id="US-MINOR", triage={"urgency": 3, "importance": 4}
+            ),
+            make_story(
+                "pending", id="US-MAJOR", triage={"urgency": 3, "importance": 1}
+            ),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-MAJOR"
+
+    def test_unjudged_sorts_between_judged(self, select_task):
+        """A missing axis is not a low value, so an unlabelled story neither
+        jumps the queue nor is buried by it."""
+        stories = [
+            make_story("pending", id="US-LOW", triage={"urgency": 5}),
+            make_story("pending", id="US-NONE"),
+            make_story("pending", id="US-HIGH", triage={"urgency": 1}),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert [s["id"] for s in stories] == ["US-HIGH", "US-NONE", "US-LOW"]
+
+    def test_axes_outrank_attempt_count(self, select_task):
+        """Attempt count breaks ties inside an axis band. It must not put a
+        cosmetic issue ahead of an urgent one just for being untouched --
+        MAX_PENDING_ATTEMPTS is what catches a story that is truly stuck."""
+        stories = [
+            make_story("pending", id="US-COSMETIC", triage={"urgency": 5}),
+            make_story(
+                "pending", id="US-URGENT", triage={"urgency": 1}, iterationLogs=["a"]
+            ),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-URGENT"
+
+    def test_size_does_not_order_anything(self, select_task):
+        """Size says what fits in the time available. Ordering by it would bury
+        exactly the large important work that needs splitting."""
+        small = make_story("pending", id="US-S", priority=2, triage={"size": 1})
+        large = make_story("pending", id="US-L", priority=1, triage={"size": 5})
+        stories = [small, large]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-L"
+
+    def test_unlabelled_backlog_sorts_by_priority_as_before(self, select_task):
+        stories = [
+            make_story("pending", id="US-002", priority=10),
+            make_story("pending", id="US-001", priority=1),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-001"
+
+    def test_pushed_maintenance_keeps_its_round_robin(self, select_task):
+        """The pushed queue exists so every open PR is looked at in turn. Axes
+        there would leave the least important PR waiting for review forever."""
+        stories = [
+            make_story(
+                "pushed",
+                id="US-URGENT-PR",
+                lastProcessedDate="2026-01-02T00:00:00Z",
+                triage={"urgency": 1},
+            ),
+            make_story(
+                "pushed",
+                id="US-OLDEST-PR",
+                lastProcessedDate="2026-01-01T00:00:00Z",
+                triage={"urgency": 5},
+            ),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-OLDEST-PR"
+
+    def test_nonsense_axis_value_does_not_raise(self, select_task):
+        """data/prd.json is hand-editable, so a run must survive anything in
+        the block rather than dying mid-selection."""
+        stories = [
+            make_story("pending", id="US-BAD", triage={"urgency": "very"}),
+            make_story("pending", id="US-OK", triage={"urgency": 1}),
+        ]
+        stories.sort(key=select_task.sort_key)
+        assert stories[0]["id"] == "US-OK"
+
+    def test_reviewer_response_still_preempts_an_urgent_pending(self, select_task):
+        """The axes order pending work inside its tier. They do not let it
+        overtake a reviewer who is waiting on an answer."""
+        pending = make_story("pending", id="US-P", triage={"urgency": 1})
+        urgent = make_story("pushed", id="US-U", lastActivityBy="reviewer")
+        assert select_task.sort_key(urgent) < select_task.sort_key(pending)
+
+
 class TestSelectTaskQuarantine:
     def test_stuck_pending_is_quarantined(self, select_task):
         story = make_story(
@@ -856,6 +974,13 @@ class TestSelectTaskCandidateSummary:
     def test_one_line_per_candidate(self, select_task):
         stories = [make_story(id="US-001"), make_story(id="US-002")]
         assert len(select_task.candidate_summary(stories).splitlines()) == 2
+
+    def test_includes_the_triage_axes(self, select_task):
+        """A request phrased as an axis ("the urgent ones") needs something to
+        match on, and axis order is fixed so two stories read the same way."""
+        story = make_story(triage={"size": 2, "urgency": 3, "importance": 2})
+        line = select_task.candidate_summary([story])
+        assert "importance 2, urgency 3, size 2" in line
 
 
 # ── scripts/lib/git-identity.sh ──────────────────────────────────────────────
@@ -1424,6 +1549,266 @@ class TestAddBacklogEndToEnd:
         assert len(prd["stories"]) == 1
 
 
+class TestAddBacklogTriage:
+    """Stories carry the axes their issue was labelled with, so select-task.py
+    can order the backlog by them instead of by the order issues arrived in."""
+
+    AXES = {
+        "importance": "importance/p",
+        "urgency": "urgency/p",
+        "size": "size/",
+    }
+
+    @pytest.fixture
+    def labelled_profile(self, add_backlog, monkeypatch):
+        """A profile that spells the axes. The module binds its profile at
+        import from the live config.json, so pin one or this suite means
+        something different on every deployment."""
+        monkeypatch.setattr(add_backlog, "_profile", {"labels": {"axes": self.AXES}})
+        return add_backlog
+
+    def test_story_carries_the_issues_axes(self, labelled_profile):
+        issue = make_issue(
+            number=910, title="Do a thing", labels=("importance/p2", "urgency/p3")
+        )
+        story = labelled_profile.build_story(1, 1, issue)
+        assert story["triage"] == {"importance": 2, "urgency": 3}
+
+    def test_test_stories_carry_them_too(self, labelled_profile, monkeypatch):
+        """Every story kind goes through build_story, so none of the three can
+        quietly lose the axes."""
+        monkeypatch.setattr(labelled_profile, "find_test_location", lambda _: "brave")
+        for title in ("Test failure: Foo.Bar", "Disabled test: Foo.Bar", "Do a thing"):
+            story = labelled_profile.build_story(
+                1, 1, make_issue(number=911, title=title, labels=("size/4",))
+            )
+            assert story["triage"] == {"size": 4}, title
+
+    def test_unlabelled_issue_gets_no_triage_block(self, labelled_profile):
+        """An empty block would claim the issue was judged and found middling."""
+        story = labelled_profile.build_story(1, 1, make_issue(number=912))
+        assert "triage" not in story
+
+    def test_project_without_axes_reads_none(self, add_backlog, monkeypatch):
+        """brave-core does not label its issues this way, and must not inherit
+        bravebot's labels by accident."""
+        monkeypatch.setattr(add_backlog, "_profile", {"labels": {}})
+        story = add_backlog.build_story(
+            1, 1, make_issue(number=913, labels=("importance/p1",))
+        )
+        assert "triage" not in story
+
+
+class TestAddBacklogRetriage:
+    """The axes move after intake -- somebody raises an urgency, or sizes an
+    issue that arrived unjudged. This script is the only thing that reads them,
+    so a story left with the labels of the day it was created is ordered by
+    nothing anybody can still see."""
+
+    @pytest.fixture
+    def labelled_profile(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(
+            add_backlog,
+            "_profile",
+            {"labels": {"axes": TestAddBacklogTriage.AXES}},
+        )
+        return add_backlog
+
+    def test_pending_story_follows_its_issue(self, labelled_profile):
+        story = make_story(
+            "pending",
+            description="Resolve issue #920: x",
+            triage={"urgency": 4},
+        )
+        moved = labelled_profile.refresh_triage(
+            [story], [make_issue(number=920, labels=("urgency/p2",))]
+        )
+        assert story["triage"] == {"urgency": 2}
+        assert moved == [
+            {
+                "id": "US-001",
+                "issueNumber": 920,
+                "from": {"urgency": 4},
+                "to": {"urgency": 2},
+            }
+        ]
+
+    def test_unchanged_triple_is_not_reported(self, labelled_profile):
+        story = make_story(
+            "pending", description="Resolve issue #921: x", triage={"urgency": 2}
+        )
+        moved = labelled_profile.refresh_triage(
+            [story], [make_issue(number=921, labels=("urgency/p2",))]
+        )
+        assert moved == []
+
+    def test_labels_removed_from_the_issue_are_removed_here(self, labelled_profile):
+        story = make_story(
+            "pending", description="Resolve issue #922: x", triage={"urgency": 2}
+        )
+        labelled_profile.refresh_triage([story], [make_issue(number=922)])
+        assert "triage" not in story
+
+    def test_work_that_has_a_pr_is_left_alone(self, labelled_profile):
+        """A pushed story's place in the queue is decided by its PR, not by the
+        axes, and rewriting a story mid-review is not this script's business."""
+        story = make_story(
+            "pushed", description="Resolve issue #923: x", triage={"urgency": 4}
+        )
+        moved = labelled_profile.refresh_triage(
+            [story], [make_issue(number=923, labels=("urgency/p1",))]
+        )
+        assert story["triage"] == {"urgency": 4}
+        assert moved == []
+
+    def test_story_whose_issue_is_gone_is_left_alone(self, labelled_profile):
+        """The fetch is open-and-assigned only, so a closed or reassigned issue
+        is simply absent -- which is not the same as having lost its labels."""
+        story = make_story(
+            "pending", description="Resolve issue #924: x", triage={"urgency": 2}
+        )
+        labelled_profile.refresh_triage([story], [])
+        assert story["triage"] == {"urgency": 2}
+
+    def test_project_without_axes_rewrites_nothing(self, add_backlog, monkeypatch):
+        monkeypatch.setattr(add_backlog, "_profile", {"labels": {}})
+        story = make_story(
+            "pending", description="Resolve issue #925: x", triage={"urgency": 2}
+        )
+        assert add_backlog.refresh_triage([story], [make_issue(number=925)]) == []
+        assert story["triage"] == {"urgency": 2}
+
+    def test_safety_check_still_catches_every_other_field(self, add_backlog):
+        """The axes are the one field this script may rewrite on a story it did
+        not create. The check that guards the rest has to still fire."""
+        story = make_story("pending", triage={"urgency": 2})
+        assert add_backlog.without_triage(story) == make_story("pending")
+        edited = make_story("skipped", triage={"urgency": 2})
+        assert add_backlog.without_triage(edited) != add_backlog.without_triage(story)
+
+    def test_end_to_end_rewrites_the_block_and_nothing_else(
+        self, write_json, read_json
+    ):
+        """Through the script as run.sh runs it, against whatever profile this
+        deployment has: the story is either re-triaged or untouched, and either
+        way every other field survives."""
+        story = make_story("pending", description="Resolve issue #926: x")
+        prd_path = write_json("prd.json", {"stories": [story]})
+        result = run_add_backlog(
+            prd_path,
+            [make_issue(number=926, labels=("importance/p2", "urgency/p3", "size/2"))],
+        )
+        assert result.returncode == 0
+        written = read_json(prd_path)["stories"][0]
+        assert json.loads(result.stdout)["added"] == []
+        assert {k: v for k, v in written.items() if k != "triage"} == story
+
+
+# ── scripts/lib/triage.py ────────────────────────────────────────────────────
+
+
+class TestTriageLib:
+    """The axis vocabulary both scripts read. What each value *means* is the
+    project's to define; what is fixed here is the range, the reading order,
+    and what an unjudged axis does."""
+
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib import triage
+
+        return triage
+
+    BRAVEBOT_PREFIXES = {
+        "importance": "importance/p",
+        "urgency": "urgency/p",
+        "size": "size/",
+    }
+
+    def test_reads_a_full_triple(self):
+        got = self._lib().read_labels(
+            ["bug", "importance/p2", "urgency/p3", "size/2"], self.BRAVEBOT_PREFIXES
+        )
+        assert got == {"importance": 2, "urgency": 3, "size": 2}
+
+    def test_unlabelled_axis_is_absent_not_defaulted(self):
+        """Absent has to stay distinguishable from judged-middling: only the
+        ordering gets to decide what nobody judging it means."""
+        got = self._lib().read_labels(["importance/p1"], self.BRAVEBOT_PREFIXES)
+        assert got == {"importance": 1}
+
+    def test_value_outside_the_range_is_ignored(self):
+        """A sixth level is somebody's typo, not a value."""
+        got = self._lib().read_labels(
+            ["importance/p0", "size/10", "urgency/p6"], self.BRAVEBOT_PREFIXES
+        )
+        assert got == {}
+
+    def test_non_numeric_suffix_is_ignored(self):
+        got = self._lib().read_labels(["size/large"], self.BRAVEBOT_PREFIXES)
+        assert got == {}
+
+    def test_case_is_not_load_bearing(self):
+        """Some repos spell the value P2 and some p2. Either is the same axis."""
+        got = self._lib().read_labels(["Importance/P4"], self.BRAVEBOT_PREFIXES)
+        assert got == {"importance": 4}
+
+    def test_duplicate_labels_take_the_most_severe(self):
+        """The axes are ordinary labels, so both values can survive a botched
+        edit. Which one wins must not depend on the order the API listed them."""
+        lib = self._lib()
+        assert lib.read_labels(
+            ["urgency/p4", "urgency/p2"], self.BRAVEBOT_PREFIXES
+        ) == {"urgency": 2}
+        assert lib.read_labels(
+            ["urgency/p2", "urgency/p4"], self.BRAVEBOT_PREFIXES
+        ) == {"urgency": 2}
+
+    def test_prefixes_come_from_the_profile(self):
+        lib = self._lib()
+        profile = {"labels": {"axes": self.BRAVEBOT_PREFIXES}}
+        assert lib.axis_prefixes(profile) == self.BRAVEBOT_PREFIXES
+
+    def test_project_without_axes_has_no_prefixes(self):
+        lib = self._lib()
+        assert lib.axis_prefixes({}) == {}
+        assert lib.axis_prefixes({"labels": {"pr": []}}) == {}
+
+    def test_blank_prefix_is_dropped(self):
+        """A half-filled mapping labels what it names and ignores the rest --
+        an empty prefix would otherwise match every label there is."""
+        lib = self._lib()
+        got = lib.axis_prefixes({"labels": {"axes": {"size": "", "urgency": "u/"}}})
+        assert got == {"urgency": "u/"}
+
+    def test_rank_is_urgency_then_importance(self):
+        assert self._lib().rank({"importance": 1, "urgency": 2}) == (2.0, 1.0)
+
+    def test_rank_of_an_unjudged_story_is_neutral(self):
+        lib = self._lib()
+        assert lib.rank({}) == (lib.NEUTRAL, lib.NEUTRAL)
+        assert lib.rank(None) == (lib.NEUTRAL, lib.NEUTRAL)
+
+    def test_rank_ignores_size(self):
+        lib = self._lib()
+        assert lib.rank({"size": 5}) == (lib.NEUTRAL, lib.NEUTRAL)
+
+    def test_unreadable_value_ranks_as_unjudged(self):
+        lib = self._lib()
+        assert lib.value("nonsense") == lib.NEUTRAL
+        assert lib.value(None) == lib.NEUTRAL
+        assert lib.value(9) == lib.NEUTRAL
+
+    def test_format_uses_reading_order_not_key_order(self):
+        got = self._lib().format_triage({"size": 2, "urgency": 3, "importance": 2})
+        assert got == "importance 2, urgency 3, size 2"
+
+    def test_format_of_nothing_is_empty(self):
+        lib = self._lib()
+        assert lib.format_triage({}) == ""
+        assert lib.format_triage(None) == ""
+
+
 # ── resolve_target_repo ──────────────────────────────────────────────────────
 
 
@@ -1916,6 +2301,62 @@ class TestBravebotProfile:
     def test_test_steps_are_cargo(self):
         for kind, step in self._profile()["testSteps"].items():
             assert "cargo test" in step, kind
+
+
+class TestBravebotTriageAxes:
+    """bravebot labels every open issue on three axes, and its /triage-issues
+    skill is what applies them. The loop reads them to order its backlog, so
+    the prefixes have to be in the profile and the meanings have to stay in
+    bravebot's own docs rather than being restated here."""
+
+    AXIS_LABELS = ("importance/p1", "urgency/p1", "size/1")
+
+    @staticmethod
+    def _profile():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import load_profile
+
+        return load_profile({"project": {"profile": "bravebot"}})
+
+    def test_profile_spells_all_three_axes(self):
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib import triage
+
+        prefixes = triage.axis_prefixes(self._profile())
+        assert sorted(prefixes) == sorted(triage.AXES)
+
+    def test_the_prefixes_read_the_labels_bravebot_applies(self):
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib import triage
+
+        prefixes = triage.axis_prefixes(self._profile())
+        got = triage.read_labels(["importance/p2", "urgency/p3", "size/2"], prefixes)
+        assert got == {"importance": 2, "urgency": 3, "size": 2}
+
+    def test_no_shared_doc_names_an_axis_label(self):
+        """Same rule as every other project label: a shared doc that spells one
+        hands it to every project, including the ones that have no such label."""
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                content = f.read()
+            for label in self.AXIS_LABELS:
+                assert label not in content, f"docs/{name} hard-codes {label!r}"
+
+    def test_the_profile_docs_name_them(self):
+        """They have to live somewhere, and this is where an agent looks."""
+        with open(os.path.join(PROJECTS_DIR, "bravebot", "docs", "labels.md")) as f:
+            content = f.read()
+        for label in self.AXIS_LABELS:
+            assert label in content, label
+
+    def test_the_meanings_are_deferred_to_the_target_repo(self):
+        """Restating a scale that lives in bravebot's docs/development.md is how
+        the two drift apart, and the loop is not the one that defines it."""
+        with open(os.path.join(PROJECTS_DIR, "bravebot", "docs", "labels.md")) as f:
+            content = f.read()
+        assert "docs/development.md" in content
 
 
 class TestBravebotWorktrees:

@@ -30,7 +30,9 @@ the bot, and appends a story for each one that isn't already tracked. It prints 
 human summary on stderr and a JSON summary on stdout:
 
 ```json
-{"added": [{"id": "US-016", "issueNumber": 52439, "title": "...", "status": "pending", "priority": 16}],
+{"added": [{"id": "US-016", "issueNumber": 52439, "title": "...", "status": "pending", "priority": 16,
+            "triage": {"importance": 2, "urgency": 3, "size": 2}}],
+ "retriaged": [{"id": "US-009", "issueNumber": 52001, "from": {"urgency": 4}, "to": {"urgency": 2}}],
  "checked": 15, "alreadyTracked": 8, "issueRepository": "brave/brave-browser", "dryRun": false}
 ```
 
@@ -59,9 +61,18 @@ from stdin instead of calling `gh`).
     format, review, run relevant tests, presubmit)
 - Generate proper user story structure with sequential US-XXX IDs and priority
   ordering
+- **Read the triage axes**: the importance/urgency/size labels the issue carries
+  become the story's `triage` block, which is what orders pending work — see
+  [Backlog order](../../../docs/workflow-state-machine.md#backlog-order-the-three-triage-axes).
+  Which labels spell an axis comes from the profile's `labels.axes`, so a project
+  that does not label its issues that way gets no block and loses nothing
+- **Re-triage what is still pending**: a pending story's block is brought back
+  into line with its issue's labels on every run, so somebody raising an urgency
+  reaches the next iteration. It is the only field of an existing story this
+  script ever rewrites
 - Create `data/prd.json` from scratch if it doesn't exist
 - Write atomically, and abort with a safety-check error if any existing story
-  would have been modified
+  would have been modified in any way but its `triage` block
 
 ---
 
@@ -96,6 +107,7 @@ Generate a comprehensive recap showing:
    - Issue number
    - Test type
    - Status
+   - Triage axes, where the issue carried any
 
 2. **Existing Issues Status Overview**: Summarize existing stories by status:
    - Merged
@@ -107,7 +119,12 @@ Generate a comprehensive recap showing:
 3. **Untracked Bot PRs Added** (from Step 2): US-XXX, PR number, and PR title
    for each one
 
-4. **Total PRD Statistics**:
+4. **Re-triaged Stories** (`retriaged` in the Step 1 JSON): US-XXX, issue
+   number, and which way the triple moved. An axis that moved is somebody
+   re-prioritising work the loop already has, so it is worth a line even though
+   no story was added
+
+5. **Total PRD Statistics**:
    - Total count before and after
    - Count by status
 
@@ -161,7 +178,7 @@ Successfully fetched 15 open issues assigned to the bot and added 7 missing issu
 
 ## Important Notes
 
-- Always preserve the exact structure of existing user stories
+- Always preserve the exact structure of existing user stories — the `triage` block is the single exception, and the script owns it
 - The script owns story structure — never hand-write stories into `data/prd.json`; if a story comes out wrong, fix `scripts/add-backlog-to-prd.py`
 - Every story opens with the project profile's `research` steps and closes with its `validations` (`projects/<profile>/profile.json`) — which docs to read and which checks to run are the project's answer, not this skill's. See [Project profiles](../../../projects/README.md)
 - Test type determination is critical for generating correct test commands

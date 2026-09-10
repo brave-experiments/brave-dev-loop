@@ -3,7 +3,8 @@
 
 Fetches every open issue assigned to `bot.username` in
 `project.issueRepository` and appends a story for each one the PRD doesn't
-already reference. Existing stories are never modified.
+already reference. The triage axes of a story still pending are brought up to
+date with its issue's labels; nothing else about an existing story is modified.
 
 This is the whole /add-backlog-to-prd sync — no LLM involved. The skill and
 `make backlog` both call this script so there is one implementation.
@@ -29,6 +30,7 @@ import sys
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
+from lib import triage
 from lib.load_config import (
     build_research,
     build_validations,
@@ -97,14 +99,31 @@ def find_test_location(test_class_name):
     return "unknown"
 
 
+def label_names(issue):
+    """Every label name on an issue, however the API spelled them."""
+    names = []
+    for label in issue.get("labels", []):
+        names.append(label.get("name", "") if isinstance(label, dict) else str(label))
+    return names
+
+
 def has_label(issue, label_name):
     """Check if an issue has a specific label."""
-    labels = issue.get("labels", [])
-    for label in labels:
-        name = label.get("name", "") if isinstance(label, dict) else str(label)
-        if name == label_name:
-            return True
-    return False
+    return label_name in label_names(issue)
+
+
+def axis_prefixes():
+    """Label prefix for each triage axis, from the project's profile.
+
+    A project whose issues are not labelled this way defines none, and its
+    stories carry no triage block at all.
+    """
+    return triage.axis_prefixes(_profile)
+
+
+def read_triage(issue):
+    """The issue's triage axes as {axis: 1..5}, omitting every unlabelled one."""
+    return triage.read_labels(label_names(issue), axis_prefixes())
 
 
 def is_test_issue(issue):
@@ -314,10 +333,64 @@ def build_generic_story(story_id, priority, issue):
 def build_story(story_id, priority, issue):
     """Dispatch to the story builder that matches the issue type."""
     if is_disabled_test_issue(issue):
-        return build_disabled_test_story(story_id, priority, issue)
-    if is_test_issue(issue):
-        return build_test_story(story_id, priority, issue)
-    return build_generic_story(story_id, priority, issue)
+        story = build_disabled_test_story(story_id, priority, issue)
+    elif is_test_issue(issue):
+        story = build_test_story(story_id, priority, issue)
+    else:
+        story = build_generic_story(story_id, priority, issue)
+
+    axes = read_triage(issue)
+    if axes:
+        story["triage"] = axes
+    return story
+
+
+def refresh_triage(stories, issues):
+    """Bring every pending story's axes up to date with its issue's labels.
+
+    The axes move after intake: somebody raises an urgency, or sizes an issue
+    that arrived unjudged. A story ordered by the labels as they were the day it
+    was created is ordered by nothing anybody can still see, and since this
+    script is the only thing that reads them, the label would never reach the
+    loop at all.
+
+    Only pending work is touched. A story that has left "pending" has a PR, and
+    its place in the queue is already decided by that PR rather than by the
+    axes. Returns one entry per story whose triple actually moved.
+    """
+    if not axis_prefixes():
+        return []
+    by_number = {issue["number"]: issue for issue in issues}
+    moved = []
+    for story in stories:
+        if story.get("status") != "pending":
+            continue
+        number = story_issue_number(story)
+        issue = by_number.get(number)
+        if issue is None:
+            continue
+        was = story.get("triage") or {}
+        now = read_triage(issue)
+        if now == was:
+            continue
+        if now:
+            story["triage"] = now
+        else:
+            story.pop("triage", None)
+        moved.append(
+            {"id": story.get("id"), "issueNumber": number, "from": was, "to": now}
+        )
+    return moved
+
+
+def without_triage(story):
+    """A story minus its triage block, for the safety check below.
+
+    The axes are the one field this script may rewrite on a story it did not
+    create. Everything else belongs to the operator or to the workflow that is
+    running the story, and overwriting any of it is what that check is for.
+    """
+    return {key: value for key, value in story.items() if key != "triage"}
 
 
 def fetch_assigned_issues():
@@ -465,16 +538,18 @@ def main():
         max_priority += 1
         new_stories.append(build_story(max_id, max_priority, issue))
 
-    # SAFETY CHECK: existing stories must never be touched
+    retriaged = refresh_triage(stories, issues)
+
+    # SAFETY CHECK: nothing about an existing story but its axes may change
     for i in range(existing_count):
-        if stories[i] != original_stories[i]:
+        if without_triage(stories[i]) != without_triage(original_stories[i]):
             print(
                 f"ERROR: Existing story {stories[i].get('id')} was modified!",
                 file=sys.stderr,
             )
             return 2
 
-    if new_stories and not args.dry_run:
+    if (new_stories or retriaged) and not args.dry_run:
         stories.extend(new_stories)
         tmp_path = args.prd + ".tmp"
         with open(tmp_path, "w") as f:
@@ -493,6 +568,17 @@ def main():
         label = story.get("testFilter", story["title"])
         print(f"  {story['id']}: {label} (#{issue_num})", file=sys.stderr)
 
+    if retriaged:
+        verb = "Would re-triage" if args.dry_run else "Re-triaged"
+        print(f"{verb} {len(retriaged)} pending story/stories", file=sys.stderr)
+        for moved in retriaged:
+            print(
+                f"  {moved['id']} (#{moved['issueNumber']}): "
+                f"{triage.format_triage(moved['from']) or 'unjudged'} -> "
+                f"{triage.format_triage(moved['to']) or 'unjudged'}",
+                file=sys.stderr,
+            )
+
     print(
         json.dumps(
             {
@@ -503,9 +589,11 @@ def main():
                         "title": s["title"],
                         "status": s["status"],
                         "priority": s["priority"],
+                        "triage": s.get("triage") or {},
                     }
                     for s in new_stories
                 ],
+                "retriaged": retriaged,
                 "checked": len(issues),
                 "alreadyTracked": len(known),
                 "issueRepository": _issue_repo,

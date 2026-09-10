@@ -18,6 +18,9 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib import triage
+
 TIER_URGENT = 1  # pushed + lastActivityBy == "reviewer"
 TIER_HIGH = 2  # committed
 # 2.5 (float) is used only as an *effective* sort tier to reserve the first
@@ -103,14 +106,22 @@ def assign_tier(story, now=None):
 def sort_key(story, now=None, promote_pending=False):
     """Generate a sort key for a story within its tier.
 
-    The key is (effective_tier, secondary, priority); all three are numeric so
-    stories are never compared across incompatible types.
+    The key is (effective_tier, urgency, importance, secondary, priority); all
+    five are numeric so stories are never compared across incompatible types.
 
     - Pushed stories (tiers 1, 3, 5): sort by lastProcessedDate asc, then priority
     - Merged stories (tier 6): sort by nextMergedCheck asc, then priority
-    - Pending stories: sort by attempt count asc (fresh tests before ones that
-      keep getting retried), then priority
+    - Pending stories: sort by the story's triage axes (see scripts/lib/triage.py),
+      then by attempt count asc (fresh work before what keeps getting retried),
+      then priority
     - Other stories: sort by priority only
+
+    Only pending work ranks on the axes. Pushed and merged maintenance keeps its
+    round-robin by date: those queues exist so that every open PR is looked at
+    in turn, and ordering them by importance would leave the least important PR
+    waiting for review forever. Both slots hold the neutral value there, which
+    is also what a pending story with no axes at all gets, so a backlog nobody
+    has labelled sorts exactly as it did before the axes existed.
 
     When ``promote_pending`` is True, un-quarantined pending work is lifted just
     above STALE/MEDIUM pushed-maintenance (but still below URGENT reviewer
@@ -127,18 +138,21 @@ def sort_key(story, now=None, promote_pending=False):
     if promote_pending and status == "pending" and tier == TIER_NORMAL:
         eff_tier = TIER_PENDING_RESERVED
 
-    if status == "pushed":
-        return (
-            eff_tier,
-            parse_iso(story.get("lastProcessedDate")).timestamp(),
-            priority,
-        )
-    elif status == "merged":
-        return (eff_tier, parse_iso(story.get("nextMergedCheck")).timestamp(), priority)
-    elif status == "pending":
-        return (eff_tier, float(pending_attempts(story)), priority)
+    if status == "pending":
+        urgency, importance = triage.rank(story.get("triage"))
     else:
-        return (eff_tier, 0.0, priority)
+        urgency, importance = triage.NEUTRAL, triage.NEUTRAL
+
+    if status == "pushed":
+        secondary = parse_iso(story.get("lastProcessedDate")).timestamp()
+    elif status == "merged":
+        secondary = parse_iso(story.get("nextMergedCheck")).timestamp()
+    elif status == "pending":
+        secondary = float(pending_attempts(story))
+    else:
+        secondary = 0.0
+
+    return (eff_tier, urgency, importance, secondary, priority)
 
 
 def filter_stories(stories, run_state):
@@ -188,6 +202,8 @@ def candidate_summary(candidates):
 
     Includes the PR and issue numbers so a bare number in the user's request
     ("./run.sh tui 38869") can be matched — a story's title never contains them.
+    The triage axes are there so a request phrased as one ("the urgent ones",
+    "something small") has something to match on.
     """
     summary_lines = []
     for s in candidates:
@@ -198,6 +214,9 @@ def candidate_summary(candidates):
         issue_match = re.search(r"issue #(\d+)", s.get("description") or "")
         if issue_match:
             refs += f", issue #{issue_match.group(1)}"
+        axes = triage.format_triage(s.get("triage"))
+        if axes:
+            refs += f", {axes}"
         summary_lines.append(
             f'- {s.get("id")}: "{s.get("title")}" '
             f"(status: {s.get('status')}, priority: {s.get('priority')}{refs})"

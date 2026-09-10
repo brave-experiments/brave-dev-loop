@@ -25,6 +25,11 @@
   "testTargets": {},
   "labels": {
     "pr": [],
-    "disabledTest": ""
+    "disabledTest": "",
+    "axes": {
+      "importance": "importance/p",
+      "urgency": "urgency/p",
+      "size": "size/"
+    }
   }
 }

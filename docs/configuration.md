@@ -38,7 +38,8 @@ A `config.example.json` template and `config.brave-core.json` reference config a
 Product Requirements Document defining user stories and acceptance criteria.
 
 - `stories[].id`: Unique story identifier
-- `stories[].priority`: Execution order (1 = highest)
+- `stories[].priority`: Execution order (1 = highest), and the last tiebreak once the triage axes have been read
+- `stories[].triage`: The issue's triage axes, `{"importance": 1-5, "urgency": 1-5, "size": 1-5}`, with any axis nobody has judged left out. Read off the issue's labels by the backlog sync and used to order pending work — see [Backlog order](./workflow-state-machine.md#backlog-order-the-three-triage-axes). Absent on every story in a project whose profile defines no `labels.axes`
 - `stories[].status`: Story state
 - `stories[].branchName`: Git branch name (set when work starts)
 - `stories[].prNumber`: PR number (set when PR created)
