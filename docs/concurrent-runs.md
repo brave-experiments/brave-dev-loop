@@ -69,14 +69,15 @@ otherwise `fcntl.flock` on an fd the shell holds (see `scripts/lib/lock.sh`).
 A machine with neither `flock` nor `python3` falls back to a `mkdir` lock,
 which does need the pid check it has always had.
 
-**The agent is started through `scripts/exec-clean.py`**, which closes every
-inherited file descriptor above stdio. A `flock` lives on the open file
-description, so any child that inherits the lock fd keeps the slot held after
-the run itself is gone — and `somecmd 200>&-` does not prevent that on the
-bash 3.2 macOS ships, because applying that redirection makes bash duplicate
-the fd to a free one near 10 first, and children inherit the duplicate. The
-`tee` that writes the iteration log gets the same treatment: it sits waiting
-on the pipe and would outlive a killed run.
+**The agent is started through `scripts/exec-clean.sh`**, which closes the
+slot lock fd and then `exec`s. A `flock` lives on the open file description,
+so any child that inherits the fd keeps the slot held after the run itself is
+gone — and `somecmd 200>&-` does not prevent that on the bash 3.2 macOS
+ships, because applying a redirection to a command makes bash duplicate the
+fd first (so it can restore it) and children inherit the duplicate. A bare
+`exec 200>&-` has nothing to restore, so it makes no duplicate. The `tee`
+that writes the iteration log gets the same treatment: it sits waiting on the
+pipe and would outlive a killed run.
 
 **Story claims** stop two runs picking the same story. `select-task.py`
 filters, selects and claims inside one PRD lock, writing to

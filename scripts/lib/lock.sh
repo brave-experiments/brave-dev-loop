@@ -31,8 +31,9 @@
 # holds it. Anything else is fatal and reported, never silently swallowed.
 
 # fd 200 is fixed rather than dynamic: `exec {fd}>` needs bash 4, and macOS
-# ships bash 3.2.
+# ships bash 3.2. Exported so scripts/exec-clean.sh closes the same one.
 BOT_LOCK_FD=200
+export BOT_LOCK_FD
 BOT_LOCK_DIR=""
 BOT_LOCK_FILE=""
 BOT_LOCK_BACKEND=""

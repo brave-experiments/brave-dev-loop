@@ -427,7 +427,7 @@ Additional context: $EXTRA_PROMPT"
 
   # Run the agent from the bot directory so it picks up project instructions.
   #
-  # Every stage goes through exec-clean.py, which closes all inherited fds
+  # Every stage goes through exec-clean.sh, which closes all inherited fds
   # above stdio. fd 200 is this run's slot lock, and a flock lives on the open
   # file description — so any child that inherits the fd keeps the slot held
   # after the run is gone. `somecmd 200>&-` does not fix that on bash 3.2 (the
@@ -441,12 +441,12 @@ Additional context: $EXTRA_PROMPT"
     fi
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let codex own the terminal directly (no piping).
-      "$SCRIPT_DIR/scripts/exec-clean.py" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CODEX_BIN $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CODEX_BIN $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox "$AGENT_PROMPT" || true
     else
       # Non-interactive: stream JSONL events to the iteration log; capture the
       # final agent message separately for the completion check.
-      "$SCRIPT_DIR/scripts/exec-clean.py" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CODEX_BIN exec $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check --output-last-message "$TEMP_LAST_MSG" "$AGENT_PROMPT" </dev/null 2>&1 \
-        | "$SCRIPT_DIR/scripts/exec-clean.py" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CODEX_BIN exec $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check --output-last-message "$TEMP_LAST_MSG" "$AGENT_PROMPT" </dev/null 2>&1 \
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
     fi
   elif [ "$BOT_AGENT" = "cursor" ]; then
     CURSOR_MODEL_FLAG=""
@@ -456,13 +456,13 @@ Additional context: $EXTRA_PROMPT"
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let cursor-agent own the terminal directly (no piping).
       # --force bypasses approvals (headless autonomy).
-      "$SCRIPT_DIR/scripts/exec-clean.py" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CURSOR_BIN $CURSOR_MODEL_FLAG --force "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CURSOR_BIN $CURSOR_MODEL_FLAG --force "$AGENT_PROMPT" || true
     else
       # Non-interactive: -p/--print with plain-text output. --force bypasses approvals,
       # --trust trusts the workspace (headless only). cursor-agent has no --output-last-message,
       # so the completion check greps the full captured output (see below).
-      "$SCRIPT_DIR/scripts/exec-clean.py" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CURSOR_BIN -p --output-format text $CURSOR_MODEL_FLAG --force --trust "$AGENT_PROMPT" </dev/null 2>&1 \
-        | "$SCRIPT_DIR/scripts/exec-clean.py" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CURSOR_BIN -p --output-format text $CURSOR_MODEL_FLAG --force --trust "$AGENT_PROMPT" </dev/null 2>&1 \
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
     fi
   else
     CLAUDE_MODEL_FLAG=""
@@ -471,10 +471,10 @@ Additional context: $EXTRA_PROMPT"
     fi
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let Claude own the terminal directly (no piping)
-      "$SCRIPT_DIR/scripts/exec-clean.py" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --session-id "$SESSION_ID" "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --session-id "$SESSION_ID" "$AGENT_PROMPT" || true
     else
-      "$SCRIPT_DIR/scripts/exec-clean.py" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
-        | "$SCRIPT_DIR/scripts/exec-clean.py" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
     fi
   fi
 

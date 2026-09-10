@@ -20,7 +20,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 SCRIPTS = os.path.join(ROOT, "scripts")
 LIB = os.path.join(SCRIPTS, "lib")
 SELECT_TASK = os.path.join(SCRIPTS, "select-task.py")
-EXEC_CLEAN = os.path.join(SCRIPTS, "exec-clean.py")
+EXEC_CLEAN = os.path.join(SCRIPTS, "exec-clean.sh")
 UPDATE_PRD = os.path.join(SCRIPTS, "update-prd-status.py")
 
 sys.path.insert(0, SCRIPTS)
@@ -257,7 +257,7 @@ class TestLocking:
 
 class TestFdInheritance:
     """A child that inherits the lock fd keeps the slot held after the run
-    that owned it is gone. exec-clean.py is what stops that happening."""
+    that owned it is gone. exec-clean.sh is what stops that happening."""
 
     def _holds_lock(self, lockfile):
         return bash(f"bot_lock_probe {lockfile}").returncode == 1
@@ -294,7 +294,7 @@ class TestFdInheritance:
                 "-c",
                 f"source {LIB}/lock.sh\n"
                 f'bot_acquire_lock "{lockfile}" || exit 1\n'
-                f"{sys.executable} {EXEC_CLEAN} sleep 60 &\nwait\n",
+                f"{EXEC_CLEAN} sleep 60 &\nwait\n",
             ]
         )
         _wait_for(lambda: os.path.exists(lockfile) and self._holds_lock(lockfile))
@@ -312,17 +312,23 @@ class TestFdInheritance:
 
     def test_exec_clean_runs_the_command_and_forwards_status(self, tmp_dir):
         ok = subprocess.run(
-            [sys.executable, EXEC_CLEAN, "--cd", tmp_dir, "pwd"],
-            capture_output=True,
-            text=True,
+            [EXEC_CLEAN, "--cd", tmp_dir, "pwd"], capture_output=True, text=True
         )
         assert os.path.realpath(ok.stdout.strip()) == os.path.realpath(tmp_dir)
-        bad = subprocess.run([sys.executable, EXEC_CLEAN, "false"], capture_output=True)
+        bad = subprocess.run([EXEC_CLEAN, "false"], capture_output=True)
         assert bad.returncode == 1
         missing = subprocess.run(
-            [sys.executable, EXEC_CLEAN, "no-such-command-here"], capture_output=True
+            [EXEC_CLEAN, "no-such-command-here"], capture_output=True
         )
         assert missing.returncode == 127
+
+    def test_exec_clean_leaves_no_wrapper_process_behind(self):
+        # It execs, so the command replaces the wrapper rather than running
+        # under it — nothing is left holding fds.
+        out = subprocess.run(
+            [EXEC_CLEAN, "bash", "-c", "echo $$"], capture_output=True, text=True
+        )
+        assert out.stdout.strip().isdigit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
