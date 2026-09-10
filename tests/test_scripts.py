@@ -2049,6 +2049,83 @@ class TestPrdMode:
         assert "/add-backlog-to-prd'" not in body
 
 
+class TestCronBlocks:
+    """sync-schedules.sh replaces this project's crontab block by matching its
+    marker exactly. The marker carries the repo's name, and that name changed:
+    a block written before the rename matches nothing, so re-running the script
+    leaves the old jobs installed and adds a second copy of every one."""
+
+    LIB = os.path.join(SCRIPT_DIR, "lib", "cron-blocks.sh")
+
+    @classmethod
+    def _run(cls, snippet, stdin=""):
+        return subprocess.run(
+            ["bash", "-c", f'source "{cls.LIB}"\n{snippet}'],
+            input=stdin,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    @staticmethod
+    def _block(name, project, job):
+        return "\n".join(
+            [
+                f"# === {name} ({project}) scheduled jobs ===",
+                job,
+                f"# === end {name} ({project}) ===",
+            ]
+        )
+
+    def _strip(self, crontab, project="brave-core"):
+        return self._run(f'bot_strip_cron_blocks "{project}"', crontab)
+
+    def test_the_marker_written_is_the_current_name(self):
+        assert self._run('bot_cron_marker "p"').strip() == "brave-dev-loop (p)"
+
+    def test_the_current_block_is_stripped(self):
+        out = self._strip(self._block("brave-dev-loop", "brave-core", "0 1 * * * now"))
+        assert "now" not in out
+
+    def test_a_block_from_the_former_repo_name_is_stripped_too(self):
+        """Left behind, its jobs keep running beside the ones just installed."""
+        out = self._strip(self._block("brave-dev-bot", "brave-core", "0 1 * * * old"))
+        assert "old" not in out
+
+    def test_both_spellings_go_in_one_pass(self):
+        crontab = "\n".join(
+            [
+                self._block("brave-dev-bot", "brave-core", "0 1 * * * old"),
+                self._block("brave-dev-loop", "brave-core", "0 2 * * * now"),
+            ]
+        )
+        out = self._strip(crontab)
+        assert "old" not in out and "now" not in out
+
+    def test_another_projects_block_survives(self):
+        """One crontab, several deployments -- that is what the project name in
+        the marker is for."""
+        out = self._strip(self._block("brave-dev-loop", "bravebot", "0 3 * * * theirs"))
+        assert "theirs" in out
+
+    def test_entries_the_bot_never_wrote_survive(self):
+        crontab = "\n".join(
+            [
+                "PATH=/usr/bin",
+                "0 4 * * * backup",
+                self._block("brave-dev-bot", "brave-core", "0 1 * * * old"),
+            ]
+        )
+        out = self._strip(crontab)
+        assert "PATH=/usr/bin" in out and "backup" in out and "old" not in out
+
+    def test_sync_schedules_uses_the_shared_stripper(self):
+        """The marker spelling and its history belong in one place."""
+        with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
+            body = f.read()
+        assert "bot_strip_cron_blocks" in body
+        assert "bot_cron_marker" in body
+
+
 class TestBotConfigBool:
     """jq's `//` treats false like null, so reading a boolean with it makes a
     `false` setting indistinguishable from an absent one — every caller then
