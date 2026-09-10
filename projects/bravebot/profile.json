@@ -1,6 +1,7 @@
 {
   "description": "bravebot: a Rust workspace (cargo) with a thin npm wrapper, checked by ci.yml plus the organization-level brave/security-action scan.",
   "research": [
+    "Create or re-enter this story's git worktree at {targetRepo}-<issue-number> and do all of the work there — every git, build, test, edit and file read below, including paths written as {targetRepo}/..., means the worktree and never {targetRepo} itself (see projects/bravebot/docs/repo.md)",
     "Read {targetRepo}/agents/AGENTS.md — the prompt-injection rule it states overrides every other consideration in this repo",
     "Read {targetRepo}/docs/development.md for the build, check, and security-scan commands"
   ],

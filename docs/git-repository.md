@@ -7,6 +7,8 @@
 
 Commit only in that directory. Anything above it belongs to the surrounding checkout, if there is one.
 
+Project-specific: a profile may give each story its own worktree instead of working in that directory. Read the project profile's `docs/repo.md` (path given in the prompt) before the first `cd` — where it does, every instruction in these docs naming `[targetRepoPath from bot config]` means that story's worktree.
+
 ## Branch Management for Each User Story
 
 Every user story MUST start with a fresh branch from origin/master:
@@ -21,6 +23,8 @@ git checkout -b fix-<test-name-or-feature>
 **Branch Naming**: DO NOT include "ralph" in the branch name. Use descriptive names based on the specific test or feature being fixed (e.g., "fix-solana-provider-test", "fix-ai-chat-task-test").
 
 **IMPORTANT**: Each user story is independent and should NOT build on commits from previous stories. Always start from a clean master branch.
+
+Project-specific: where the profile's `docs/repo.md` puts stories in worktrees, `git worktree add` creates the branch and there is no separate `git checkout -b`. Follow that doc.
 
 ## Build & Package Manager Commands
 

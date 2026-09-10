@@ -10,6 +10,8 @@ If a story has `status: "pushed"` with `prUrl` and `prNumber` already defined, t
 
 ## Initial Steps
 
+0. Project-specific: a profile may put each story in its own worktree — see the project profile's `docs/repo.md` (path given in the prompt). Where it does, enter that worktree before any git command, and read every `[targetRepoPath from bot config]` below as the worktree.
+
 1. Get the PR number from the story's `prNumber` field
 2. Get the PR repository from the bot config provided in the prompt (`project.prRepository`)
 3. **Check if PR is already closed:**
@@ -213,6 +215,8 @@ A maintainer merged the PR. Do the post-merge bookkeeping:
    ```bash
    $BOT_DIR/scripts/signal-notify.sh "PR merged: #<pr-number> - <title> https://github.com/$PR_REPO/pull/<pr-number>"
    ```
+
+4. **Clean up the story's worktree**, where the project profile's `docs/repo.md` uses one — this is the point at which it is no longer needed. Follow the removal steps in that doc; do not force past uncommitted changes.
 
 - **DONE** - Story complete (will be rechecked on post-merge schedule)
 

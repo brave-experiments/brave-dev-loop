@@ -16,6 +16,7 @@ import pytest
 
 SCRIPT_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts")
 PROJECTS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "projects")
+DOCS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "docs")
 UPDATE_PRD_SCRIPT = os.path.join(SCRIPT_DIR, "update-prd-status.py")
 
 
@@ -1881,6 +1882,81 @@ class TestBravebotProfile:
     def test_test_steps_are_cargo(self):
         for kind, step in self._profile()["testSteps"].items():
             assert "cargo test" in step, kind
+
+
+class TestBravebotWorktrees:
+    """bravebot stories work in a per-issue worktree, never in the checkout
+    run.sh owns -- that checkout is stashed and put back on the default branch
+    when a run ends, so a story left in it loses its work."""
+
+    BRAVEBOT_DOCS = os.path.join(PROJECTS_DIR, "bravebot", "docs")
+
+    @staticmethod
+    def _profile():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import load_profile
+
+        return load_profile({"project": {"profile": "bravebot"}})
+
+    def _repo_doc(self):
+        with open(os.path.join(self.BRAVEBOT_DOCS, "repo.md")) as f:
+            return f.read()
+
+    def test_the_first_story_step_is_entering_the_worktree(self):
+        """Every later step reads a path; if the worktree step is not first,
+        they read the wrong tree."""
+        first = self._profile()["research"][0]
+        assert "worktree" in first
+        assert "{targetRepo}-" in first
+
+    def test_the_worktree_step_survives_substitution(self, tmp_path):
+        """A research entry whose placeholder does not resolve is dropped
+        outright -- silently, and with it the whole rule."""
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import build_research
+
+        repo = tmp_path / "bravebot"
+        (repo / ".git").mkdir(parents=True)
+        got = build_research(
+            self._profile(), {"project": {"targetRepoPath": "bravebot"}}, str(tmp_path)
+        )
+        assert got, "worktree step was dropped"
+        assert f"{repo}-" in got[0]
+
+    def test_repo_doc_gives_the_path_scheme(self):
+        doc = self._repo_doc()
+        assert "../bravebot-<issue-number>" in doc
+
+    def test_repo_doc_covers_create_reuse_and_removal(self):
+        """A story spans iterations: the second one must re-enter the worktree
+        it already has rather than add a second, and merged stories must not
+        leave the tree behind."""
+        doc = self._repo_doc()
+        assert "worktree list" in doc, "no way to detect an existing worktree"
+        assert "worktree add -b" in doc, "no way to start one"
+        assert "worktree add --track -b" in doc, "no way to reuse a pushed branch"
+        assert "worktree remove" in doc, "no teardown"
+
+    def test_shared_docs_point_at_the_rule_wherever_they_name_the_checkout(self):
+        """The rule only takes effect if the doc the agent is following at the
+        moment it cds sends it to the profile."""
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                text = f.read()
+            if "[targetRepoPath from bot config]" not in text:
+                continue
+            assert "worktree" in text, f"docs/{name} names the checkout with no pointer"
+
+    def test_the_pointers_stay_project_neutral(self):
+        """Shared docs serve every profile; brave-core has no worktrees."""
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                text = f.read()
+            assert "bravebot" not in text, f"docs/{name} hard-codes bravebot"
 
 
 class TestPrdMode:

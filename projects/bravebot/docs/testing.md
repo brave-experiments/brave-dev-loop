@@ -3,6 +3,10 @@
 Project-specific test and presubmit commands. Read alongside
 `docs/testing-requirements.md`.
 
+Every command here runs in the story's worktree (`../bravebot-<issue-number>`),
+never in the main checkout — see [repo.md](./repo.md#worktrees). A fresh
+worktree has an empty `target/`, so its first build is a cold one.
+
 ## Running tests
 
 ```sh

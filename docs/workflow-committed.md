@@ -8,7 +8,7 @@
 
 ## Steps
 
-1. Change to git repo: `cd [targetRepoPath from bot config]`
+1. Change to git repo: `cd [targetRepoPath from bot config]` — or to the story's worktree, where the project profile's `docs/repo.md` uses one
 
 2. Get branch name from story's `branchName` field
 
