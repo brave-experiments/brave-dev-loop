@@ -101,6 +101,7 @@ claude
 | [Concurrent runs](docs/concurrent-runs.md) | Run slots, claims, `--status`, clearing a killed run |
 | [Project profiles](projects/README.md) | Per-project validations, test targets, docs |
 | [Skills](docs/skills.md) | The slash commands this repo provides |
+| [Development](docs/development.md) | Working on the loop itself: tests, lint, the security scan |
 | [Bot identity](docs/bot-identity.md) | Signing, SSH keys, `gh` isolation, hooks |
 | [State machine](docs/workflow-state-machine.md) | Task selection and status transitions |
 | [Testing requirements](docs/testing-requirements.md) | What the bot must run before claiming success |
@@ -114,12 +115,18 @@ instructions in [.claude/CLAUDE.md](.claude/CLAUDE.md).
 ## Development
 
 ```bash
-make test     # pytest
-make lint     # ruff check + format --check
-make format   # ruff check --fix + format
+make test              # pytest
+make lint              # ruff check + format --check
+make format            # ruff check --fix + format
+make check-reviewdog   # the brave/security-action scan, on this branch's changes
+make check             # all three: the before-you-push pass
 ```
 
 `./tests/test-suite.sh` validates an installation end to end.
+
+The security scan is the only check CI runs on pull requests here, and
+`make check-reviewdog` is the same scan locally — see
+[Development](docs/development.md).
 
 ## License
 

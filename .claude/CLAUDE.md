@@ -38,6 +38,9 @@ This documentation is split into focused files for better performance. Read only
 - **[docs/progress-reporting.md](../docs/progress-reporting.md)** - Progress.txt format for all status transitions
 - **best_practices.md** (in target repo's docs dir, per `bestPractices.docsDir` config) - Index of all best practices for the target codebase. Read the relevant sub-docs based on what you're working on.
 
+### Changes to This Repository
+- **[docs/development.md](../docs/development.md)** - Read this when the code you are changing is *this* repo (brave-dev-loop), not the target repo. Before committing such a change, run `make check` from the bot directory — lint, tests, and `make check-reviewdog`, the same brave/security-action scan that comments on pull requests here. It is the only check CI runs on this repo, so a finding you do not see locally is one a reviewer sees on the PR.
+
 ### Continuous Improvement
 - **[docs/learnable-patterns.md](../docs/learnable-patterns.md)** - Identifying, evaluating, and capturing reusable patterns
 
