@@ -1842,6 +1842,46 @@ class TestProfileResearch:
                     assert found in known, (name, found)
 
 
+class TestBraveBotProfile:
+    """brave-bot is a Rust workspace, and its checks are the ones its Makefile
+    and ci.yml actually define -- not brave-core's, which is what the generic
+    hard-coded steps used to give it."""
+
+    @staticmethod
+    def _profile():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import load_profile
+
+        return load_profile({"project": {"profile": "brave-bot"}})
+
+    def test_covers_every_ci_enforced_check(self):
+        """`make check-all` is check + check-spec + check-npm + check-msrv +
+        check-reviewdog. Each has to appear, or a story can pass here and fail
+        in CI."""
+        blob = " ".join(self._profile()["validations"])
+        for target in (
+            "make check",
+            "make check-spec",
+            "make check-npm",
+            "make check-msrv",
+            "make check-reviewdog",
+        ):
+            assert target in blob, target
+
+    def test_covers_linux(self):
+        """A macOS host never compiles the Linux backend, and clippy gains
+        lints between releases."""
+        assert "make check-linux" in " ".join(self._profile()["validations"])
+
+    def test_has_no_chromium_assumptions(self):
+        blob = json.dumps(self._profile()).lower()
+        for term in ("pnpm", "gtest", "chromium", "presubmit", "best_practices"):
+            assert term not in blob, f"brave-bot profile leaks {term!r}"
+
+    def test_test_steps_are_cargo(self):
+        for kind, step in self._profile()["testSteps"].items():
+            assert "cargo test" in step, kind
+
 
 class TestPrdMode:
     """The PRD is either authored (curated) or a cache the bot refreshes from
