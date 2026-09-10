@@ -4,6 +4,11 @@
 Replaces manual LLM-driven prd.json edits with atomic, validated updates.
 Each subcommand handles a specific status transition or field update.
 
+Read, validate, change, write is one critical section under the PRD lock
+(lib/prd_store.py). Without it, two runs updating different stories at the
+same moment each write back the whole file and the slower one erases the
+other's change.
+
 Exit codes:
   0 - Update succeeded
   1 - Validation error (illegal transition, missing field, story not found)
@@ -19,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.load_config import load_config, require_config
+from lib.prd_store import prd_lock
 
 TERMINAL_STATUSES = {"skipped", "invalid"}
 
@@ -368,33 +374,47 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     bot_dir = os.path.dirname(script_dir)
     prd_path = args.prd or os.path.join(bot_dir, "data", "prd.json")
-    run_state_path = args.run_state or os.path.join(bot_dir, "data", "run-state.json")
+    # Run state is per run slot; BOT_RUN_STATE_FILE is exported by run.sh so
+    # an agent in slot 2 cannot write slot 1's iteration bookkeeping.
+    run_state_path = (
+        args.run_state
+        or os.environ.get("BOT_RUN_STATE_FILE")
+        or os.path.join(bot_dir, "data", "run-state.json")
+    )
 
-    # Load prd.json
     try:
-        prd = load_json(prd_path)
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"Error reading prd.json: {e}", file=sys.stderr)
+        with prd_lock(prd_path):
+            # Load prd.json
+            try:
+                prd = load_json(prd_path)
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Error reading prd.json: {e}", file=sys.stderr)
+                return 2
+
+            # Find story
+            story = find_story(prd, args.story_id)
+            if story is None:
+                print(
+                    f"Error: Story '{args.story_id}' not found in prd.json",
+                    file=sys.stderr,
+                )
+                return 1
+
+            # Validate transition
+            error = validate_transition(args.subcommand, story)
+            if error:
+                print(f"Validation error: {error}", file=sys.stderr)
+                return 1
+
+            # Apply changes
+            handler = HANDLER_MAP[args.subcommand]
+            changes = handler(story, args)
+
+            # Write prd.json atomically
+            atomic_write_json(prd_path, prd)
+    except TimeoutError as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 2
-
-    # Find story
-    story = find_story(prd, args.story_id)
-    if story is None:
-        print(f"Error: Story '{args.story_id}' not found in prd.json", file=sys.stderr)
-        return 1
-
-    # Validate transition
-    error = validate_transition(args.subcommand, story)
-    if error:
-        print(f"Validation error: {error}", file=sys.stderr)
-        return 1
-
-    # Apply changes
-    handler = HANDLER_MAP[args.subcommand]
-    changes = handler(story, args)
-
-    # Write prd.json atomically
-    atomic_write_json(prd_path, prd)
 
     # Update run-state.json if this was a state change
     if is_state_change(args.subcommand, args):

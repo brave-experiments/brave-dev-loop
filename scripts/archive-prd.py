@@ -3,6 +3,10 @@
 
 Keeps only active work in the main PRD. Writes cleaned prd.json in-place
 (via temp file) and outputs a full recap to stdout.
+
+Runs under the PRD lock, and leaves alone any story a live run has claimed:
+removing a story mid-iteration would make that run's next status update fail
+with "story not found".
 """
 
 import copy
@@ -10,6 +14,10 @@ import json
 import os
 import sys
 import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib import claims as claims_lib
+from lib.prd_store import bot_dir_for, prd_lock
 
 
 def main():
@@ -21,6 +29,11 @@ def main():
     prd_dir = os.path.dirname(prd_path) or "."
     archive_path = os.path.join(prd_dir, "prd.archived.json")
 
+    with prd_lock(prd_path):
+        _archive(prd_path, prd_dir, archive_path)
+
+
+def _archive(prd_path, prd_dir, archive_path):
     # Read existing PRD
     try:
         with open(prd_path, "r") as f:
@@ -47,11 +60,24 @@ def main():
     active_stories = []
     archived_stories = []
 
+    claimed = set(claims_lib.active(bot_dir_for(prd_path), locked=True))
+    held_back = []
     for story in prd.get("stories", []):
         if story.get("status") in ("merged", "invalid"):
-            archived_stories.append(story)
+            if story.get("id") in claimed:
+                held_back.append(story.get("id"))
+                active_stories.append(story)
+            else:
+                archived_stories.append(story)
         else:
             active_stories.append(story)
+
+    if held_back:
+        print(
+            f"Leaving {', '.join(held_back)} in place — a run is working "
+            f"on them right now.",
+            file=sys.stderr,
+        )
 
     if not archived_stories:
         print("No merged or invalid stories to archive. Nothing to do.")

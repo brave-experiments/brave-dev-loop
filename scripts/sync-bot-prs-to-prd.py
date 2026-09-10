@@ -38,6 +38,7 @@ from lib.load_config import (
     require_config,
     test_step,
 )
+from lib.prd_store import prd_lock, save_prd
 
 _config = load_config()
 _pr_repo = require_config(_config, "project.prRepository")
@@ -263,58 +264,59 @@ def main():
     )
     args = parser.parse_args()
 
-    prd = load_json(args.prd)
-    if prd is None:
-        print(f"Error: {args.prd} does not exist", file=sys.stderr)
-        return 2
-    archived = load_json(args.archived_prd)
-
     prs = fetch_bot_prs(pr_number=args.pr, state=args.state)
-    known = tracked_pr_numbers(prd, archived)
 
-    stories = prd.setdefault("stories", [])
-    original_stories = copy.deepcopy(stories)
-    existing_count = len(stories)
-
-    max_id = 0
-    max_priority = 0
-    for story in stories:
-        try:
-            id_num = int(story["id"].split("-")[1])
-        except (KeyError, IndexError, ValueError):
-            id_num = 0
-        max_id = max(max_id, id_num)
-        max_priority = max(max_priority, story.get("priority") or 0)
-
-    new_stories = []
-    for pr in sorted(prs, key=lambda p: p["number"]):
-        if pr["number"] in known:
-            continue
-        if pr.get("isDraft"):
-            print(
-                f"  skipping draft PR #{pr['number']}: {pr['title']}", file=sys.stderr
-            )
-            continue
-        max_id += 1
-        max_priority += 1
-        new_stories.append(build_pr_story(max_id, max_priority, pr))
-
-    # SAFETY CHECK: existing stories must never be touched
-    for i in range(existing_count):
-        if stories[i] != original_stories[i]:
-            print(
-                f"ERROR: Existing story {stories[i].get('id')} was modified!",
-                file=sys.stderr,
-            )
+    # Read and write are one critical section, so a concurrent run's status
+    # update cannot be erased by our write. The GitHub fetch above stays
+    # outside it — see the same note in add-backlog-to-prd.py.
+    with prd_lock(args.prd):
+        prd = load_json(args.prd)
+        if prd is None:
+            print(f"Error: {args.prd} does not exist", file=sys.stderr)
             return 2
+        archived = load_json(args.archived_prd)
+        known = tracked_pr_numbers(prd, archived)
 
-    if new_stories and not args.dry_run:
-        stories.extend(new_stories)
-        tmp_path = args.prd + ".tmp"
-        with open(tmp_path, "w") as f:
-            json.dump(prd, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, args.prd)
+        stories = prd.setdefault("stories", [])
+        original_stories = copy.deepcopy(stories)
+        existing_count = len(stories)
+
+        max_id = 0
+        max_priority = 0
+        for story in stories:
+            try:
+                id_num = int(story["id"].split("-")[1])
+            except (KeyError, IndexError, ValueError):
+                id_num = 0
+            max_id = max(max_id, id_num)
+            max_priority = max(max_priority, story.get("priority") or 0)
+
+        new_stories = []
+        for pr in sorted(prs, key=lambda p: p["number"]):
+            if pr["number"] in known:
+                continue
+            if pr.get("isDraft"):
+                print(
+                    f"  skipping draft PR #{pr['number']}: {pr['title']}",
+                    file=sys.stderr,
+                )
+                continue
+            max_id += 1
+            max_priority += 1
+            new_stories.append(build_pr_story(max_id, max_priority, pr))
+
+        # SAFETY CHECK: existing stories must never be touched
+        for i in range(existing_count):
+            if stories[i] != original_stories[i]:
+                print(
+                    f"ERROR: Existing story {stories[i].get('id')} was modified!",
+                    file=sys.stderr,
+                )
+                return 2
+
+        if new_stories and not args.dry_run:
+            stories.extend(new_stories)
+            save_prd(args.prd, prd)
 
     verb = "Would add" if args.dry_run else "Added"
     print(

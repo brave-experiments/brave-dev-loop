@@ -42,6 +42,7 @@ from lib.load_config import (
     test_binary,
     test_step,
 )
+from lib.prd_store import prd_lock, save_prd
 
 _config = load_config()
 _issue_repo = require_config(_config, "project.issueRepository")
@@ -504,58 +505,59 @@ def main():
     )
     args = parser.parse_args()
 
-    prd = load_json(args.prd)
-    if prd is None:
-        prd = empty_prd()
-    archived = load_json(args.archived_prd)
-
     if args.issues_file:
         issues = read_issues_file(args.issues_file)
     else:
         issues = fetch_assigned_issues()
 
-    known = tracked_issue_numbers(prd, archived)
+    # Reading the PRD and writing it back is one critical section: a status
+    # update from a concurrent run landing between the two would be erased by
+    # our write. The GitHub fetch above deliberately stays outside it —
+    # holding the PRD lock across a network call would stall every run for as
+    # long as GitHub takes to answer.
+    with prd_lock(args.prd):
+        prd = load_json(args.prd)
+        if prd is None:
+            prd = empty_prd()
+        archived = load_json(args.archived_prd)
+        known = tracked_issue_numbers(prd, archived)
 
-    stories = prd.setdefault("stories", [])
-    original_stories = copy.deepcopy(stories)
-    existing_count = len(stories)
+        stories = prd.setdefault("stories", [])
+        original_stories = copy.deepcopy(stories)
+        existing_count = len(stories)
 
-    max_id = 0
-    max_priority = 0
-    for story in stories:
-        try:
-            id_num = int(story["id"].split("-")[1])
-        except (KeyError, IndexError, ValueError):
-            id_num = 0
-        max_id = max(max_id, id_num)
-        max_priority = max(max_priority, story.get("priority") or 0)
+        max_id = 0
+        max_priority = 0
+        for story in stories:
+            try:
+                id_num = int(story["id"].split("-")[1])
+            except (KeyError, IndexError, ValueError):
+                id_num = 0
+            max_id = max(max_id, id_num)
+            max_priority = max(max_priority, story.get("priority") or 0)
 
-    new_stories = []
-    for issue in issues:
-        if issue["number"] in known:
-            continue
-        max_id += 1
-        max_priority += 1
-        new_stories.append(build_story(max_id, max_priority, issue))
+        new_stories = []
+        for issue in issues:
+            if issue["number"] in known:
+                continue
+            max_id += 1
+            max_priority += 1
+            new_stories.append(build_story(max_id, max_priority, issue))
 
-    retriaged = refresh_triage(stories, issues)
+        retriaged = refresh_triage(stories, issues)
 
-    # SAFETY CHECK: nothing about an existing story but its axes may change
-    for i in range(existing_count):
-        if without_triage(stories[i]) != without_triage(original_stories[i]):
-            print(
-                f"ERROR: Existing story {stories[i].get('id')} was modified!",
-                file=sys.stderr,
-            )
-            return 2
+        # SAFETY CHECK: nothing about an existing story but its axes may change
+        for i in range(existing_count):
+            if without_triage(stories[i]) != without_triage(original_stories[i]):
+                print(
+                    f"ERROR: Existing story {stories[i].get('id')} was modified!",
+                    file=sys.stderr,
+                )
+                return 2
 
-    if (new_stories or retriaged) and not args.dry_run:
-        stories.extend(new_stories)
-        tmp_path = args.prd + ".tmp"
-        with open(tmp_path, "w") as f:
-            json.dump(prd, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, args.prd)
+        if (new_stories or retriaged) and not args.dry_run:
+            stories.extend(new_stories)
+            save_prd(args.prd, prd)
 
     verb = "Would add" if args.dry_run else "Added"
     print(
