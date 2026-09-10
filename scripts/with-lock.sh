@@ -51,8 +51,10 @@ LOCKFILE="$LOCK_DIR/.${LOCK_NAME}.lock"
 
 # Acquire exclusive lock or exit
 source "$SCRIPT_DIR/lib/lock.sh"
-bot_acquire_lock "$LOCKFILE"
-case $? in
+# `|| rc=$?`: `set -e` would otherwise exit on a held lock before the case.
+LOCK_RC=0
+bot_acquire_lock "$LOCKFILE" || LOCK_RC=$?
+case $LOCK_RC in
   0) ;;
   1) echo "Another $LOCK_NAME job is already running. Exiting."; exit 0 ;;
   *) echo "Could not acquire the $LOCK_NAME lock. Exiting." >&2; exit 1 ;;
