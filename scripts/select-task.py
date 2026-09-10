@@ -83,6 +83,16 @@ def pending_attempts(story):
     return len(story.get("iterationLogs") or [])
 
 
+def issue_number(story):
+    """Issue number a story references in its description, or None.
+
+    Stories carry the issue only in their prose ("Resolve issue #133"), so the
+    number has to be parsed back out whenever something wants to link to it.
+    """
+    match = re.search(r"issue #(\d+)", story.get("description") or "")
+    return int(match.group(1)) if match else None
+
+
 def assign_tier(story, now=None):
     """Assign a priority tier to a story based on its status and lastActivityBy."""
     if now is None:
@@ -224,9 +234,9 @@ def candidate_summary(candidates):
         pr_number = s.get("prNumber")
         if pr_number:
             refs += f", PR #{pr_number}"
-        issue_match = re.search(r"issue #(\d+)", s.get("description") or "")
-        if issue_match:
-            refs += f", issue #{issue_match.group(1)}"
+        issue = issue_number(s)
+        if issue:
+            refs += f", issue #{issue}"
         axes = triage.format_triage(s.get("triage"))
         if axes:
             refs += f", {axes}"
@@ -487,6 +497,13 @@ def _select_locked(args, prd_path, run_state_path, bot_dir):
         "tierName": TIER_NAMES.get(tier, "UNKNOWN"),
         "title": selected.get("title", ""),
         "priority": selected.get("priority"),
+        # Enough for the caller to say out loud what it is working on: the
+        # issue number (parsed from the description), and whatever PR and
+        # branch the story has reached so far.
+        "issueNumber": issue_number(selected),
+        "prNumber": selected.get("prNumber"),
+        "prUrl": selected.get("prUrl"),
+        "branchName": selected.get("branchName"),
         "candidateCount": len(candidates),
         "slot": args.slot,
         "storyDetails": selected,

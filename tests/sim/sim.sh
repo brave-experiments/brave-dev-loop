@@ -35,7 +35,7 @@ import json, sys
 sim, n = sys.argv[1], int(sys.argv[2])
 stories = [
     {"id": f"US-{i:03d}", "title": f"Story {i}", "status": "pending",
-     "priority": i, "description": f"dummy story {i}",
+     "priority": i, "description": f"dummy story {i} — resolve issue #{100 + i}",
      "acceptanceCriteria": ["do the thing"]}
     for i in range(1, n + 1)
 ]
@@ -135,7 +135,7 @@ case "${1:-}" in
     wait
     for i in $(seq 1 "$runs"); do
       echo "-- run $i: $(grep -h 'Run slot' "$SIM/run-$i.log" | head -1)"
-      grep -h "Selected:" "$SIM/run-$i.log" | sed 's/^/     /'
+      grep -h "  Story:" "$SIM/run-$i.log" | sed 's/^ *//; s/^/     /'
     done
     ;;
   *) sed -n '2,20p' "$0"; exit 1 ;;
