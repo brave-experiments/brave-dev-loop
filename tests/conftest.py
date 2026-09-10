@@ -12,6 +12,16 @@ ROOT_DIR = os.path.join(os.path.dirname(__file__), os.pardir)
 SKILLS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, ".claude", "skills")
 
 
+# Scripts read config.json from the repo root, so without this the suite tests
+# whatever the operator happens to have configured -- which profile supplies
+# the acceptance criteria, which repo the stories name. Both loaders honour
+# $BOT_CONFIG_FILE, so point every script (in-process or subprocess) at a
+# fixed config instead. Set at import, before any fixture loads a module.
+os.environ["BOT_CONFIG_FILE"] = os.path.join(
+    os.path.dirname(__file__), "config.test.json"
+)
+
+
 def _load_module(name, path):
     """Load a Python file as a module (for scripts without .py packages)."""
     spec = importlib.util.spec_from_file_location(name, path)

@@ -38,6 +38,7 @@ from lib.load_config import (
     load_config,
     load_profile,
     require_config,
+    require_matching_profile,
     resolve_target_repo,
     test_binary,
     test_step,
@@ -504,6 +505,10 @@ def main():
         help="Report what would be added, write nothing",
     )
     args = parser.parse_args()
+    # Acceptance criteria come from the profile, and a story keeps the ones
+    # it was written with. Writing them from a profile nobody chose leaves
+    # wrong criteria in the PRD long after the config is fixed.
+    require_matching_profile(_config, _bot_dir)
 
     if args.issues_file:
         issues = read_issues_file(args.issues_file)

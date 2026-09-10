@@ -2724,3 +2724,131 @@ class TestRunLocking:
                 body = f.read()
             assert "flock -n 200" not in body, name
             assert entry in body, name
+
+
+class TestProfileMismatch:
+    """A config that still says `default` while projects/<project.name>/ exists
+    is one where nobody chose a profile. Nothing about it fails: stories just
+    get generic validations and a docs pointer into a directory that is not
+    there, iteration after iteration, until someone reads the prompt closely.
+    Both resolvers must catch it, and they must agree."""
+
+    @staticmethod
+    def _layout(root, project="bravebot", profile=..., has_profile_dir=True):
+        """A bot dir with load-config.sh, a config, and maybe a project profile."""
+        bot = os.path.join(root, "bot")
+        os.makedirs(os.path.join(bot, "scripts", "lib"), exist_ok=True)
+        with open(os.path.join(SCRIPT_DIR, "lib", "load-config.sh")) as f:
+            src = f.read()
+        with open(os.path.join(bot, "scripts", "lib", "load-config.sh"), "w") as f:
+            f.write(src)
+        if has_profile_dir:
+            profile_dir = os.path.join(bot, "projects", project)
+            os.makedirs(profile_dir, exist_ok=True)
+            with open(os.path.join(profile_dir, "profile.json"), "w") as f:
+                json.dump({"validations": []}, f)
+        cfg = {
+            "project": {
+                "name": project,
+                "org": "o",
+                "prRepository": f"o/{project}",
+                "issueRepository": f"o/{project}",
+            },
+            "bot": {"username": "b"},
+        }
+        if profile is not ...:
+            cfg["project"]["profile"] = profile
+        with open(os.path.join(bot, "config.json"), "w") as f:
+            json.dump(cfg, f)
+        return bot, cfg
+
+    @staticmethod
+    def _py(cfg, bot):
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import profile_mismatch
+
+        return profile_mismatch(cfg, bot)
+
+    @staticmethod
+    def _sh(bot):
+        """The message bash reports, or None when it reports none."""
+        probe = os.path.join(bot, "probe.sh")
+        with open(probe, "w") as f:
+            f.write(
+                '#!/bin/bash\nsource "$(dirname "$0")/scripts/lib/load-config.sh"\n'
+                "bot_profile_mismatch || exit 7\n"
+            )
+        os.chmod(probe, 0o755)
+        result = subprocess.run([probe], capture_output=True, text=True)
+        if result.returncode == 7:
+            return None
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    def test_wizard_default_beside_a_project_profile_is_reported(self, tmp_dir):
+        bot, cfg = self._layout(tmp_dir, profile="default")
+        for message in (self._py(cfg, bot), self._sh(bot)):
+            assert message, "a profile nobody chose must be reported"
+            assert '"profile": "bravebot"' in message, message
+
+    def test_absent_profile_beside_a_project_profile_is_reported(self, tmp_dir):
+        """Absent resolves to brave-core, which is just as wrong for bravebot."""
+        bot, cfg = self._layout(tmp_dir)
+        for message in (self._py(cfg, bot), self._sh(bot)):
+            assert message, "an unset profile must be reported"
+            assert "brave-core" in message, message
+            assert '"profile": "bravebot"' in message, message
+
+    def test_matching_profile_is_silent(self, tmp_dir):
+        bot, cfg = self._layout(tmp_dir, profile="bravebot")
+        assert self._py(cfg, bot) is None
+        assert self._sh(bot) is None
+
+    def test_a_deliberately_different_profile_is_silent(self, tmp_dir):
+        """Naming another profile is a choice; only the untouched value is a bug."""
+        bot, cfg = self._layout(tmp_dir, profile="brave-core")
+        assert self._py(cfg, bot) is None
+        assert self._sh(bot) is None
+
+    def test_default_with_no_project_profile_is_silent(self, tmp_dir):
+        """The generic profile is the right answer for a project without one."""
+        bot, cfg = self._layout(tmp_dir, profile="default", has_profile_dir=False)
+        assert self._py(cfg, bot) is None
+        assert self._sh(bot) is None
+
+    def test_shipped_config_examples_name_their_own_profile(self):
+        """The templates operators copy must not seed the bug."""
+        root = os.path.join(SCRIPT_DIR, os.pardir)
+        for name in ("config.example.json", "config.brave-core.json"):
+            with open(os.path.join(root, name)) as f:
+                cfg = json.load(f)["project"]
+            named = os.path.join(root, "projects", cfg["name"], "profile.json")
+            if os.path.exists(named):
+                assert cfg.get("profile") == cfg["name"], name
+
+    def test_run_sh_refuses_to_start_on_it(self):
+        """A warning would be read as often as the last four iterations were."""
+        with open(os.path.join(SCRIPT_DIR, os.pardir, "run.sh")) as f:
+            body = f.read()
+        assert "bot_profile_mismatch" in body
+        assert re.search(r"bot_profile_mismatch\)[\s\S]{0,120}?exit 1", body), body
+
+    def test_prd_writers_refuse_to_write_from_it(self):
+        """Acceptance criteria written from the wrong profile outlive the config."""
+        for name in ("add-backlog-to-prd.py", "sync-bot-prs-to-prd.py"):
+            with open(os.path.join(SCRIPT_DIR, name)) as f:
+                body = f.read()
+            assert "require_matching_profile(_config, _bot_dir)" in body, name
+
+    def test_setup_carries_the_profile_forward(self):
+        """Re-running the wizard for one unrelated answer used to reset it."""
+        with open(os.path.join(SCRIPT_DIR, "setup.sh")) as f:
+            body = f.read()
+        assert "PREV_PROFILE=$(_prev '.project.profile')" in body
+        assert 'DEFAULT_CFG_PROFILE="$PREV_PROFILE"' in body
+
+    def test_prompt_omits_a_docs_dir_the_profile_does_not_have(self):
+        """projects/default/ ships no docs; the prompt must not claim it does."""
+        with open(os.path.join(SCRIPT_DIR, os.pardir, "run.sh")) as f:
+            body = f.read()
+        assert '-d "$BOT_PROFILE_DIR/docs"' in body

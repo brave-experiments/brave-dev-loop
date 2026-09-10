@@ -1,0 +1,44 @@
+{
+  "project": {
+    "name": "test-project",
+    "org": "test-org",
+    "prRepository": "test-org/test-project",
+    "issueRepository": "test-org/test-project",
+    "defaultBranch": "main",
+    "targetRepoPath": "../test-project",
+    "botOwnerGithubHandle": "test-owner",
+    "useFork": true,
+    "profile": "default",
+    "prdMode": "curated"
+  },
+  "bot": {
+    "username": "test-bot",
+    "email": "test-bot@example.com",
+    "sshKeyPath": null,
+    "signingKeyPath": null,
+    "ghAccount": null,
+    "agent": "claude",
+    "maxConcurrentRuns": 1,
+    "claudeModel": "opus",
+    "claudeBin": null,
+    "codexModel": null,
+    "codexBin": null,
+    "cursorModel": null,
+    "cursorBin": null,
+    "ghConfigDir": null
+  },
+  "labels": {
+    "prLabels": [],
+    "issueLabels": [],
+    "disabledTestLabel": ""
+  },
+  "bestPractices": {
+    "docsDir": "../test-project/docs",
+    "indexFile": "best_practices.md",
+    "securityFile": "SECURITY.md"
+  },
+  "schedules": {
+    "syncRepo": false,
+    "syncRepoPath": null
+  }
+}
