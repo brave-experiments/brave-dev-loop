@@ -30,7 +30,7 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
 from lib.load_config import (
-    best_practices_index,
+    build_research,
     build_validations,
     get_config,
     load_config,
@@ -45,8 +45,8 @@ _config = load_config()
 _issue_repo = require_config(_config, "project.issueRepository")
 _bot_user = require_config(_config, "bot.username")
 _project_name = require_config(_config, "project.name")
-_best_practices_path = best_practices_index(_config, _bot_dir)
 _profile = load_profile(_config, _bot_dir)
+_research = build_research(_profile, _config, _bot_dir)
 
 ISSUE_FIELDS = "number,title,url,labels"
 
@@ -193,7 +193,7 @@ def build_test_story(story_id, priority, issue):
         suite = "browser"
 
     acceptance_criteria = [
-        f"Read {_best_practices_path} to identify which best practice sub-documents apply, then read those sub-documents",
+        *_research,
         f"Fetch issue #{issue_num} details from {_issue_repo} GitHub API",
         "Analyze stack trace and identify root cause - determine whether this is a real bug in production code, a test-only issue, or both. Read the production code being tested, not just the test. If the test is catching a genuine bug, fix the production code",
         "Implement fix targeting the correct layer (production code, test code, or both)",
@@ -250,7 +250,7 @@ def build_disabled_test_story(story_id, priority, issue):
         suite = "browser"
 
     acceptance_criteria = [
-        f"Read {_best_practices_path} to identify which best practice sub-documents apply, then read those sub-documents",
+        *_research,
         f"Fetch issue #{issue_num} details from {_issue_repo} GitHub API",
         f"Find where the test is disabled by searching for DISABLED_{extract_disabled_search_term(test_name)} in the source code using git grep",
         "Use git blame on the line that disables the test to find the commit that disabled it, and read the commit message to understand WHY it was disabled",
@@ -290,7 +290,7 @@ def build_generic_story(story_id, priority, issue):
     title = issue["title"]
 
     acceptance_criteria = [
-        f"Read {_best_practices_path} to identify which best practice sub-documents apply, then read those sub-documents",
+        *_research,
         f"Fetch issue #{issue_num} details from {_issue_repo} GitHub API",
         "Analyze the issue and identify what needs to change",
         "Implement the fix or feature",

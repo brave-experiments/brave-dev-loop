@@ -169,6 +169,32 @@ def load_profile(config, base_dir=None):
         return {}
 
 
+def build_research(profile, config, base_dir=None):
+    """Render a profile's pre-implementation reading steps.
+
+    `{bestPractices}` becomes the absolute best-practices index path and
+    `{targetRepo}` the absolute target repo path. An entry whose substitution
+    does not resolve is dropped rather than emitted with a hole in it: a story
+    must never tell an agent to read a path this project does not have. That
+    is also why the step is profile-owned -- brave-core has a best-practices
+    tree and most projects do not.
+    """
+    index = best_practices_index(config, base_dir)
+    repo = resolve_target_repo(config, base_dir)
+    steps = []
+    for entry in profile.get("research") or []:
+        if "{bestPractices}" in entry and not index:
+            continue
+        if "{targetRepo}" in entry and not repo:
+            continue
+        steps.append(
+            entry.replace("{bestPractices}", index or "").replace(
+                "{targetRepo}", repo or ""
+            )
+        )
+    return steps
+
+
 def build_validations(profile, test_step=None):
     """Render a profile's validation steps into acceptance criteria.
 

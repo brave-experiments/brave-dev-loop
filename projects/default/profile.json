@@ -1,5 +1,6 @@
 {
   "description": "Generic project: no build system or test runner assumed.",
+  "research": [],
   "validations": [
     "Build the project (must pass)",
     "{testStep}"

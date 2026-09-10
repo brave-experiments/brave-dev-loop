@@ -163,7 +163,7 @@ Successfully fetched 15 open issues assigned to the bot and added 7 missing issu
 
 - Always preserve the exact structure of existing user stories
 - The script owns story structure — never hand-write stories into `data/prd.json`; if a story comes out wrong, fix `scripts/add-backlog-to-prd.py`
-- Test issues include a best_practices.md read step in acceptance criteria; the path is derived from `bestPractices.docsDir` + `bestPractices.indexFile` in `config.json` (e.g. `../src/brave/docs/best_practices.md`)
+- Every story opens with the project profile's `research` steps and closes with its `validations` (`projects/<profile>/profile.json`) — which docs to read and which checks to run are the project's answer, not this skill's. See [Project profiles](../../../projects/README.md)
 - Test type determination is critical for generating correct test commands
 - Priority numbers must be sequential and not conflict with existing ones
 - All new issue-derived stories start in "pending" status; PR-derived stories from Step 2 start in "pushed" status because their PR already exists

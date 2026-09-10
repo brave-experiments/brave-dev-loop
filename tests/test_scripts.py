@@ -6,6 +6,7 @@ and check-prd-has-work.py.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from argparse import Namespace
@@ -14,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 SCRIPT_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts")
+PROJECTS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "projects")
 UPDATE_PRD_SCRIPT = os.path.join(SCRIPT_DIR, "update-prd-status.py")
 
 
@@ -721,20 +723,35 @@ class TestSyncBotPrsDocsOnly:
 
 
 class TestSyncBotPrsStory:
+    @staticmethod
+    def _validations(sync_bot_prs):
+        """The checks the configured profile says a code change must pass.
+
+        Asserted against rather than hard-coded strings: which checks exist is
+        the project's answer, and this script must not have its own.
+        """
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import build_validations, test_step
+
+        profile = sync_bot_prs._profile
+        steps = build_validations(profile, test_step(profile, "generic"))
+        assert steps, "the configured profile defines no validations"
+        return steps
+
     def test_docs_only_story_omits_build_criteria(self, sync_bot_prs):
         story = sync_bot_prs.build_pr_story(333, 332, make_pr())
-        criteria = " ".join(story["acceptanceCriteria"])
-        assert "Build the project" not in criteria
-        assert "presubmit" not in criteria
+        criteria = story["acceptanceCriteria"]
+        for step in self._validations(sync_bot_prs):
+            assert step not in criteria
         assert story["docsOnly"] is True
 
     def test_code_story_includes_build_criteria(self, sync_bot_prs):
         story = sync_bot_prs.build_pr_story(
             333, 332, make_pr(files=("brave/browser/x.cc",))
         )
-        criteria = " ".join(story["acceptanceCriteria"])
-        assert "Build the project (must pass)" in criteria
-        assert "presubmit" in criteria
+        criteria = story["acceptanceCriteria"]
+        for step in self._validations(sync_bot_prs):
+            assert step in criteria
         assert story["docsOnly"] is False
 
     def test_story_is_pushed_with_pr_fields(self, sync_bot_prs):
@@ -1753,6 +1770,77 @@ class TestProfileLoading:
         blob = json.dumps(profile).lower()
         for term in ("pnpm", "gtest", "chromium", "brave", "presubmit"):
             assert term not in blob, f"default profile leaks {term!r}"
+
+
+class TestProfileResearch:
+    """The "read this first" step is profile-owned. It has to be: pointing a
+    story at a best_practices.md that only brave-core has was the bug that
+    prompted the key."""
+
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        import lib.load_config as m
+
+        return m
+
+    def test_best_practices_placeholder_becomes_absolute_path(self, tmp_path):
+        m = self._lib()
+        docs = tmp_path / "repo" / "docs"
+        docs.mkdir(parents=True)
+        config = {
+            "bestPractices": {"docsDir": "repo/docs", "indexFile": "bp.md"},
+        }
+        got = m.build_research(
+            {"research": ["Read {bestPractices} first"]}, config, str(tmp_path)
+        )
+        assert got == [f"Read {docs / 'bp.md'} first"]
+
+    def test_target_repo_placeholder_becomes_absolute_path(self, tmp_path):
+        m = self._lib()
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        config = {"project": {"targetRepoPath": "repo"}}
+        got = m.build_research(
+            {"research": ["Read {targetRepo}/AGENTS.md"]}, config, str(tmp_path)
+        )
+        assert got == [f"Read {repo}/AGENTS.md"]
+
+    def test_unresolvable_entry_is_dropped_not_emitted_hollow(self):
+        """A story must never tell an agent to read a path that isn't there."""
+        m = self._lib()
+        profile = {
+            "research": ["Read {bestPractices}", "Read {targetRepo}/x", "Read the PRD"]
+        }
+        assert m.build_research(profile, {}) == ["Read the PRD"]
+
+    def test_absent_research_key_yields_nothing(self):
+        m = self._lib()
+        assert m.build_research({}, {}) == []
+
+    def test_brave_core_research_is_unchanged(self):
+        """The line brave-core emitted before the key existed, byte-for-byte."""
+        m = self._lib()
+        profile = m.load_profile({"project": {"profile": "brave-core"}})
+        assert profile["research"] == [
+            "Read {bestPractices} to identify which best practice sub-documents "
+            "apply, then read those sub-documents"
+        ]
+
+    def test_every_profile_uses_only_known_placeholders(self):
+        """A typo'd placeholder would ship to an agent verbatim."""
+        m = self._lib()
+        known = {"{bestPractices}", "{targetRepo}"}
+        for name in sorted(os.listdir(PROJECTS_DIR)):
+            path = os.path.join(PROJECTS_DIR, name, "profile.json")
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                profile = json.load(f)
+            for entry in profile.get("research") or []:
+                for found in re.findall(r"\{[^}]*\}", entry):
+                    assert found in known, (name, found)
+
 
 
 class TestPrdMode:

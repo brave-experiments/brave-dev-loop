@@ -15,6 +15,7 @@ projects/<name>/
 
 | Key | Purpose |
 | --- | --- |
+| `research` | Reading steps every story starts with. `{bestPractices}` becomes the absolute path of `bestPractices.docsDir` + `indexFile`, `{targetRepo}` the absolute target repo path; an entry naming a substitution that does not resolve is dropped rather than pointing an agent at a path the project does not have. |
 | `validations` | Ordered acceptance-criteria steps every story ends with. `{testStep}` is replaced per story kind, and dropped when the profile defines no test step for that kind. |
 | `testSteps` | Templates for `testFix`, `disabledTest`, and `generic` stories. `{testBinary}` and `{testFilter}` are substituted. |
 | `labels` | Project labels: `pr` (applied to bot PRs) and `disabledTest` (marks an issue as a disabled test). `labels.disabledTestLabel` in `config.json` is honoured as a fallback. |

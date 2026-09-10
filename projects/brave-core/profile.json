@@ -1,5 +1,8 @@
 {
   "description": "brave-core: a Chromium-derived checkout built with pnpm, gtest binaries, and chromium_src overrides.",
+  "research": [
+    "Read {bestPractices} to identify which best practice sub-documents apply, then read those sub-documents"
+  ],
   "validations": [
     "Build the project (must pass)",
     "Format the code (must pass)",

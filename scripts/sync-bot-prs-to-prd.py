@@ -30,10 +30,13 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
 from lib.load_config import (
-    best_practices_index,
+    build_research,
+    build_validations,
     get_config,
     load_config,
+    load_profile,
     require_config,
+    test_step,
 )
 
 _config = load_config()
@@ -41,7 +44,8 @@ _pr_repo = require_config(_config, "project.prRepository")
 _issue_repo = require_config(_config, "project.issueRepository")
 _bot_user = require_config(_config, "bot.username")
 _default_branch = get_config(_config, "project.defaultBranch", "master")
-_best_practices_path = best_practices_index(_config)
+_profile = load_profile(_config, _bot_dir)
+_research = build_research(_profile, _config, _bot_dir)
 
 PR_FIELDS = "number,title,url,headRefName,isDraft,body,files"
 
@@ -204,13 +208,13 @@ def build_pr_story(story_id, priority, pr):
         "Verify CI is green on the current head after every push or rebase",
         "Wait for a maintainer to merge — never merge or force-merge the PR yourself",
     ]
+    # A code PR has to survive the same checks a story's own work does, so the
+    # steps come from the profile rather than being spelled out here -- what
+    # counts as "the checks" is the project's answer, not this script's.
     if not docs_only:
         acceptance_criteria[3:3] = [
-            f"Read {_best_practices_path} to identify which best practice sub-documents apply, then read those sub-documents",
-            "Build the project (must pass)",
-            "Format the code (must pass)",
-            "Find and run the tests relevant to the change (must pass)",
-            "Run presubmit checks (must pass)",
+            *_research,
+            *build_validations(_profile, test_step(_profile, "generic")),
         ]
 
     return {
