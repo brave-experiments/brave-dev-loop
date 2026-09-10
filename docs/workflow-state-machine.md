@@ -104,6 +104,49 @@ Execute the workflow based on the story's current status:
 
 Task selection is handled deterministically by `scripts/select-task.py` — the selected story is provided in the prompt. See [run-state-management.md](./run-state-management.md) for configuration options (skip pushed tasks, merge backoff, etc.).
 
+## Backlog Order: the Three Triage Axes
+
+Inside its tier, pending work is ordered by the axes the issue was labelled with
+rather than by the order the issues happened to arrive in. A backlog of a
+hundred issues that all sort the same can only be read one issue at a time.
+
+| Axis | Range | The question it answers |
+|---|---|---|
+| `importance` | 1 to 5, 1 highest | how much it matters that this is fixed at all |
+| `urgency` | 1 to 5, 1 highest | how soon it has to happen |
+| `size` | 1 to 5, 1 smallest | how much work it is |
+
+`scripts/add-backlog-to-prd.py` reads them off an issue's labels into the story's
+`triage` block, and brings a still-pending story's block back into line with its
+issue on every sync — so raising an urgency reaches the next run instead of only
+the issues nobody has filed yet. `scripts/select-task.py` sorts on it, with
+`priority` still breaking whatever ties are left.
+
+**Which labels spell an axis is project-specific.** The profile's `labels.axes`
+maps each axis to its label prefix, and the project's own docs define what its
+values mean — see [Project profiles](../projects/README.md), and the profile's
+`docs/labels.md` where it has one. A project that defines no prefixes has no
+axes: its stories carry no `triage` block and its backlog is ordered by
+`priority` exactly as it was before the axes existed.
+
+Three rules hold whatever the labels are called:
+
+- **Urgency interrupts importance, so it is read first.** Collapsing the two
+  into one number loses the work in the middle. A hole in a guarantee that
+  nothing currently reaches has to be fixed and costs nothing to wait; a parsing
+  slip that eats a typed line is small and costs somebody something every day.
+- **A missing axis is not a low value.** It means nobody has judged the issue
+  yet, so it sorts as the middle of the range — an unjudged issue should neither
+  jump the queue nor be buried under it.
+- **Size never orders anything.** It says what fits in the time available.
+  Sorting by it would bury exactly the large, important work that needs
+  splitting, so it is recorded, reported, and left out of the key.
+
+The axes order the backlog; they do not overrule the tiers. A reviewer waiting
+on an answer (URGENT) still comes before the most urgent pending story, and a
+story retried `MAX_PENDING_ATTEMPTS` times is still quarantined however it is
+labelled.
+
 ## Error Handling
 
 **GitHub CLI (gh) Failures:**

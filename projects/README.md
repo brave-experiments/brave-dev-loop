@@ -18,7 +18,7 @@ projects/<name>/
 | `research` | Reading steps every story starts with. `{bestPractices}` becomes the absolute path of `bestPractices.docsDir` + `indexFile`, `{targetRepo}` the absolute target repo path; an entry naming a substitution that does not resolve is dropped rather than pointing an agent at a path the project does not have. |
 | `validations` | Ordered acceptance-criteria steps every story ends with. `{testStep}` is replaced per story kind, and dropped when the profile defines no test step for that kind. |
 | `testSteps` | Templates for `testFix`, `disabledTest`, and `generic` stories. `{testBinary}` and `{testFilter}` are substituted. |
-| `labels` | Project labels: `pr` (applied to bot PRs) and `disabledTest` (marks an issue as a disabled test). `labels.disabledTestLabel` in `config.json` is honoured as a fallback. |
+| `labels` | Project labels: `pr` (applied to bot PRs), `disabledTest` (marks an issue as a disabled test), and `axes` (the label prefix that spells each triage axis, so the backlog can be ordered by them — see [Backlog order](../docs/workflow-state-machine.md#backlog-order-the-three-triage-axes)). `labels.disabledTestLabel` in `config.json` is honoured as a fallback. |
 | `testTargets` | Maps a suite (`unit`, `browser`) and a location to a test binary. `local` is a test defined in the target repo, `upstream` one inherited from the surrounding checkout. |
 
 **`docs/`** holds the prose. The shared workflow docs keep a one-line pointer

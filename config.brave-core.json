@@ -18,6 +18,7 @@
     "signingKeyPath": null,
     "ghAccount": null,
     "agent": "claude",
+    "maxConcurrentRuns": 1,
     "claudeModel": "opus",
     "claudeBin": null,
     "codexModel": null,

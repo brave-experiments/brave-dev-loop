@@ -7,6 +7,8 @@
 
 Commit only in that directory. Anything above it belongs to the surrounding checkout, if there is one.
 
+When several runs share this bot directory (see [Concurrent runs](./concurrent-runs.md)), operations against the *shared* repository — `git fetch`, `git worktree add` — must go through `./scripts/git-repo-lock.sh <repo> -- <command>`; git's own ref locks fail when two runs do them at once. Work inside your own worktree needs no lock.
+
 Project-specific: a profile may give each story its own worktree instead of working in that directory. Read the project profile's `docs/repo.md` (path given in the prompt) before the first `cd` — where it does, every instruction in these docs naming `[targetRepoPath from bot config]` means that story's worktree.
 
 ## Branch Management for Each User Story

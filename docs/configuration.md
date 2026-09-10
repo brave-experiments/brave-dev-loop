@@ -22,6 +22,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `bot.ghAccount`: `gh` account whose token the bot uses (`null` = same as `bot.username`)
 - `bot.ghConfigDir`: isolated `gh` config directory for the bot (`null` = use `~/.config/gh`). Set this to keep the bot's GitHub login out of your personal `gh` config entirely — no account is added, switched, or made active outside this repo. Create it with `GH_CONFIG_DIR=<dir> gh auth login`
 - `bot.agent`: Which agent to run, `claude` (default), `codex`, or `cursor`
+- `bot.maxConcurrentRuns`: How many `run.sh` instances may share this bot directory (default `1`). Above 1 requires a profile with `"worktrees": true` — without per-story worktrees two runs share one working tree and overwrite each other. See [Concurrent runs](./concurrent-runs.md)
 - `bot.claudeModel`: Claude model to use (`opus`, `sonnet`, etc.; overridden by `./run.sh --model` for Claude runs)
 - `bot.claudeBin`: Path to the `claude` binary (`null` = found on PATH)
 - `bot.codexModel`: Codex model to use (`null` = Codex default; overridden by `./run.sh --model` for Codex runs)
@@ -38,7 +39,8 @@ A `config.example.json` template and `config.brave-core.json` reference config a
 Product Requirements Document defining user stories and acceptance criteria.
 
 - `stories[].id`: Unique story identifier
-- `stories[].priority`: Execution order (1 = highest)
+- `stories[].priority`: Execution order (1 = highest), and the last tiebreak once the triage axes have been read
+- `stories[].triage`: The issue's triage axes, `{"importance": 1-5, "urgency": 1-5, "size": 1-5}`, with any axis nobody has judged left out. Read off the issue's labels by the backlog sync and used to order pending work — see [Backlog order](./workflow-state-machine.md#backlog-order-the-three-triage-axes). Absent on every story in a project whose profile defines no `labels.axes`
 - `stories[].status`: Story state
 - `stories[].branchName`: Git branch name (set when work starts)
 - `stories[].prNumber`: PR number (set when PR created)
@@ -59,7 +61,8 @@ Agent instructions defining workflow, testing requirements, git operations, secu
 
 # Run State Configuration
 
-`data/run-state.json` controls per-run behavior:
+`data/run-state.json` controls per-run behavior. With several run slots, the settings below are still read from this one file and copied into each slot's `data/run-state.slot-N.json` at run start; the iteration state (`runId`, `storiesCheckedThisRun`, ...) is per slot. See [Concurrent runs](./concurrent-runs.md).
+
 
 | Field | Description |
 |-------|-------------|
