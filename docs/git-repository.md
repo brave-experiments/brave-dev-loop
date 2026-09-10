@@ -7,6 +7,8 @@
 
 Commit only in that directory. Anything above it belongs to the surrounding checkout, if there is one.
 
+Project-specific: a profile may give each story its own worktree instead of working in that directory. Read the project profile's `docs/repo.md` (path given in the prompt) before the first `cd` — where it does, every instruction in these docs naming `[targetRepoPath from bot config]` means that story's worktree.
+
 ## Branch Management for Each User Story
 
 Every user story MUST start with a fresh branch from origin/master:
@@ -21,6 +23,8 @@ git checkout -b fix-<test-name-or-feature>
 **Branch Naming**: DO NOT include "ralph" in the branch name. Use descriptive names based on the specific test or feature being fixed (e.g., "fix-solana-provider-test", "fix-ai-chat-task-test").
 
 **IMPORTANT**: Each user story is independent and should NOT build on commits from previous stories. Always start from a clean master branch.
+
+Project-specific: where the profile's `docs/repo.md` puts stories in worktrees, `git worktree add` creates the branch and there is no separate `git checkout -b`. Follow that doc.
 
 ## Build & Package Manager Commands
 
@@ -107,14 +111,12 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
 
 **IMPORTANT**: Always create PRs in draft state using the `--draft` flag. This allows for human review before marking ready.
 
-**IMPORTANT**: Always include required labels when creating the PR using `--label` flags. At minimum, all bot-created PRs MUST have the `ai-generated` label. See [workflow-committed.md](./workflow-committed.md) for full label rules.
+**IMPORTANT**: Labels are project-specific and come from the project profile (`labels.pr` in `projects/<profile>/profile.json`, plus the profile's `docs/labels.md`). Pass each one with a `--label` flag; a profile that defines none means a PR with no labels. See [workflow-committed.md](./workflow-committed.md) for the full rules.
 
 **Example:**
 ```bash
 gh pr create --draft --title "the pr title" \
-  --label "ai-generated" \
-  --label "QA/No" \
-  --label "release-notes/exclude" \
+  --label "<each label the profile's rules give you>" \
   --body "$(cat <<'EOF'
 Closes $ISSUE_REPO#<issue-number>
 

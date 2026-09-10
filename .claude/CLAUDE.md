@@ -62,7 +62,7 @@ If ALL stories are merged, skipped, or invalid (no active stories remain), reply
 ## Important Reminders
 
 - Work on ONE story per iteration
-- Commit in `[workingDirectory from prd.json config]` directory
+- Commit in `[workingDirectory from prd.json config]` directory — or in the story's worktree, where the project profile's `docs/repo.md` uses one
 - **NEVER skip acceptance criteria tests** - run them all, even if they take hours
 - Use run_in_background: true for long-running commands
 - Read best_practices.md before any test work

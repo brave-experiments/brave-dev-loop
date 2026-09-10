@@ -6,6 +6,8 @@
 
 1. **IMPORTANT**: All git operations must be done in `[targetRepoPath from bot config]` directory
 
+   Project-specific: a profile may put each story in its own worktree instead — see the project profile's `docs/repo.md` (path given in the prompt). Read it before the first `cd`; where it applies, it replaces the checkout and branch steps below, and every later `[targetRepoPath from bot config]` in this doc means the worktree.
+
 2. **CRITICAL BRANCH MANAGEMENT**:
    - Change to the git repo: `cd [targetRepoPath from bot config]`
    - Checkout master: `git checkout master`

@@ -8,6 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/load-config.sh"
+source "$SCRIPT_DIR/lib/cron-blocks.sh"
 
 CLAUDE_BIN="$BOT_CLAUDE_BIN"
 CLAUDE_TOOLS="Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch"
@@ -21,14 +22,14 @@ CLAUDE_BIN_DIR=$(dirname "$CLAUDE_BIN")
 SYNC_REPO_ENABLED=$(bot_config_bool '.schedules.syncRepo')
 SYNC_REPO_PATH=$(bot_config '.schedules.syncRepoPath')
 
-# Use project name for cron block marker to allow multiple projects on same machine
-# Avoid special regex characters — use parentheses instead of brackets so the
-# marker survives sed pattern matching without escaping.
 # Bot repo's own default branch (for cron git checkout/reset)
 BOT_REPO_BRANCH=$(bot_config '.project.botRepoBranch')
 BOT_REPO_BRANCH="${BOT_REPO_BRANCH:-master}"
 
-CRON_MARKER="brave-dev-loop ($BOT_PROJECT_NAME)"
+# The marker carries the project name so several deployments can share one
+# crontab. cron-blocks.sh owns its spelling, and the older spellings it has to
+# strip alongside it.
+CRON_MARKER=$(bot_cron_marker "$BOT_PROJECT_NAME")
 
 # Build the crontab content
 # Note: add-backlog-to-prd runs 15 min before each run.sh invocation
@@ -45,9 +46,9 @@ PATH=$CLAUDE_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bi
 # head start, not a requirement.
 # Gate check runs before git sync to avoid wasted fetches
 # Weekdays: 1x/day
-45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 7 * * 1-5 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/sync-prd.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 # Weekends: once/day (before run.sh)
-45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/refresh-prd-cache.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
+45 11 * * 0,6 cd $PROJECT_ROOT && source .envrc && ./scripts/check-has-prd.sh && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH && ./scripts/with-lock.sh add-backlog -- ./scripts/sync-prd.sh >> $LOG_DIR/add-backlog-cron.log 2>&1
 
 # Main agent run — skip if no actionable stories
 # Gate check runs before git sync to avoid wasted fetches
@@ -85,13 +86,11 @@ fi)
 EOF
 )
 
-# Extract existing crontab, stripping any previous block for this project.
-# Use fixed-string matching (no regex) to avoid issues with special characters
-# in the project name.
+# Extract existing crontab, stripping every previous block for this project --
+# including one written under the repo's former name, which would otherwise
+# stay installed and run a second, older copy of every job.
 EXISTING=$(crontab -l 2>/dev/null || true)
-BLOCK_START="# === $CRON_MARKER scheduled jobs ==="
-BLOCK_END="# === end $CRON_MARKER ==="
-CLEANED=$(awk -v start="$BLOCK_START" -v end="$BLOCK_END" '$0==start{skip=1} $0==end{skip=0;next} !skip' <<< "$EXISTING")
+CLEANED=$(bot_strip_cron_blocks "$BOT_PROJECT_NAME" <<< "$EXISTING")
 
 # Combine preserved entries with new block
 NEW_CRONTAB=$(printf '%s\n%s\n' "$CLEANED" "$CRON_JOBS" | sed '/^$/N;/^\n$/d')

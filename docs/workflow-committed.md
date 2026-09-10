@@ -8,7 +8,7 @@
 
 ## Steps
 
-1. Change to git repo: `cd [targetRepoPath from bot config]`
+1. Change to git repo: `cd [targetRepoPath from bot config]` — or to the story's worktree, where the project profile's `docs/repo.md` uses one
 
 2. Get branch name from story's `branchName` field
 
@@ -50,9 +50,7 @@
 
    ```bash
    gh pr create --draft --title "Story title" \
-     --label "ai-generated" \
-     --label "QA/No" \
-     --label "release-notes/exclude" \
+     --label "<each label the profile's rules give you>" \
      --body "$(cat <<'EOF'
 Closes $ISSUE_REPO#<issue-number>
 
@@ -78,7 +76,7 @@ EOF
    - Keep the last checkbox "CI passes cleanly" unchecked
    - Do NOT add "Generated with Claude Code" or similar attribution
    - Capture the PR number from the output
-   - **The `--label` flags above are an example for test fixes.** Adjust labels based on the rules in step 7 below. The `ai-generated` label is ALWAYS required.
+   - **The `--label` flag above is a placeholder.** Determine the actual labels from the profile's rules in step 7 below, and pass one `--label` per label. Pass none if the profile defines none.
    - If step 4 identified other issues this fix also closes, add an additional `Closes $ISSUE_REPO#<number>` line for each one at the TOP of the PR body (one per line, immediately below the primary `Closes` line, above `## Summary`).
 
 6. **Assign the PR to yourself (the bot account):**
@@ -103,30 +101,16 @@ EOF
 
    ### Label Rules
 
-   **MANDATORY for ALL PRs (no exceptions):**
-   - `ai-generated` — MUST be on every bot-created PR
+   **Labels are project-specific.** The project profile owns them: apply
+   `labels.pr` from `projects/<profile>/profile.json` to the PR, and whatever
+   the profile's `docs/labels.md` says on top of that (a profile that has no
+   such doc has no further rules). A profile with an empty `labels.pr` means a
+   PR with no labels — that is a valid outcome, not a step you skipped.
 
-   **For test issue fixes (add to BOTH PR and linked issue):**
-   - `QA/No` — manual QA not needed
-   - `release-notes/exclude` — not user-facing
-   - `CI/skip` — **only if the change is limited to filter files** (e.g., `test/filters/`). This skips unnecessary CI for trivial filter-only changes.
-
-   **For other PRs:**
-   - `release-notes/exclude` — add to both PR and linked issue for changes typical users wouldn't care about (code cleanup, refactors, internal tooling, etc.)
-   - `QA/No` — use judgment based on whether manual QA testing is needed
-
-   **OS/platform labels (ALWAYS add to the linked issue):**
-
-   Determine which platform(s) the fix relates to, then add the matching OS label(s) to the linked issue:
-   - `OS/Desktop` — the fix targets desktop (Windows, macOS, Linux)
-   - `OS/Android` — the fix targets Android
-   - `OS/iOS` — the fix targets iOS
-
-   Add all that apply (a cross-platform fix may span multiple platforms). Base the decision on the affected code's location, platform-specific build flags/guards (e.g. `BUILDFLAG(IS_ANDROID)`, `BUILDFLAG(IS_IOS)`, desktop-only code paths), and where the issue was reported.
-
-   ```bash
-   gh issue edit <issue-number> --add-label "OS/Desktop" --repo $ISSUE_REPO
-   ```
+   Never invent a label, and never create one in the target repo: `gh pr create
+   --label` fails outright on a label the repo does not have, taking the PR
+   creation with it. If a label the profile names does not exist there, create
+   the PR without it and record the mismatch in `$BOT_DIR/data/progress.txt`.
 
 8. **If push or PR creation succeeds:**
    - Update the PRD status:

@@ -6,6 +6,7 @@ and check-prd-has-work.py.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from argparse import Namespace
@@ -14,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 SCRIPT_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts")
+PROJECTS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "projects")
+DOCS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "docs")
 UPDATE_PRD_SCRIPT = os.path.join(SCRIPT_DIR, "update-prd-status.py")
 
 
@@ -721,20 +724,35 @@ class TestSyncBotPrsDocsOnly:
 
 
 class TestSyncBotPrsStory:
+    @staticmethod
+    def _validations(sync_bot_prs):
+        """The checks the configured profile says a code change must pass.
+
+        Asserted against rather than hard-coded strings: which checks exist is
+        the project's answer, and this script must not have its own.
+        """
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import build_validations, test_step
+
+        profile = sync_bot_prs._profile
+        steps = build_validations(profile, test_step(profile, "generic"))
+        assert steps, "the configured profile defines no validations"
+        return steps
+
     def test_docs_only_story_omits_build_criteria(self, sync_bot_prs):
         story = sync_bot_prs.build_pr_story(333, 332, make_pr())
-        criteria = " ".join(story["acceptanceCriteria"])
-        assert "Build the project" not in criteria
-        assert "presubmit" not in criteria
+        criteria = story["acceptanceCriteria"]
+        for step in self._validations(sync_bot_prs):
+            assert step not in criteria
         assert story["docsOnly"] is True
 
     def test_code_story_includes_build_criteria(self, sync_bot_prs):
         story = sync_bot_prs.build_pr_story(
             333, 332, make_pr(files=("brave/browser/x.cc",))
         )
-        criteria = " ".join(story["acceptanceCriteria"])
-        assert "Build the project (must pass)" in criteria
-        assert "presubmit" in criteria
+        criteria = story["acceptanceCriteria"]
+        for step in self._validations(sync_bot_prs):
+            assert step in criteria
         assert story["docsOnly"] is False
 
     def test_story_is_pushed_with_pr_fields(self, sync_bot_prs):
@@ -1189,12 +1207,20 @@ class TestBotExportIdentityEnv:
 
     def test_no_key_configured_leaves_ssh_alone(self, tmp_path):
         bindir = self._fake_gh(tmp_path, {})
+        # A sentinel rather than an empty value: the snippet inherits the
+        # caller's environment, and this repo's own .envrc exports
+        # GIT_SSH_COMMAND, so asserting emptiness would only pass for
+        # developers who don't use direnv here. Untouched is the real claim.
         result = run_identity_snippet(
             "set -e\nbot_export_identity_env '' ''\necho \"ssh=[$GIT_SSH_COMMAND]\"",
-            env={"PATH": f"{bindir}:{os.environ['PATH']}", "GH_TOKEN": ""},
+            env={
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "GH_TOKEN": "",
+                "GIT_SSH_COMMAND": "ssh -i /preexisting/key",
+            },
         )
         assert result.returncode == 0
-        assert "ssh=[]" in result.stdout
+        assert "ssh=[ssh -i /preexisting/key]" in result.stdout
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1747,6 +1773,226 @@ class TestProfileLoading:
             assert term not in blob, f"default profile leaks {term!r}"
 
 
+class TestProfileResearch:
+    """The "read this first" step is profile-owned. It has to be: pointing a
+    story at a best_practices.md that only brave-core has was the bug that
+    prompted the key."""
+
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        import lib.load_config as m
+
+        return m
+
+    def test_best_practices_placeholder_becomes_absolute_path(self, tmp_path):
+        m = self._lib()
+        docs = tmp_path / "repo" / "docs"
+        docs.mkdir(parents=True)
+        config = {
+            "bestPractices": {"docsDir": "repo/docs", "indexFile": "bp.md"},
+        }
+        got = m.build_research(
+            {"research": ["Read {bestPractices} first"]}, config, str(tmp_path)
+        )
+        assert got == [f"Read {docs / 'bp.md'} first"]
+
+    def test_target_repo_placeholder_becomes_absolute_path(self, tmp_path):
+        m = self._lib()
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        config = {"project": {"targetRepoPath": "repo"}}
+        got = m.build_research(
+            {"research": ["Read {targetRepo}/AGENTS.md"]}, config, str(tmp_path)
+        )
+        assert got == [f"Read {repo}/AGENTS.md"]
+
+    def test_unresolvable_entry_is_dropped_not_emitted_hollow(self):
+        """A story must never tell an agent to read a path that isn't there."""
+        m = self._lib()
+        profile = {
+            "research": ["Read {bestPractices}", "Read {targetRepo}/x", "Read the PRD"]
+        }
+        assert m.build_research(profile, {}) == ["Read the PRD"]
+
+    def test_absent_research_key_yields_nothing(self):
+        m = self._lib()
+        assert m.build_research({}, {}) == []
+
+    def test_brave_core_research_is_unchanged(self):
+        """The line brave-core emitted before the key existed, byte-for-byte."""
+        m = self._lib()
+        profile = m.load_profile({"project": {"profile": "brave-core"}})
+        assert profile["research"] == [
+            "Read {bestPractices} to identify which best practice sub-documents "
+            "apply, then read those sub-documents"
+        ]
+
+    def test_every_profile_uses_only_known_placeholders(self):
+        """A typo'd placeholder would ship to an agent verbatim."""
+        m = self._lib()
+        known = {"{bestPractices}", "{targetRepo}"}
+        for name in sorted(os.listdir(PROJECTS_DIR)):
+            path = os.path.join(PROJECTS_DIR, name, "profile.json")
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                profile = json.load(f)
+            for entry in profile.get("research") or []:
+                for found in re.findall(r"\{[^}]*\}", entry):
+                    assert found in known, (name, found)
+
+
+class TestSharedDocsCarryNoProjectLabels:
+    """Labels belong to the profile. A shared doc that names one hands every
+    project brave-core's labels, and `gh pr create --label` fails outright on a
+    label the repo does not have -- which is how bravebot PRs lost theirs."""
+
+    BRAVE_CORE_LABELS = (
+        "ai-generated",
+        "QA/No",
+        "CI/skip",
+        "release-notes/exclude",
+        "OS/Desktop",
+        "OS/Android",
+        "OS/iOS",
+        "disabled-brave-test",
+    )
+
+    def test_no_shared_doc_names_a_brave_core_label(self):
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                text = f.read()
+            for label in self.BRAVE_CORE_LABELS:
+                assert label not in text, f"docs/{name} hard-codes {label!r}"
+
+    def test_the_brave_core_profile_still_documents_them(self):
+        """They have to live somewhere -- moving them out of the shared docs
+        must not lose them."""
+        with open(os.path.join(PROJECTS_DIR, "brave-core", "docs", "labels.md")) as f:
+            text = f.read()
+        for label in self.BRAVE_CORE_LABELS:
+            assert label in text, label
+
+
+class TestBravebotProfile:
+    """bravebot is a Rust workspace, and its checks are the ones its Makefile
+    and ci.yml actually define -- not brave-core's, which is what the generic
+    hard-coded steps used to give it."""
+
+    @staticmethod
+    def _profile():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import load_profile
+
+        return load_profile({"project": {"profile": "bravebot"}})
+
+    def test_covers_every_ci_enforced_check(self):
+        """`make check-all` is check + check-spec + check-npm + check-msrv +
+        check-reviewdog. Each has to appear, or a story can pass here and fail
+        in CI."""
+        blob = " ".join(self._profile()["validations"])
+        for target in (
+            "make check",
+            "make check-spec",
+            "make check-npm",
+            "make check-msrv",
+            "make check-reviewdog",
+        ):
+            assert target in blob, target
+
+    def test_covers_linux(self):
+        """A macOS host never compiles the Linux backend, and clippy gains
+        lints between releases."""
+        assert "make check-linux" in " ".join(self._profile()["validations"])
+
+    def test_has_no_chromium_assumptions(self):
+        blob = json.dumps(self._profile()).lower()
+        for term in ("pnpm", "gtest", "chromium", "presubmit", "best_practices"):
+            assert term not in blob, f"bravebot profile leaks {term!r}"
+
+    def test_test_steps_are_cargo(self):
+        for kind, step in self._profile()["testSteps"].items():
+            assert "cargo test" in step, kind
+
+
+class TestBravebotWorktrees:
+    """bravebot stories work in a per-issue worktree, never in the checkout
+    run.sh owns -- that checkout is stashed and put back on the default branch
+    when a run ends, so a story left in it loses its work."""
+
+    BRAVEBOT_DOCS = os.path.join(PROJECTS_DIR, "bravebot", "docs")
+
+    @staticmethod
+    def _profile():
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import load_profile
+
+        return load_profile({"project": {"profile": "bravebot"}})
+
+    def _repo_doc(self):
+        with open(os.path.join(self.BRAVEBOT_DOCS, "repo.md")) as f:
+            return f.read()
+
+    def test_the_first_story_step_is_entering_the_worktree(self):
+        """Every later step reads a path; if the worktree step is not first,
+        they read the wrong tree."""
+        first = self._profile()["research"][0]
+        assert "worktree" in first
+        assert "{targetRepo}-" in first
+
+    def test_the_worktree_step_survives_substitution(self, tmp_path):
+        """A research entry whose placeholder does not resolve is dropped
+        outright -- silently, and with it the whole rule."""
+        sys.path.insert(0, SCRIPT_DIR)
+        from lib.load_config import build_research
+
+        repo = tmp_path / "bravebot"
+        (repo / ".git").mkdir(parents=True)
+        got = build_research(
+            self._profile(), {"project": {"targetRepoPath": "bravebot"}}, str(tmp_path)
+        )
+        assert got, "worktree step was dropped"
+        assert f"{repo}-" in got[0]
+
+    def test_repo_doc_gives_the_path_scheme(self):
+        doc = self._repo_doc()
+        assert "../bravebot-<issue-number>" in doc
+
+    def test_repo_doc_covers_create_reuse_and_removal(self):
+        """A story spans iterations: the second one must re-enter the worktree
+        it already has rather than add a second, and merged stories must not
+        leave the tree behind."""
+        doc = self._repo_doc()
+        assert "worktree list" in doc, "no way to detect an existing worktree"
+        assert "worktree add -b" in doc, "no way to start one"
+        assert "worktree add --track -b" in doc, "no way to reuse a pushed branch"
+        assert "worktree remove" in doc, "no teardown"
+
+    def test_shared_docs_point_at_the_rule_wherever_they_name_the_checkout(self):
+        """The rule only takes effect if the doc the agent is following at the
+        moment it cds sends it to the profile."""
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                text = f.read()
+            if "[targetRepoPath from bot config]" not in text:
+                continue
+            assert "worktree" in text, f"docs/{name} names the checkout with no pointer"
+
+    def test_the_pointers_stay_project_neutral(self):
+        """Shared docs serve every profile; brave-core has no worktrees."""
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                text = f.read()
+            assert "bravebot" not in text, f"docs/{name} hard-codes bravebot"
+
+
 class TestPrdMode:
     """The PRD is either authored (curated) or a cache the bot refreshes from
     GitHub (auto). Defaulting matters: deployments predating the key treat
@@ -1773,20 +2019,38 @@ class TestPrdMode:
         with open(path) as f:
             assert json.load(f)["stories"] == []
 
-    def test_refresh_is_a_noop_in_curated_mode(self, tmp_dir):
-        """Curated PRDs must never be rewritten from GitHub behind the operator."""
-        script = os.path.join(SCRIPT_DIR, "refresh-prd-cache.sh")
-        with open(script) as f:
-            body = f.read()
-        assert 'if [ "$BOT_PRD_MODE" != "auto" ]; then' in body
-        assert body.index('if [ "$BOT_PRD_MODE" != "auto" ]; then') < body.index(
-            "add-backlog-to-prd.py"
-        )
+    @staticmethod
+    def _sync_prd():
+        with open(os.path.join(SCRIPT_DIR, "sync-prd.sh")) as f:
+            return f.read()
 
-    def test_refresh_starts_no_agent(self):
+    AUTO_GATE = 'if [ "$BOT_PRD_MODE" = "auto" ]; then'
+
+    def test_curated_prd_is_never_rewritten_from_github(self):
+        """A curated PRD is the operator's document. The bot-PR sync rewrites
+        the status of stories already in it, so it runs in auto alone."""
+        body = self._sync_prd()
+        assert body.index(self.AUTO_GATE) < body.index("sync-bot-prs-to-prd.py")
+
+    def test_curated_prd_still_gets_its_backlog(self):
+        """The backlog sync only appends issues nobody has tracked yet, and it
+        is what the nightly agent session did before this was a script. Behind
+        the auto gate, every curated deployment silently stops picking up newly
+        assigned work the day its schedules are re-synced."""
+        body = self._sync_prd()
+        assert body.index("add-backlog-to-prd.py") < body.index(self.AUTO_GATE)
+
+    def test_a_run_leaves_a_curated_prd_alone(self):
+        """Appending is the scheduled job's business, at an hour the operator
+        chose -- not something a run does to an authored PRD behind them."""
+        with open(os.path.join(os.path.dirname(__file__), os.pardir, "run.sh")) as f:
+            body = f.read()
+        assert body.index(self.AUTO_GATE) < body.index("scripts/sync-prd.sh")
+
+    def test_sync_starts_no_agent(self):
         """The whole point: keeping the PRD current must cost no tokens."""
         for name in (
-            "refresh-prd-cache.sh",
+            "sync-prd.sh",
             "add-backlog-to-prd.py",
             "sync-bot-prs-to-prd.py",
         ):
@@ -1799,8 +2063,85 @@ class TestPrdMode:
         """This job used to spend a whole agent session on a deterministic sync."""
         with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
             body = f.read()
-        assert "add-backlog -- ./scripts/refresh-prd-cache.sh" in body
+        assert "add-backlog -- ./scripts/sync-prd.sh" in body
         assert "/add-backlog-to-prd'" not in body
+
+
+class TestCronBlocks:
+    """sync-schedules.sh replaces this project's crontab block by matching its
+    marker exactly. The marker carries the repo's name, and that name changed:
+    a block written before the rename matches nothing, so re-running the script
+    leaves the old jobs installed and adds a second copy of every one."""
+
+    LIB = os.path.join(SCRIPT_DIR, "lib", "cron-blocks.sh")
+
+    @classmethod
+    def _run(cls, snippet, stdin=""):
+        return subprocess.run(
+            ["bash", "-c", f'source "{cls.LIB}"\n{snippet}'],
+            input=stdin,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    @staticmethod
+    def _block(name, project, job):
+        return "\n".join(
+            [
+                f"# === {name} ({project}) scheduled jobs ===",
+                job,
+                f"# === end {name} ({project}) ===",
+            ]
+        )
+
+    def _strip(self, crontab, project="brave-core"):
+        return self._run(f'bot_strip_cron_blocks "{project}"', crontab)
+
+    def test_the_marker_written_is_the_current_name(self):
+        assert self._run('bot_cron_marker "p"').strip() == "brave-dev-loop (p)"
+
+    def test_the_current_block_is_stripped(self):
+        out = self._strip(self._block("brave-dev-loop", "brave-core", "0 1 * * * now"))
+        assert "now" not in out
+
+    def test_a_block_from_the_former_repo_name_is_stripped_too(self):
+        """Left behind, its jobs keep running beside the ones just installed."""
+        out = self._strip(self._block("brave-dev-bot", "brave-core", "0 1 * * * old"))
+        assert "old" not in out
+
+    def test_both_spellings_go_in_one_pass(self):
+        crontab = "\n".join(
+            [
+                self._block("brave-dev-bot", "brave-core", "0 1 * * * old"),
+                self._block("brave-dev-loop", "brave-core", "0 2 * * * now"),
+            ]
+        )
+        out = self._strip(crontab)
+        assert "old" not in out and "now" not in out
+
+    def test_another_projects_block_survives(self):
+        """One crontab, several deployments -- that is what the project name in
+        the marker is for."""
+        out = self._strip(self._block("brave-dev-loop", "bravebot", "0 3 * * * theirs"))
+        assert "theirs" in out
+
+    def test_entries_the_bot_never_wrote_survive(self):
+        crontab = "\n".join(
+            [
+                "PATH=/usr/bin",
+                "0 4 * * * backup",
+                self._block("brave-dev-bot", "brave-core", "0 1 * * * old"),
+            ]
+        )
+        out = self._strip(crontab)
+        assert "PATH=/usr/bin" in out and "backup" in out and "old" not in out
+
+    def test_sync_schedules_uses_the_shared_stripper(self):
+        """The marker spelling and its history belong in one place."""
+        with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
+            body = f.read()
+        assert "bot_strip_cron_blocks" in body
+        assert "bot_cron_marker" in body
 
 
 class TestBotConfigBool:

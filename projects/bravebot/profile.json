@@ -1,0 +1,30 @@
+{
+  "description": "bravebot: a Rust workspace (cargo) with a thin npm wrapper, checked by ci.yml plus the organization-level brave/security-action scan.",
+  "research": [
+    "Create or re-enter this story's git worktree at {targetRepo}-<issue-number> and do all of the work there — every git, build, test, edit and file read below, including paths written as {targetRepo}/..., means the worktree and never {targetRepo} itself (see projects/bravebot/docs/repo.md)",
+    "Read {targetRepo}/agents/AGENTS.md — the prompt-injection rule it states overrides every other consideration in this repo",
+    "Read {targetRepo}/docs/development.md for the build, check, and security-scan commands"
+  ],
+  "validations": [
+    "Build the project: cargo build --all --locked (must pass)",
+    "Format the code: cargo fmt --all (must pass)",
+    "{testStep}",
+    "Run make check (cargo fmt --check, cargo clippy --all-targets --all-features -D warnings, cargo test --all --locked, toolchain age) and fix every failure (must pass)",
+    "Run make check-spec — the mechanical docs/specs check: clause numbering, the tests each clause names, the paths it governs (must pass)",
+    "Run make check-npm — npm ci --ignore-scripts and the lockfile lint, as the npm-lockfile CI job does (must pass)",
+    "Run make check-reviewdog — the brave/security-action scan that comments on the PR, over this branch's changes; fix every finding it reports (must pass)",
+    "Run make check-msrv — cargo build --all --locked in a container pinned to the declared minimum Rust, as the minimum-toolchain CI job does (must pass; needs Docker)",
+    "Run make check-linux — fmt, clippy -D warnings and tests on Linux under current stable, which a macOS host never covers (must pass; needs Docker)",
+    "Run cargo fmt --all one final time; if it makes any changes, amend the last commit with the formatting fixes"
+  ],
+  "testSteps": {
+    "testFix": "Run the failing test: cargo test --all {testFilter} (must pass — run it 3 times to confirm it is not flaky)",
+    "disabledTest": "Run the re-enabled test: cargo test --all {testFilter} (must pass — run it 3 times to confirm it is not flaky)",
+    "generic": "Add or update the tests that cover the change, then run cargo test --all --locked (must pass)"
+  },
+  "testTargets": {},
+  "labels": {
+    "pr": [],
+    "disabledTest": ""
+  }
+}
