@@ -24,9 +24,7 @@
   },
   "testTargets": {},
   "labels": {
-    "pr": [
-      "ai-generated"
-    ],
+    "pr": [],
     "disabledTest": ""
   }
 }

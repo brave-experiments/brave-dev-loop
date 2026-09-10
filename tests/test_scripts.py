@@ -1843,6 +1843,40 @@ class TestProfileResearch:
                     assert found in known, (name, found)
 
 
+class TestSharedDocsCarryNoProjectLabels:
+    """Labels belong to the profile. A shared doc that names one hands every
+    project brave-core's labels, and `gh pr create --label` fails outright on a
+    label the repo does not have -- which is how bravebot PRs lost theirs."""
+
+    BRAVE_CORE_LABELS = (
+        "ai-generated",
+        "QA/No",
+        "CI/skip",
+        "release-notes/exclude",
+        "OS/Desktop",
+        "OS/Android",
+        "OS/iOS",
+        "disabled-brave-test",
+    )
+
+    def test_no_shared_doc_names_a_brave_core_label(self):
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                text = f.read()
+            for label in self.BRAVE_CORE_LABELS:
+                assert label not in text, f"docs/{name} hard-codes {label!r}"
+
+    def test_the_brave_core_profile_still_documents_them(self):
+        """They have to live somewhere -- moving them out of the shared docs
+        must not lose them."""
+        with open(os.path.join(PROJECTS_DIR, "brave-core", "docs", "labels.md")) as f:
+            text = f.read()
+        for label in self.BRAVE_CORE_LABELS:
+            assert label in text, label
+
+
 class TestBravebotProfile:
     """bravebot is a Rust workspace, and its checks are the ones its Makefile
     and ci.yml actually define -- not brave-core's, which is what the generic

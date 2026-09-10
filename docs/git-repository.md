@@ -111,14 +111,12 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
 
 **IMPORTANT**: Always create PRs in draft state using the `--draft` flag. This allows for human review before marking ready.
 
-**IMPORTANT**: Always include required labels when creating the PR using `--label` flags. At minimum, all bot-created PRs MUST have the `ai-generated` label. See [workflow-committed.md](./workflow-committed.md) for full label rules.
+**IMPORTANT**: Labels are project-specific and come from the project profile (`labels.pr` in `projects/<profile>/profile.json`, plus the profile's `docs/labels.md`). Pass each one with a `--label` flag; a profile that defines none means a PR with no labels. See [workflow-committed.md](./workflow-committed.md) for the full rules.
 
 **Example:**
 ```bash
 gh pr create --draft --title "the pr title" \
-  --label "ai-generated" \
-  --label "QA/No" \
-  --label "release-notes/exclude" \
+  --label "<each label the profile's rules give you>" \
   --body "$(cat <<'EOF'
 Closes $ISSUE_REPO#<issue-number>
 
