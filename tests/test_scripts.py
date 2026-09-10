@@ -1189,12 +1189,20 @@ class TestBotExportIdentityEnv:
 
     def test_no_key_configured_leaves_ssh_alone(self, tmp_path):
         bindir = self._fake_gh(tmp_path, {})
+        # A sentinel rather than an empty value: the snippet inherits the
+        # caller's environment, and this repo's own .envrc exports
+        # GIT_SSH_COMMAND, so asserting emptiness would only pass for
+        # developers who don't use direnv here. Untouched is the real claim.
         result = run_identity_snippet(
             "set -e\nbot_export_identity_env '' ''\necho \"ssh=[$GIT_SSH_COMMAND]\"",
-            env={"PATH": f"{bindir}:{os.environ['PATH']}", "GH_TOKEN": ""},
+            env={
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "GH_TOKEN": "",
+                "GIT_SSH_COMMAND": "ssh -i /preexisting/key",
+            },
         )
         assert result.returncode == 0
-        assert "ssh=[]" in result.stdout
+        assert "ssh=[ssh -i /preexisting/key]" in result.stdout
 
 
 # ═══════════════════════════════════════════════════════════════════════════
