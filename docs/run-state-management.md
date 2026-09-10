@@ -1,5 +1,12 @@
 # Run State Management
 
+> With `bot.maxConcurrentRuns` above 1, each run slot has its own state
+> file: slot 1 uses `data/run-state.json`, slot N uses
+> `data/run-state.slot-N.json`. The operator settings on this page live in
+> `data/run-state.json` and are copied into every slot at run start, so set
+> them there. `scripts/reset-run-state.sh --slot N` resets one slot.
+> See [Concurrent runs](./concurrent-runs.md).
+
 ## When run-state.json Gets Reset
 
 The `run-state.json` file tracks which stories have been checked in the current run. It gets reset automatically in these situations:

@@ -20,6 +20,7 @@ This documentation is split into focused files for better performance. Read only
 ### Core Workflow
 - **[docs/workflow-state-machine.md](../docs/workflow-state-machine.md)** - State machine, task selection, iteration logic, priority rules
 - **[docs/run-state-management.md](../docs/run-state-management.md)** - Run state, configuration, reset procedures
+- **[docs/concurrent-runs.md](../docs/concurrent-runs.md)** - Run slots, story claims, and the rules when several runs share this directory
 
 ### Status Workflows (read when working on that status)
 - **[docs/workflow-pending.md](../docs/workflow-pending.md)** - Status: "pending" (development and implementation)

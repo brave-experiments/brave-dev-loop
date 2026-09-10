@@ -4,9 +4,13 @@
 # Project config - user-specific (template: config.example.json)
 config.json
 
-# Runtime lock file (and the mkdir-based fallback lock)
+# Runtime lock files: one per run slot (and the mkdir-based fallback lock).
+# A lock file outliving its run is normal — it is an inode to lock, not a
+# record of anything. ./run.sh --status says what is actually running.
 .run.lock
 .run.lock.d/
+.run.slot-*.lock
+.run.slot-*.lock.d/
 
 # Runtime files - user-specific state
 data/prd.json
@@ -14,6 +18,11 @@ data/prd.archived.json
 data/progress.txt
 data/progress.archived.txt
 data/run-state.json
+data/run-state.slot-*.json
+data/runs/
+data/claims.json
+data/.prd.lock
+data/.progress.lock
 .last-branch
 
 # Trusted reviewers allowlist - user-specific

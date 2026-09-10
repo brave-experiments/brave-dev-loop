@@ -65,6 +65,8 @@ first to skip the wizard, then run `make setup`.
 ./run.sh --agent codex --model gpt-5
 ./run.sh --agent cursor
 ./run.sh --model opus
+
+./run.sh --status     # what is running in this directory
 ```
 
 Agent precedence is `--agent` flag > `BOT_AGENT` env var > `bot.agent` in
@@ -75,7 +77,11 @@ tail -f data/progress.txt        # watch progress
 make schedules                   # install/update cron jobs
 make view-schedules              # show the current schedule
 ./scripts/reset-run-state.sh     # reset run state between runs
+./scripts/reset-run.sh --stale   # clear slots left behind by a killed run
 ```
+
+Several runs can share one bot directory — set `bot.maxConcurrentRuns` and see
+[Concurrent runs](docs/concurrent-runs.md). It is off by default.
 
 Stop with `Ctrl+C`; the bot returns the target repo to its default branch on
 the way out.
@@ -92,6 +98,7 @@ claude
 | | |
 | --- | --- |
 | [Configuration](docs/configuration.md) | `config.json` keys, PRD format, run state |
+| [Concurrent runs](docs/concurrent-runs.md) | Run slots, claims, `--status`, clearing a killed run |
 | [Project profiles](projects/README.md) | Per-project validations, test targets, docs |
 | [Skills](docs/skills.md) | The slash commands this repo provides |
 | [Bot identity](docs/bot-identity.md) | Signing, SSH keys, `gh` isolation, hooks |

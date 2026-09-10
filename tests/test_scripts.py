@@ -2701,8 +2701,14 @@ class TestRunLocking:
         assert "free=0" in free.stdout, free.stdout + free.stderr
 
     def test_no_call_site_still_uses_bare_flock(self):
-        for name in ("../run.sh", "with-lock.sh"):
+        # run.sh takes a numbered run slot; with-lock.sh takes a named lock.
+        # Either way the lock library owns the flock, not the call site.
+        entry_points = {
+            "../run.sh": "bot_acquire_run_slot",
+            "with-lock.sh": "bot_acquire_lock",
+        }
+        for name, entry in entry_points.items():
             with open(os.path.join(SCRIPT_DIR, name)) as f:
                 body = f.read()
             assert "flock -n 200" not in body, name
-            assert "bot_acquire_lock" in body, name
+            assert entry in body, name

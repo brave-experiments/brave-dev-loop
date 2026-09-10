@@ -157,3 +157,20 @@ Test suite typically completes in 5-10 seconds:
 - File checks: <1 second
 - Hook tests: ~2-3 seconds
 - Configuration tests: <1 second
+
+## Concurrency
+
+`test_concurrency.py` covers run slots, claims and serialized PRD writes. It
+spawns real processes and kills them, because a lock is only worth testing
+against what actually happens to a run.
+
+`sim/sim.sh` builds a throwaway deployment in `/tmp/botsim` — a copy of this
+repo with a fake agent binary and a dummy PRD — so `./run.sh` can be run for
+real, several times at once, without spending tokens or touching anything:
+
+```bash
+tests/sim/sim.sh build      # create it
+tests/sim/sim.sh run 2 2    # 2 concurrent runs, 2 iterations each
+tests/sim/sim.sh status
+tests/sim/sim.sh clean
+```
