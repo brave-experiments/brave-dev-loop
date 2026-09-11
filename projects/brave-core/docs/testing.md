@@ -276,7 +276,10 @@ https://ci.brave.com/job/<...> — `WatermarkSettingsCommandLineBrowserTest.GetC
 red on the last 14 consecutive runs.
 ```
 
-If you *can* reproduce it, give the command instead — that is strictly better.
+If you *can* reproduce it, give the command instead — that is strictly better. A
+disable touches only test and filter files, so the command is the whole
+reproduction here; pass `--test-only-change` to `check-pr-body.py` and it will
+not ask for the user-facing steps that a product bug needs.
 
 **`## The fix`** — why this filter file and this pattern, and the root cause in
 plain language. Then the findings from Chromium Test Detection (step 7 above), as

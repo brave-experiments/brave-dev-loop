@@ -23,9 +23,13 @@ It takes a lock, so an entry cannot interleave with another run's ([Concurrent r
 - Files changed
 - Branch created: [branch-name]
 - **Reproduction** (REQUIRED — this is what the PR body quotes):
-  - Command, exactly as run, and from which directory
-  - What it did before the fix (the failing output, trimmed)
+  - The steps, numbered. For anything a user can see, what a *user* does in the
+    running product: the screen or URL, the setting, the input. For a command,
+    exactly as run and from which directory
+  - What it did before the fix (the failing output or wrong state, trimmed)
   - What it does now
+  - The test that covers it, if you added one — named, with both outcomes. It
+    replaces the steps only when the change is test-only
   - If it cannot be reproduced here: why, plus the CI job / crash report / issue link
 - [If filter file modification] **Project-specific test fields**: see the project profile's `docs/progress.md`
 - **Test Results** (REQUIRED):

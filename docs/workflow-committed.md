@@ -46,7 +46,9 @@
    issue. Read **[pr-descriptions.md](./pr-descriptions.md)** and write the body to
    the shape it defines. The two things it must deliver first: **how to reproduce
    the problem**, and **exactly what the problem is** — before any mechanism, and
-   before any identifier.
+   before any identifier. If a user can see the bug, the reproduction is the
+   steps a *user* takes in the running product; a test command on its own shows a
+   reviewer nothing they could have seen for themselves.
 
    **SECURITY NOTE**: If this PR fixes a security-sensitive issue, use discretion in the title and description. See [SECURITY.md](../SECURITY.md#public-security-messaging) for detailed guidance on avoiding detailed vulnerability disclosure in public messages.
 
@@ -61,13 +63,18 @@ Closes $ISSUE_REPO#<issue-number>
 no type names, no file paths, no upstream citations. The symptom, not the cause.]
 
 ## Reproduce
-```sh
-[the exact command, and the directory it runs in if not the repo root]
-```
-[What it does today, and what it does with this branch. A test you added counts,
-if you say it fails on the parent commit. If it truly cannot be reproduced here,
-replace the block above with a line beginning "Not reproducible locally:" giving
-the reason and a link to the evidence — the CI job, the crash report, the logs.]
+1. [what a person does first in the running product — the screen or URL, the
+   setting, the input; a command exactly as typed, with its directory]
+2. [the step that shows the bug]
+
+[What you observed, verbatim where it is output, and what you expected instead.]
+
+[The test you added, on one line: name it and say it fails on the parent commit.
+It is the evidence, not the reproduction. A test invocation on its own is enough
+only when the diff touches nothing but tests — then pass --test-only-change to
+the checker. If the problem cannot be reproduced here at all, replace everything
+above with a line beginning "Not reproducible locally:" giving the reason and a
+link to the evidence — the CI job, the crash report, the logs.]
 
 ## The fix
 [2-5 sentences. The mechanism now, in plain language, and why it fixes the symptom
@@ -84,10 +91,11 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
 ````
 
    **The checker must pass before you create the PR.** Errors are structural —
-   fix them. Warnings are the filler heuristics; read each one and fix it unless
-   you can say why it is wrong. Anything that genuinely needs depth (a table, a
-   benchmark, a long root-cause chain, an upstream citation) goes in a
-   `<details>` block, which the checker does not count against the length budget.
+   fix them. Warnings are the filler and reproduction heuristics; read each one
+   and fix it unless you can say why it is wrong. Anything that genuinely needs
+   depth (a table, a benchmark, a long root-cause chain, an upstream citation)
+   goes in a `<details>` block, which the checker does not count against the
+   length budget.
 
    **CRITICAL: Always include labels when creating the PR.** Determine which labels apply (see label rules below) and pass them directly to `gh pr create` using `--label` flags.
 

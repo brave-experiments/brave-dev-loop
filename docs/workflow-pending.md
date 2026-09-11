@@ -152,14 +152,21 @@
    verbatim — you will need them for the PR body, and reconstructing them later
    from memory produces a description no reviewer can act on:
 
-   1. **The command**, exactly as typed, and the directory it ran in.
-   2. **What it did** — the failure output, trimmed to the lines that matter.
+   1. **The steps**, in the order a person takes them. Where a user can see the
+      bug, these are what a *user* does in the running product: the screen or
+      URL, the setting, the input. Where it is a command, exactly as typed, and
+      the directory it ran in.
+   2. **What it did** — the failure output or the wrong state, trimmed to the
+      lines that matter.
    3. **What it should have done instead.**
 
    Keep them somewhere you can paste from at PR time (the progress entry is the
    natural place — see [progress-reporting.md](./progress-reporting.md)). A test
-   you add that fails on the parent commit and passes with the fix *is* the
-   reproduction, and the best form of it: record its name and both outcomes.
+   you add that fails on the parent commit and passes with the fix is the
+   *evidence* a reviewer verifies with: record its name and both outcomes as
+   well as the steps, not instead of them. Only when the change is test-only —
+   a disable, a flaky-test fix, a harness change, nothing a user could ever
+   observe — is the test the whole reproduction.
 
    If the problem genuinely cannot be reproduced in this environment — CI-only,
    platform-specific, needs the fleet — record that and the evidence you do have

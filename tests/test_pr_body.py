@@ -37,10 +37,14 @@ all. The request fails as a timeout and each retry dies at the same 60
 seconds, though the configured limit for a reply is 600 seconds.
 
 ## Reproduce
-```sh
-cargo test -p bravebot-net a_reply_that_takes_longer_than_the_send_bound
-```
-Fails on the parent commit with `timeout: send request`; passes here.
+1. Configure a model that takes over a minute to produce its first token.
+2. Leave the reply timeout at its 600 second default and send any prompt.
+
+The request fails at 60 seconds with `timeout: send request` and is retried,
+each retry dying at the same 60 seconds. Expected: the reply at 75 seconds.
+
+`cargo test -p bravebot-net a_reply_that_takes_longer_than_the_send_bound`
+fails on the parent commit and passes here.
 
 ## The fix
 Our send timeout was also bounding the wait for the reply, because ureq clamps
@@ -51,6 +55,22 @@ accounts for every phase it bounds.
 - [x] `make check` - passed
 - [ ] CI passes cleanly
 """
+
+
+def with_reproduce(text):
+    """GOOD with the body of its Reproduce section replaced by `text`."""
+    out, skipping = [], False
+    for line in GOOD.splitlines():
+        if line.startswith("## "):
+            skipping = line[3:].strip().lower() == "reproduce"
+            out.append(line)
+            if skipping:
+                out.append(text)
+                out.append("")
+            continue
+        if not skipping:
+            out.append(line)
+    return "\n".join(out)
 
 
 def body_without(section):
@@ -134,31 +154,24 @@ def test_decorated_heading_still_matches(checker):
 
 
 def test_prose_only_reproduction_is_rejected(checker):
-    body = GOOD.replace(
-        "```sh\ncargo test -p bravebot-net a_reply_that_takes_longer_than_the_send_bound\n```\n"
-        "Fails on the parent commit with `timeout: send request`; passes here.",
-        "Run the net tests and you will see the timeout.",
-    )
+    body = with_reproduce("Run the net tests and you will see the timeout.")
     errors, _ = checker.check(body)
     assert any("paste-able" in e for e in errors)
 
 
 def test_numbered_steps_are_a_reproduction(checker):
-    body = GOOD.replace(
-        "```sh\ncargo test -p bravebot-net a_reply_that_takes_longer_than_the_send_bound\n```",
-        "1. Open the settings pane.\n2. Pick a slow model.\n3. Send any prompt.",
+    body = with_reproduce(
+        "1. Open the settings pane.\n2. Pick a slow model.\n3. Send any prompt.\n"
+        "\nNo answer ever arrives; expected one inside the configured limit."
     )
-    errors, _ = checker.check(body)
+    errors, warnings = checker.check(body)
     assert errors == []
+    assert warnings == []
 
 
 def test_not_reproducible_locally_needs_evidence(checker):
     excuse = "Not reproducible locally: ASAN-only, under builder memory pressure."
-    body = GOOD.replace(
-        "```sh\ncargo test -p bravebot-net a_reply_that_takes_longer_than_the_send_bound\n```\n"
-        "Fails on the parent commit with `timeout: send request`; passes here.",
-        excuse,
-    )
+    body = with_reproduce(excuse)
     errors, _ = checker.check(body)
     assert any("evidence" in e for e in errors)
 
@@ -168,11 +181,71 @@ def test_not_reproducible_locally_needs_evidence(checker):
 
 
 def test_command_without_an_outcome_warns(checker):
-    body = GOOD.replace(
-        "Fails on the parent commit with `timeout: send request`; passes here.", ""
-    )
+    body = with_reproduce("```sh\ncurl -sv http://localhost:8080/v1/chat\n```")
     _, warnings = checker.check(body)
     assert any("outcome" in w for w in warnings)
+
+
+# ── A test is not a reproduction ─────────────────────────────────────────────
+
+
+TEST_ONLY_REPRO = """```sh
+make test TEST=SlowReply.FirstByteAfterSendBound
+```
+Fails on the parent commit with `timeout: send request`; passes here."""
+
+
+def test_reproducing_only_by_running_a_test_warns(checker):
+    errors, warnings = checker.check(with_reproduce(TEST_ONLY_REPRO))
+    assert errors == []
+    assert any("only by running a test" in w for w in warnings)
+
+
+def test_test_only_change_silences_it(checker):
+    errors, warnings = checker.check(
+        with_reproduce(TEST_ONLY_REPRO), test_only_change=True
+    )
+    assert errors == []
+    assert warnings == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "make test TEST=Foo.Bar",
+        "make check",
+        "npm run test -- brave_unit_tests --filter=Foo.Bar",
+        "cargo test -p bravebot-net a_reply",
+        "pytest tests/test_pr_body.py",
+        "python3 -m pytest tests/",
+        "out/Release/brave_unit_tests --gtest_filter=Foo.Bar",
+        "bazel test //net:all",
+    ],
+)
+def test_every_shape_of_test_invocation_is_recognised(checker, command):
+    body = with_reproduce(f"```sh\n{command}\n```\nFails on the parent commit.")
+    _, warnings = checker.check(body)
+    assert any("only by running a test" in w for w in warnings), command
+
+
+def test_a_product_command_is_not_a_test_invocation(checker):
+    body = with_reproduce(
+        "```sh\ncd bravebot\n./target/debug/bravebot ask 'hello'\n```\n"
+        "Hangs for 60 seconds, then reports a timeout. Expected an answer."
+    )
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert warnings == []
+
+
+def test_a_step_that_only_runs_a_test_still_warns(checker):
+    """Numbering a test command does not make it a user-facing reproduction."""
+    body = with_reproduce(
+        "1. Run `make test TEST=SlowReply.FirstByteAfterSendBound`.\n"
+        "\nIt fails on the parent commit and passes here."
+    )
+    _, warnings = checker.check(body)
+    assert any("only by running a test" in w for w in warnings)
 
 
 # ── The Closes line ──────────────────────────────────────────────────────────
@@ -335,13 +408,29 @@ def test_the_shipped_template_passes_its_own_checker(checker):
     template = doc[start : doc.index("\nEOF", start)]
 
     # Fill the placeholders a real body would fill, and nothing else.
-    body = template.replace("$ISSUE_REPO#<issue-number>", "owner/repo#1").replace(
-        "[the exact command, and the directory it runs in if not the repo root]",
-        "make test TEST=Foo.Bar",
+    body = (
+        template.replace("$ISSUE_REPO#<issue-number>", "owner/repo#1")
+        .replace(
+            "1. [what a person does first in the running product — the screen or URL, the\n"
+            "   setting, the input; a command exactly as typed, with its directory]",
+            "1. Open the settings pane and pick a slow model.",
+        )
+        .replace("2. [the step that shows the bug]", "2. Send any prompt.")
     )
     errors, warnings = checker.check(body)
     assert errors == [], errors
     assert warnings == [], warnings
+    assert "1. Open the settings pane" in body, "step placeholder no longer matches"
+
+
+def test_the_shipped_template_leads_with_steps_not_a_test(checker):
+    """The template is what the bot copies. If its Reproduce block is a bare
+    test command again, every PR it produces loses the human reproduction."""
+    doc = _doc("workflow-committed.md")
+    block = doc[doc.index("## Reproduce", doc.index("cat > /tmp/pr-body")) :]
+    block = block[: block.index("## The fix")]
+    assert checker.NUMBERED_STEP.search(block), block
+    assert not checker.TEST_INVOCATION.search(block), block
 
 
 def test_the_spec_doc_names_the_sections_the_checker_requires(checker):

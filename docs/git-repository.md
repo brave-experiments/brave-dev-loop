@@ -124,7 +124,8 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
 **The body shape is not freeform.** It is defined in
 [pr-descriptions.md](./pr-descriptions.md), and `scripts/check-pr-body.py` enforces
 it. Four sections, in this order, with the reproduction and the problem statement
-before any mechanism:
+before any mechanism. A bug a user can see needs the steps a user takes — a test
+command is the evidence under them, not the reproduction:
 
 **Example:**
 ```bash
@@ -144,7 +145,8 @@ Closes $ISSUE_REPO#<issue-number>
 <2-4 sentences: the symptom a person observes, in plain language>
 
 ## Reproduce
-<a paste-able command or numbered steps, then what happens today vs. with this branch>
+<numbered steps a person follows in the running product, then what you observed
+and what you expected; the test you added last, on one line>
 
 ## The fix
 <2-5 sentences: what the code now does differently, and why that fixes the symptom>

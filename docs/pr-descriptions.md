@@ -22,7 +22,8 @@ Closes <owner>/<repo>#<issue>
 <2-4 sentences. What goes wrong, who hits it, what they see.>
 
 ## Reproduce
-<Paste-able commands, or numbered steps. Then what happens, and what should.>
+<Numbered steps in the running product, then what you observed and what you
+expected. The test you added goes last, on one line.>
 
 ## The fix
 <2-5 sentences in plain language. What changed and why that fixes it.>
@@ -57,27 +58,43 @@ more, the extra goes in `<details>`.
 ## Reproduce
 
 **This is the section reviewers want most, and the one that is usually
-missing.** Give them something to paste:
+missing.** Write it for a person who is going to follow it in the running
+product. If a user can see the bug, that is what the reproduction has to show:
 
 ````markdown
 ## Reproduce
-```sh
-make test TEST=SlowReply.FirstByteAfterSendBound
-```
-Fails on `main` with `timeout: send request` after 60s.
-Passes here: the reply arrives at 75s, inside the configured 600s limit.
+1. Configure a model that takes more than 60 seconds to produce its first
+   token, and leave the reply timeout at its 600 second default.
+2. Send it any prompt.
+3. Watch the request log.
+
+At 60 seconds the request fails with `timeout: send request` and is retried,
+and every retry dies at the same 60 seconds, so no answer ever arrives.
+Expected: the reply at 75 seconds, inside the 600 second limit.
+
+`make test TEST=SlowReply.FirstByteAfterSendBound` covers it — fails on the
+parent commit, passes here.
 ````
 
 Rules:
 
-- **Paste-able beats descriptive.** An exact command, with the directory it
-  runs in if it is not the repo root. Not "run the net tests".
-- **State both sides.** What happens today, and what happens with this branch.
-  A reproduction with no observed-vs-expected is a command, not evidence.
-- **UI or manual steps get numbers.** 1, 2, 3, then what you see.
-- **A test you added is a reproduction** — name it and say it fails on the
-  parent commit. That is the strongest form: the reviewer can verify both
-  halves with `git stash`.
+- **A user-visible bug gets user-visible steps.** Numbered, in the running
+  product, and specific enough to follow without guessing: the screen or URL,
+  the setting, the input. Not "enable the feature and use it".
+- **State both sides.** What you observed, and what you should have observed. A
+  reproduction with no observed-vs-expected is a command, not evidence.
+- **Paste-able beats descriptive** wherever a command is part of it: the exact
+  command, with the directory it runs in if it is not the repo root. Not "run
+  the net tests".
+- **The test goes last, and it is not the reproduction.** Name the test you
+  added and say it fails on the parent commit — that is how a reviewer checks
+  both halves for themselves, and it belongs under the steps as supporting
+  evidence. Alone, it says a test the author also wrote now passes, which is
+  not the thing users complained about.
+- **A test-only change reproduces with the test.** A disable, a flaky-test fix,
+  a harness change — nothing a user could ever observe — and the test
+  invocation is the whole reproduction. Pass `--test-only-change` to the
+  checker so it stops asking for steps.
 
 If it genuinely cannot be reproduced on a laptop — a CI-only flake, a
 platform-specific build, a race that needs the fleet — say so on a line
@@ -165,12 +182,16 @@ needs first:
 > Slow models and long prompts are unusable.
 >
 > ## Reproduce
-> ```sh
-> make test TEST=SlowReply.FirstByteAfterSendBound
-> ```
-> A loopback server that waits 900ms before answering, against a 200ms send
-> limit and a 10s reply limit. Fails on the parent commit with
-> `timeout: send request`; passes here.
+> 1. Configure a model that takes more than 60 seconds to produce its first
+>    token, leaving the reply timeout at 600 seconds.
+> 2. Send any prompt and watch the request log.
+>
+> The request fails at 60 seconds with `timeout: send request` and is retried,
+> each retry dying at the same 60 seconds. Expected: the reply at 75 seconds.
+>
+> `make test TEST=SlowReply.FirstByteAfterSendBound` covers it — a loopback
+> server that waits 900ms against a 200ms send limit and a 10s reply limit.
+> Fails on the parent commit, passes here.
 >
 > ## The fix
 > Our timeout for sending a request was also being applied to waiting for the
@@ -183,19 +204,25 @@ needs first:
 > <the table>
 > </details>
 
-Same facts, same precision. The reviewer gets the symptom, a command, and the
-cause before any identifier appears.
+Same facts, same precision. The reviewer gets the symptom, steps they can
+follow, and the cause before any identifier appears.
 
 ## Checking a body
 
 ```sh
 python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md
+python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md --test-only-change
 python3 scripts/check-pr-body.py --pr 214 --repo <owner>/<repo>   # after the fact
 ```
 
+`--test-only-change` is for a diff that touches only tests: it drops the
+warning about reproducing by test invocation alone. Passing it for a change a
+user can see defeats the point of the section.
+
 Errors exit non-zero and must be fixed before the PR is created. Warnings are
-printed and do not fail — read them, they are the slop heuristics, and they are
-right more often than not. `--strict` makes warnings fail too.
+printed and do not fail — read them, they are the slop and reproduction
+heuristics, and they are right more often than not. `--strict` makes warnings
+fail too.
 
 The checker matches structure and phrasing. It cannot tell whether the
 reproduction actually reproduces, or whether the problem statement is true.
