@@ -425,10 +425,22 @@ Where a workflow doc says a step is project-specific, read the named file there.
     PROJECT_RULES="The '$BOT_PROFILE' profile ships no project-specific docs, so where a workflow
 doc says a step is project-specific there is nothing further to read."
   fi
+  # The profile's reading steps, rendered fresh by select-task.py rather than
+  # read out of the story. Acceptance criteria are written when a story is
+  # created, so a story older than a reading step would never see it; said
+  # here, every iteration starts from what the project is reviewed against.
+  RESEARCH=$(echo "$TASK_JSON" | jq -r '(.research // []) | map("- " + .) | join("\n")')
+  READ_FIRST=""
+  if [ -n "$RESEARCH" ]; then
+    READ_FIRST="Read these first, whatever the story's acceptance criteria say:
+$RESEARCH
+"
+  fi
   AGENT_PROMPT="You are working on story $STORY_ID (current status: $STORY_STATUS).
 Follow ./$BOT_DIRNAME/docs/workflow-${STORY_STATUS}.md for the workflow.
 Follow the general instructions in ./$BOT_DIRNAME/.claude/CLAUDE.md.
 
+$READ_FIRST
 $PROJECT_RULES
 
 Story details:
