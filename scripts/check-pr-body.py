@@ -2,8 +2,9 @@
 """Check a pull request body against docs/pr-descriptions.md.
 
 The reviewer is a busy human. This enforces the mechanical half of that: the
-four sections in order, a reproduction that can actually be pasted, a closing
-line that will actually close the issue, and no machine-generated filler.
+four sections in order, a reproduction a person can follow rather than only a
+test to run, a closing line that will actually close the issue, and no
+machine-generated filler.
 
     python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md
     python3 scripts/check-pr-body.py --pr 214 --repo brave/bravebot
@@ -62,6 +63,27 @@ ATTRIBUTION = [
 ]
 
 NOT_REPRODUCIBLE = re.compile(r"^\s*>?\s*not reproducible locally\s*:", re.I | re.M)
+
+# A command that runs a test rather than the product. A reproduction made only
+# of these tells the reviewer that a test the author also wrote now passes --
+# not what a user saw go wrong, and not how to see it themselves.
+TEST_INVOCATION = re.compile(
+    r"""(?:
+        \b(?:make|npm|yarn|pnpm|cargo|go|bazel|gradle|gradlew|dotnet|mix|rake|swift)
+            \s+(?:run\s+)?(?:tests?|check)\b
+      | \b(?:pytest|tox|rspec|jest|vitest|ctest|phpunit|nosetests)\b
+      | \bpython3?\s+-m\s+(?:pytest|unittest)\b
+      | --gtest[-_]filter
+    )""",
+    re.X | re.I,
+)
+
+# Getting to where the reproduction starts. Neither a test invocation nor a
+# user-facing step, so these lines decide nothing either way.
+SETUP_COMMAND = re.compile(
+    r"^(?:cd|export|source|set|git|cmake|ninja|autoninja|gn|"
+    r"(?:npm|yarn|pnpm)\s+(?:install|ci|run\s+(?:build|init|sync)))\b"
+)
 CLOSES_LINE = re.compile(r"^\s*(?:closes|fixes|resolves)\b", re.I)
 QUALIFIED_CLOSES = re.compile(
     r"^\s*(?:closes|fixes|resolves)\s+[\w.-]+/[\w.-]+#\d+\s*$", re.I
@@ -96,6 +118,36 @@ def strip_fences(text):
         if not in_fence:
             out.append(line)
     return "\n".join(out)
+
+
+def fenced_lines(text):
+    """The lines inside fenced code blocks -- the inverse of strip_fences."""
+    out, in_fence = [], False
+    for line in text.splitlines():
+        if FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            out.append(line)
+    return out
+
+
+def reproduction_lines(text):
+    """The lines of a Reproduce section that claim to be the reproduction:
+    commands inside fences, and numbered steps. Navigation, build and comment
+    lines are dropped -- they are true of every reproduction."""
+    candidates = fenced_lines(text) + [
+        line for line in strip_fences(text).splitlines() if NUMBERED_STEP.match(line)
+    ]
+    out = []
+    for line in candidates:
+        line = line.strip().lstrip("$").strip()
+        if not line or line.startswith("#"):
+            continue
+        if SETUP_COMMAND.match(line):
+            continue
+        out.append(line)
+    return out
 
 
 def split_sections(body):
@@ -134,7 +186,7 @@ def words(text):
     return len(re.findall(r"\b[\w'-]+\b", text))
 
 
-def check(body, require_closes=True):
+def check(body, require_closes=True, test_only_change=False):
     """Return (errors, warnings) as lists of strings."""
     errors, warnings = [], []
     body = body.replace("\r\n", "\n")
@@ -216,6 +268,15 @@ def check(body, require_closes=True):
                 f"'## {heading}' gives a command but not the outcome: say what happens "
                 "today and what happens with this branch"
             )
+        if not has_excuse and not test_only_change:
+            claimed = reproduction_lines(text or "")
+            if claimed and all(TEST_INVOCATION.search(ln) for ln in claimed):
+                warnings.append(
+                    f"'## {heading}' reproduces only by running a test: for anything a "
+                    "user can see, give numbered steps in the running product with what "
+                    "you observed and what you expected, and keep the test as a line "
+                    "under them. Pass --test-only-change if the diff touches only tests"
+                )
 
     # ── The problem ─────────────────────────────────────────────────────────
     if "The problem" in found_at:
@@ -312,6 +373,12 @@ def main():
         action="store_true",
         help="this PR closes no issue; do not ask for a Closes line",
     )
+    ap.add_argument(
+        "--test-only-change",
+        action="store_true",
+        help="the diff touches only tests, so the test invocation is the whole "
+        "reproduction; do not ask for user-facing steps",
+    )
     args = ap.parse_args()
 
     if args.pr:
@@ -322,7 +389,11 @@ def main():
     else:
         body = sys.stdin.read()
 
-    errors, warnings = check(body, require_closes=not args.no_closes)
+    errors, warnings = check(
+        body,
+        require_closes=not args.no_closes,
+        test_only_change=args.test_only_change,
+    )
 
     for w in warnings:
         print(f"warning: {w}")
