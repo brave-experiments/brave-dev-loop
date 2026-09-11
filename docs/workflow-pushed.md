@@ -140,7 +140,7 @@ The PR branch is behind and has conflicts. Rebase it on the upstream default bra
 ```bash
 python3 "$BOT_DIR/.claude/skills/rebase-bot-prs/rebase-bot-prs.py" --execute <pr-number>
 ```
-- The script is a no-op if the branch is already up to date, so it is safe to call every iteration.
+- The script is a no-op if the branch is already up to date, so it is safe to call every iteration. Run it; do **not** decide the branch is fresh by comparing against the local `upstream/master`, which is as old as the last `git fetch upstream` in this checkout. The script fetches upstream itself, so it is the only reading of "behind" that is current.
 - **The bot cannot run CI** (see [PR Merge Policy](#pr-merge-policy)), so the force-push does **not** reliably start CI. Do NOT tell anyone CI "is re-running" or to "wait for CI".
 - **If it rebased and force-pushed**, the head is fresh but CI still needs a human to run it. In the owner nudge below, ask the owner to **re-run CI** on the new head (and merge once it's green). Note the rebase **and the new head SHA** in `$BOT_DIR/data/progress.txt` — the next iteration must re-check CI on that SHA, see [CI Status: Always Re-Verify After a Rebase](#ci-status-always-re-verify-after-a-rebase). A pre-rebase green does not carry over.
 - If it reports `CONFLICT`/`PUSH_FAILED`/`ERROR`, note it in progress.txt and continue to the nudge below (the owner needs to know it can't be merged cleanly).
