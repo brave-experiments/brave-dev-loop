@@ -34,6 +34,7 @@ This documentation is split into focused files for better performance. Read only
 
 ### Development Guidelines
 - **[docs/testing-requirements.md](../docs/testing-requirements.md)** - Test execution requirements, C++ best practices, RunUntilIdle patterns
+- **[docs/pr-descriptions.md](../docs/pr-descriptions.md)** - How a PR body must read for a human reviewer: reproduction first, problem second. Required before writing any PR body; `scripts/check-pr-body.py` enforces it
 - **[docs/git-repository.md](../docs/git-repository.md)** - Git operations, branch management, dependency restrictions
 - **[docs/progress-reporting.md](../docs/progress-reporting.md)** - Progress.txt format for all status transitions
 - **best_practices.md** (in target repo's docs dir, per `bestPractices.docsDir` config) - Index of all best practices for the target codebase, *when the project has one*. Read the relevant sub-docs based on what you're working on. Most projects do not have it: check, and if it is absent read the rules the target repo does keep (its root `AGENTS.md`/`CLAUDE.md`, the profile's `docs/`) instead of hunting for the file.

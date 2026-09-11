@@ -22,6 +22,11 @@ It takes a lock, so an entry cannot interleave with another run's ([Concurrent r
 - What was implemented
 - Files changed
 - Branch created: [branch-name]
+- **Reproduction** (REQUIRED — this is what the PR body quotes):
+  - Command, exactly as run, and from which directory
+  - What it did before the fix (the failing output, trimmed)
+  - What it does now
+  - If it cannot be reproduced here: why, plus the CI job / crash report / issue link
 - [If filter file modification] **Project-specific test fields**: see the project profile's `docs/progress.md`
 - **Test Results** (REQUIRED):
   - [List all acceptance criteria tests and their results]

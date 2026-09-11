@@ -253,21 +253,42 @@ Applies to the `pending` workflow, step 7.
 
 8. Update CLAUDE.md files if you discover reusable patterns (see below)
 
-
 ## PR body fields for an upstream test disable
 
-Applies to the `committed` workflow.
+Applies to the `committed` workflow. The body still takes the four sections in
+[pr-descriptions.md](../../../docs/pr-descriptions.md) — these fields go *inside*
+them, they do not add sections of their own.
 
-[If this is a Chromium test being disabled, add a clear note:]
-**Note: This is a Chromium test** (located in `./src/` not `./src/brave/`).
+**`## The problem`** — name the test and what it does to people, not just that it
+fails: which CI jobs go red, on which platforms and build types, and whether it
+blocks merges or just adds noise. If it is a Chromium test, say so in one line
+here: **this is an upstream Chromium test** (defined in `./src/`, not
+`./src/brave/`), so Brave inherits the failure rather than causing it.
 
-## Root Cause
-[Description of the underlying issue that needed to be fixed]
+**`## Reproduce`** — a test disable almost never reproduces on a laptop, and that
+is the case the `Not reproducible locally:` line exists for. Give the build type
+and platform, and link the CI job showing the failure:
 
-[If this is a Chromium test, include:]
+```markdown
+## Reproduce
+Not reproducible locally: fails only on Windows ASAN official builds.
+https://ci.brave.com/job/<...> — `WatermarkSettingsCommandLineBrowserTest.GetColors`,
+red on the last 14 consecutive runs.
+```
+
+If you *can* reproduce it, give the command instead — that is strictly better.
+
+**`## The fix`** — why this filter file and this pattern, and the root cause in
+plain language. Then the findings from Chromium Test Detection (step 7 above), as
+a short list:
+
 - **Chromium upstream status**: [Chromium has also disabled this test / Chromium has not disabled this test / Evidence of upstream bug: crbug.com/XXXXX]
 - **Brave modifications**: [Brave does not modify this code area / Brave has modifications in ./src/brave/chromium_src/[path] that may affect this test]
+- **Upstream flake rate**: [N% over the last 30 days per LUCI Analysis, from `check-upstream-flake.py` / not applicable, Brave-specific test]
 
+A disable is a judgement call a reviewer has to agree with, so the evidence that
+it is upstream's problem and not ours is the substance of the PR — it earns its
+space above `<details>`.
 
 ## C++ Testing (Chromium APIs)
 

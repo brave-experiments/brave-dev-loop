@@ -143,6 +143,26 @@
 
 5. **Implement the user story**
 
+   **FIRST: reproduce the problem, and write down exactly how.**
+
+   Before changing anything, make the problem happen and capture three things
+   verbatim — you will need them for the PR body, and reconstructing them later
+   from memory produces a description no reviewer can act on:
+
+   1. **The command**, exactly as typed, and the directory it ran in.
+   2. **What it did** — the failure output, trimmed to the lines that matter.
+   3. **What it should have done instead.**
+
+   Keep them somewhere you can paste from at PR time (the progress entry is the
+   natural place — see [progress-reporting.md](./progress-reporting.md)). A test
+   you add that fails on the parent commit and passes with the fix *is* the
+   reproduction, and the best form of it: record its name and both outcomes.
+
+   If the problem genuinely cannot be reproduced in this environment — CI-only,
+   platform-specific, needs the fleet — record that and the evidence you do have
+   (the CI job URL, the crash report, the issue's logs). That is what the PR body
+   will carry in place of steps, and it must link the evidence.
+
    **CRITICAL: Investigate Production Code First (Test Failures)**
 
    When fixing intermittent test failures, you MUST investigate the production code being tested BEFORE looking at the test code. Intermittent failures often reveal real bugs — race conditions, missing synchronization, incorrect state management — in the code under test. Do not default to "fix the test."
