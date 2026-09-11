@@ -196,8 +196,8 @@ When a best practice needs adjustment based on pushback analysis:
 
 ```bash
 cd $TARGET_REPO
-git fetch origin
-git checkout -b docs/adjust-<brief-description> origin/master
+git fetch upstream
+git checkout -b docs/adjust-<brief-description> upstream/master
 
 # Make the documentation change
 # ... edit the appropriate best-practices file ...
@@ -334,7 +334,7 @@ For high-confidence, clearly generalizable patterns (username mode / PR list mod
 
 For self-review mode adjustments:
 - **Always create a branch and PR** (see "Creating Best Practice PRs" in the Self-Review section above) — do NOT commit directly to master
-- The branch must be based on `origin/master`
+- The branch must be based on `upstream/master`, not the bot fork's default branch
 - Keep changes minimal and focused — one PR per rule adjustment
 - **Always track the PR in the PRD** with `scripts/sync-bot-prs-to-prd.py --pr <pr-number>` after creating it
 

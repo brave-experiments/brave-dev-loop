@@ -49,7 +49,7 @@ add`, `worktree remove`, `worktree prune` — goes through the repo lock:
 
 ```sh
 LOCK=<bot dir>/scripts/git-repo-lock.sh
-"$LOCK" "$MAIN" -- git -C "$MAIN" fetch origin
+"$LOCK" "$MAIN" -- git -C "$MAIN" fetch upstream
 ```
 
 Commands inside `$WORK` (build, test, commit, rebase) need no lock: the
@@ -61,10 +61,20 @@ Otherwise create it. A new story gets its branch from the worktree command, so
 there is no separate `git checkout -b`:
 
 ```sh
-"$LOCK" "$MAIN" -- git -C "$MAIN" fetch origin
-"$LOCK" "$MAIN" -- git -C "$MAIN" worktree add -b <branch-name> "$WORK" origin/main
+"$LOCK" "$MAIN" -- git -C "$MAIN" fetch upstream
+"$LOCK" "$MAIN" -- git -C "$MAIN" worktree add -b <branch-name> "$WORK" upstream/main
 cd "$WORK"
 ```
+
+**The base is `upstream/main`, never `origin/main`.** `origin` is the bot's own
+fork, because `project.useFork` is true, and nothing in this flow pushes
+upstream's commits to it — so `origin/main` sits wherever the fork was last
+updated, which has been ten commits behind. A story branched from that starts on
+a tree old enough to be missing the documents its own research step tells it to
+read, and its pull request arrives with someone else's commits in the diff.
+`upstream` is the pull request repository, so `upstream/main` is the branch a
+reviewer merges into. The fork is still where the branch is *pushed*, which is
+why the reuse case below reads it back from `origin/<branch-name>`.
 
 A story that already has a `branchName` — a later iteration, or one whose
 worktree was removed — reuses that branch:

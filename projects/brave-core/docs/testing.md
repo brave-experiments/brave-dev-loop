@@ -417,8 +417,8 @@ Then retry the build. **Only attempt this recovery once** — if the build still
 Run these steps in order from `src/brave`:
 ```bash
 cd src/brave
-git fetch
-git rebase origin/master
+git fetch upstream
+git rebase upstream/master
 pnpm run sync --no-history
 ```
 Then retry the build.

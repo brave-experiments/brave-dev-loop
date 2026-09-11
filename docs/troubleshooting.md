@@ -23,8 +23,8 @@ Expected. The bot uses `run_in_background: true` and high timeouts (1-2 hours) f
 
 The bot will automatically rebase and re-sync:
 ```bash
-git fetch
-git rebase origin/master
+git fetch upstream
+git rebase upstream/master
 pnpm run sync --no-history
 ```
 

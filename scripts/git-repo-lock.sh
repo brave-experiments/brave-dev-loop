@@ -7,8 +7,8 @@
 # operations against the shared repository do.
 #
 # Usage:
-#   ./scripts/git-repo-lock.sh <repo-dir> -- git fetch origin
-#   ./scripts/git-repo-lock.sh <repo-dir> -- git worktree add -b fix-x ../repo-133 origin/main
+#   ./scripts/git-repo-lock.sh <repo-dir> -- git fetch upstream
+#   ./scripts/git-repo-lock.sh <repo-dir> -- git worktree add -b fix-x ../repo-133 upstream/main
 #
 # Waits (up to --timeout seconds, default 300) rather than giving up: these
 # are short operations and skipping one would break the caller.
