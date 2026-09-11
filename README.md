@@ -83,6 +83,11 @@ make view-schedules              # show the current schedule
 Several runs can share one bot directory — set `bot.maxConcurrentRuns` and see
 [Concurrent runs](docs/concurrent-runs.md). It is off by default.
 
+A run titles its terminal tab `#<issue> PR #<pr> <story title>`, so tabs are
+told apart by the numbers you search GitHub by; the PR number joins the title
+as soon as the story has one, mid-iteration. Stories with neither number show
+their story id instead.
+
 Stop with `Ctrl+C`; the bot returns the target repo to its default branch on
 the way out.
 
