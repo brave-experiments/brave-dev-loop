@@ -35,49 +35,79 @@
    For each candidate issue (excluding the one this story already addresses), decide:
 
    - **Same fix closes it too** — the change in this PR also resolves the other issue (e.g. same root cause, same test, same flaky target). Add an additional `Closes #<other-issue>` line to the PR body so it is closed on merge, and apply the same labels to that issue in step 7.
-   - **Substantially similar / should be combined** — the other issue is not closed by the current diff but is close enough that fixing both together is clearly better than two separate PRs (e.g. adjacent tests in the same file, same subsystem, same disable mechanism). Expand the current branch to cover it, note it in the PR Summary, and add a `Closes #<other-issue>` line. Keep the combined scope coherent — do not bundle unrelated fixes just because they are assigned to the same account.
+   - **Substantially similar / should be combined** — the other issue is not closed by the current diff but is close enough that fixing both together is clearly better than two separate PRs (e.g. adjacent tests in the same file, same subsystem, same disable mechanism). Expand the current branch to cover it, note it under `## The problem`, and add a `Closes #<other-issue>` line. Keep the combined scope coherent — do not bundle unrelated fixes just because they are assigned to the same account.
    - **Unrelated** — leave it alone.
 
    When in doubt, keep PRs separate. Only combine when the fixes genuinely share a root cause or change the same code, and the combined PR stays reviewable. Record any issues you decide to combine or co-close in `$BOT_DIR/data/progress.txt`.
 
-5. Create PR using gh CLI with structured format:
+5. **Write the PR body, then check it before creating the PR.**
+
+   The reviewer is a busy human who has not seen this code and did not read the
+   issue. Read **[pr-descriptions.md](./pr-descriptions.md)** and write the body to
+   the shape it defines. The two things it must deliver first: **how to reproduce
+   the problem**, and **exactly what the problem is** — before any mechanism, and
+   before any identifier.
 
    **SECURITY NOTE**: If this PR fixes a security-sensitive issue, use discretion in the title and description. See [SECURITY.md](../SECURITY.md#public-security-messaging) for detailed guidance on avoiding detailed vulnerability disclosure in public messages.
 
-   **IMPORTANT**: Always create PRs in draft state using the `--draft` flag. This allows for human review before marking ready.
+   Write the body to a file first — it has to be checked before it becomes a PR:
+
+````bash
+cat > /tmp/pr-body-<story-id>.md <<'EOF'
+Closes $ISSUE_REPO#<issue-number>
+
+## The problem
+[2-4 sentences. What goes wrong, who hits it, what they observe. Plain language:
+no type names, no file paths, no upstream citations. The symptom, not the cause.]
+
+## Reproduce
+```sh
+[the exact command, and the directory it runs in if not the repo root]
+```
+[What it does today, and what it does with this branch. A test you added counts,
+if you say it fails on the parent commit. If it truly cannot be reproduced here,
+replace the block above with a line beginning "Not reproducible locally:" giving
+the reason and a link to the evidence — the CI job, the crash report, the logs.]
+
+## The fix
+[2-5 sentences. The mechanism now, in plain language, and why it fixes the symptom
+above. Do not enumerate the diff — the reviewer has the Files Changed tab.]
+
+[If the project inherits tests from an upstream: see the project profile's `docs/testing.md` for the extra PR-body fields it requires here.]
+
+## Test plan
+- [x] Ran the project's presubmit sequence - passed (list the actual commands; see the project profile's `docs/testing.md`)
+- [ ] CI passes cleanly
+EOF
+
+python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
+````
+
+   **The checker must pass before you create the PR.** Errors are structural —
+   fix them. Warnings are the filler heuristics; read each one and fix it unless
+   you can say why it is wrong. Anything that genuinely needs depth (a table, a
+   benchmark, a long root-cause chain, an upstream citation) goes in a
+   `<details>` block, which the checker does not count against the length budget.
 
    **CRITICAL: Always include labels when creating the PR.** Determine which labels apply (see label rules below) and pass them directly to `gh pr create` using `--label` flags.
+
+   **IMPORTANT**: Always create PRs in draft state using the `--draft` flag. This allows for human review before marking ready.
 
    ```bash
    gh pr create --draft --title "Story title" \
      --label "<each label the profile's rules give you>" \
-     --body "$(cat <<'EOF'
-Closes $ISSUE_REPO#<issue-number>
-
-## Summary
-[Brief description of what this PR does and why]
-
-[If the project inherits tests from an upstream: see the project profile's `docs/testing.md` for the extra PR-body fields.]
-
-## Fix
-[Description of how the fix addresses the root cause]
-
-## Test Plan
-- [x] Ran the project's presubmit sequence - passed (list the actual commands; see the project profile's `docs/testing.md`)
-- [ ] CI passes cleanly
-EOF
-)"
+     --body-file /tmp/pr-body-<story-id>.md
    ```
 
    **IMPORTANT**:
-   - **The `Closes` line MUST be the very first line of the PR body**, above `## Summary`. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config). Issues live in the issue repository and PRs in the PR repository, so a bare `Closes #<n>` will NOT auto-close the cross-repo issue. Put the closing keyword + issue link at the TOP, never at the bottom.
+   - **The `Closes` line MUST be the very first line of the PR body**, above `## The problem`. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config). Issues live in the issue repository and PRs in the PR repository, so a bare `Closes #<n>` will NOT auto-close the cross-repo issue. Put the closing keyword + issue link at the TOP, never at the bottom.
    - Fill in actual test commands and results from acceptance criteria
    - If front-end files were changed, add checkboxes for the project's front-end test commands to the test plan
    - Keep the last checkbox "CI passes cleanly" unchecked
    - Do NOT add "Generated with Claude Code" or similar attribution
    - Capture the PR number from the output
    - **The `--label` flag above is a placeholder.** Determine the actual labels from the profile's rules in step 7 below, and pass one `--label` per label. Pass none if the profile defines none.
-   - If step 4 identified other issues this fix also closes, add an additional `Closes $ISSUE_REPO#<number>` line for each one at the TOP of the PR body (one per line, immediately below the primary `Closes` line, above `## Summary`).
+   - If step 4 identified other issues this fix also closes, add an additional `Closes $ISSUE_REPO#<number>` line for each one at the TOP of the PR body (one per line, immediately below the primary `Closes` line, above `## The problem`).
 
 6. **Assign the PR to yourself (the bot account):**
 

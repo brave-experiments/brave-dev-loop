@@ -115,24 +115,40 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
 
 **IMPORTANT**: Labels are project-specific and come from the project profile (`labels.pr` in `projects/<profile>/profile.json`, plus the profile's `docs/labels.md`). Pass each one with a `--label` flag; a profile that defines none means a PR with no labels. See [workflow-committed.md](./workflow-committed.md) for the full rules.
 
+**The body shape is not freeform.** It is defined in
+[pr-descriptions.md](./pr-descriptions.md), and `scripts/check-pr-body.py` enforces
+it. Four sections, in this order, with the reproduction and the problem statement
+before any mechanism:
+
 **Example:**
 ```bash
+python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body.md   # must pass first
+
 gh pr create --draft --title "the pr title" \
   --label "<each label the profile's rules give you>" \
-  --body "$(cat <<'EOF'
+  --body-file /tmp/pr-body.md
+```
+
+where `/tmp/pr-body.md` holds:
+
+```markdown
 Closes $ISSUE_REPO#<issue-number>
 
-## Summary
-<1-3 bullet points>
+## The problem
+<2-4 sentences: the symptom a person observes, in plain language>
+
+## Reproduce
+<a paste-able command or numbered steps, then what happens today vs. with this branch>
+
+## The fix
+<2-5 sentences: what the code now does differently, and why that fixes the symptom>
 
 ## Test plan
-[Bulleted markdown checklist of TODOs for testing the pull request...]
-EOF
-)"
+<checkboxes, one per command actually run; "- [ ] CI passes cleanly" last and unchecked>
 ```
 
 **Important:**
-- If the PR closes an issue, the `Closes` line MUST be the very first line of the body, above `## Summary` — never at the bottom. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config) so it auto-closes the issue (a bare `Closes #<n>` resolves within the PR repo only). Omit the line entirely if the PR closes no issue.
+- If the PR closes an issue, the `Closes` line MUST be the very first line of the body, above `## The problem` — never at the bottom. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config) so it auto-closes the issue (a bare `Closes #<n>` resolves within the PR repo only). Omit the line entirely if the PR closes no issue.
 - DO NOT add "Generated with Claude Code" or similar attribution to PRs
 - DO NOT add Co-Authored-By lines or any Claude attribution to commits
 - Return the PR URL when you're done, so the user can see it

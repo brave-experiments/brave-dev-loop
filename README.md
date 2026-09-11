@@ -105,6 +105,7 @@ claude
 | [Bot identity](docs/bot-identity.md) | Signing, SSH keys, `gh` isolation, hooks |
 | [State machine](docs/workflow-state-machine.md) | Task selection and status transitions |
 | [Testing requirements](docs/testing-requirements.md) | What the bot must run before claiming success |
+| [PR descriptions](docs/pr-descriptions.md) | The body shape reviewers get, and the checker that enforces it |
 | [Signal notifications](docs/signal-notifications.md) | Optional real-time alerts |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures |
 | [Security](SECURITY.md) | Prompt-injection handling for GitHub data |
