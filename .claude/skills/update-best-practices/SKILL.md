@@ -204,10 +204,17 @@ If changes were made to best practices files, commit them and create a PR so the
    ```bash
    cd $TARGET_REPO
    ```
-2. **Create a new branch** from the current HEAD:
+2. **Create a new branch** from the upstream default branch, fetched first so the
+   base is current:
    ```bash
-   git checkout -b docs/best-practices-update-$(date +%Y%m%d-%H%M%S)
+   git fetch upstream
+   git checkout -b docs/best-practices-update-$(date +%Y%m%d-%H%M%S) upstream/master
    ```
+   The base is `upstream/master`, not the current HEAD and not `origin/master`:
+   `origin` is the bot's fork, nothing pushes upstream's commits to it, and the
+   checkout is left on whatever the last story used. Either one puts commits the
+   skill did not write into its own pull request. See
+   [git-repository.md](../../../docs/git-repository.md#branch-management-for-each-user-story).
 3. **Stage and commit** only the changed best practices files:
    ```bash
    git add docs/best_practices.md docs/best-practices/
