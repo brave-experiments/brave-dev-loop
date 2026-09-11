@@ -301,6 +301,20 @@
    - **For upstream test disables**: see the project profile's `docs/testing.md` for the required commit-message fields.
 11. **CRITICAL: Run presubmit verification AFTER commit, BEFORE creating PR:**
 
+   **First, put the branch on current upstream.** CI builds the merge of the branch with
+   the upstream default branch, not the commit that was pushed, so a gate that passes here
+   can still fail there:
+
+   ```bash
+   git fetch upstream            # through ./scripts/git-repo-lock.sh where runs share this directory
+   git rebase upstream/master    # the upstream default branch
+   ```
+
+   Do this before the first push, where a rebase is free, and run the presubmit sequence on
+   the rebased tip: that is the tree CI will build. If the rebased tree fails on code this
+   diff does not touch, check whether upstream is already red before changing anything —
+   see [git-repository.md](./git-repository.md#ci-tests-the-merge-not-your-branch-tip).
+
    After committing, you MUST run the full verification cycle to ensure the commit is valid:
    ```bash
    Run the project's presubmit sequence. The exact commands and their order are

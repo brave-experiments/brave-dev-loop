@@ -34,6 +34,44 @@ the same repository and either ref does.
 
 Project-specific: where the profile's `docs/repo.md` puts stories in worktrees, `git worktree add` creates the branch and there is no separate `git checkout -b`. Follow that doc.
 
+## CI Tests the Merge, Not Your Branch Tip
+
+GitHub Actions builds a pull request's *merge* with the upstream default branch, not the
+commit that was pushed. Every local gate can therefore pass and CI still fail: upstream
+moved after the branch was based, git merges both diffs without reporting a conflict, and
+the result does not compile. An upstream rename plus an untouched caller in a file the
+branch also edits is enough — neither side conflicts textually, and nothing local ever
+built the two together.
+
+**Before the final presubmit run, put the branch on current upstream:**
+
+```bash
+cd [targetRepoPath from bot config]   # or the story's worktree
+git fetch upstream                    # through ./scripts/git-repo-lock.sh where runs share this directory
+git rebase upstream/master            # the upstream default branch
+```
+
+Then run the presubmit sequence on the rebased tip: that is the tree CI will build. Do it
+before the first push, where a rebase costs nothing. Afterwards it means a force push,
+which dismisses an approval the PR already has, so only rebase a pushed branch when it
+genuinely conflicts.
+
+**A failure in code the diff does not touch is probably not the branch's.** Read the
+failing *step*, not the job name — a job called "Format, lint, and test" reports lint and
+test failures too, so a red check there is usually not a formatting failure. Then check
+whether upstream is already broken and whether the failing symbol appears in the diff at
+all:
+
+```bash
+gh run list --repo $PR_REPO --branch master --limit 6 --json conclusion,headSha,createdAt
+git show HEAD -S<failing-symbol>   # no output means the diff never mentions it
+```
+
+Where upstream's own CI is red on a commit that predates the branch, record that in
+`$BOT_DIR/data/progress.txt`, say it on the PR, and wait for upstream to be fixed. Do not
+repair someone else's breakage on a story branch: it puts changes the PR cannot justify
+into the diff, and it hides the regression from whoever caused it.
+
 ## Build & Package Manager Commands
 
 Project-specific. See the project profile's `docs/repo.md` (path given in the prompt).
