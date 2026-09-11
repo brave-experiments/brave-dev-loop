@@ -89,6 +89,12 @@ fi
 
 source "$SCRIPT_DIR/scripts/lib/load-config.sh"
 source "$SCRIPT_DIR/scripts/lib/git-identity.sh"
+source "$SCRIPT_DIR/scripts/lib/terminal-title.sh"
+
+# This run titles its own tab, with the issue and PR numbers an operator
+# switches tabs to find. Claude would otherwise overwrite that every turn with
+# a summary of its conversation.
+export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
 # Pin this run to the bot's GitHub identity before anything can touch GitHub.
 bot_export_identity_env "$BOT_SSH_KEY_PATH" "$BOT_GH_ACCOUNT" || exit 1
@@ -127,6 +133,7 @@ esac
 BOT_RUN_PID=$$
 export BOT_RUN_SLOT BOT_RUN_PID
 CURRENT_STORY_ID=""
+TITLE_WATCH_PID=""
 
 # CLI --agent flag has the final say (overrides env + config)
 if [ -n "$CLI_AGENT" ]; then
@@ -182,6 +189,15 @@ release_claim() {
   CURRENT_STORY_ID=""
 }
 
+# The PR watcher polls until a PR appears, so an iteration that ends first has
+# to stop it, or it keeps polling for a story this run no longer holds.
+stop_title_watch() {
+  [ -n "$TITLE_WATCH_PID" ] || return 0
+  kill "$TITLE_WATCH_PID" 2>/dev/null || true
+  wait "$TITLE_WATCH_PID" 2>/dev/null || true
+  TITLE_WATCH_PID=""
+}
+
 # What the agent does with a story in this status, in one line. Printed in the
 # iteration banner and again when the iteration ends, so the terminal says what
 # is about to happen (and what happens next) rather than only which story was
@@ -199,6 +215,7 @@ story_next_step() {
 }
 
 cleanup_run() {
+  stop_title_watch
   release_claim
   bot_slot_meta_clear
   bot_release_lock
@@ -337,6 +354,7 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   STORY_DETAILS=$(echo "$TASK_JSON" | jq -c '.storyDetails')
   STORY_PRIORITY=$(echo "$TASK_JSON" | jq -r '.priority // "-"')
   STORY_ISSUE=$(echo "$TASK_JSON" | jq -r '.issueNumber // empty')
+  STORY_PR_NUMBER=$(echo "$TASK_JSON" | jq -r '.prNumber // empty')
   STORY_PR_URL=$(echo "$TASK_JSON" | jq -r '.prUrl // empty')
   STORY_BRANCH=$(echo "$TASK_JSON" | jq -r '.branchName // empty')
   # Stories reference their issue by number only, so the link is built here.
@@ -380,6 +398,16 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   echo "  Workflow:  docs/workflow-$STORY_STATUS.md"
   echo "  Log:       $ITERATION_LOG"
   echo "==============================================================="
+
+  bot_set_terminal_title \
+    "$(bot_story_title "$STORY_ISSUE" "$STORY_PR_NUMBER" "$STORY_ID" "$STORY_TITLE")"
+  # A story with no PR yet gets one partway through this iteration, and the tab
+  # should say so from that moment rather than at the end of the iteration.
+  if [ -z "$STORY_PR_NUMBER" ]; then
+    "$SCRIPT_DIR/scripts/exec-clean.sh" "$SCRIPT_DIR/scripts/watch-pr-title.sh" \
+      "$PRD_FILE" "$STORY_ID" "$STORY_ISSUE" "$STORY_TITLE" &
+    TITLE_WATCH_PID=$!
+  fi
 
   # Run Claude Code with the agent prompt
   # Use a temp file to capture output while allowing real-time streaming
@@ -534,6 +562,8 @@ Additional context: $EXTRA_PROMPT"
     fi
   fi
 
+  stop_title_watch
+
   if [ "$BOT_AGENT" = "claude" ]; then
     echo "To continue this session: claude --resume $SESSION_ID"
   elif [ "$BOT_AGENT" = "cursor" ]; then
@@ -547,6 +577,7 @@ Additional context: $EXTRA_PROMPT"
   # step follows from the new status, not the one this iteration started on.
   END_STATUS=$(jq -r --arg id "$STORY_ID" 'first(.stories[] | select(.id == $id)) | .status // empty' "$PRD_FILE" 2>/dev/null || echo "")
   END_PR_URL=$(jq -r --arg id "$STORY_ID" 'first(.stories[] | select(.id == $id)) | .prUrl // empty' "$PRD_FILE" 2>/dev/null || echo "")
+  END_PR_NUMBER=$(jq -r --arg id "$STORY_ID" 'first(.stories[] | select(.id == $id)) | .prNumber // empty' "$PRD_FILE" 2>/dev/null || echo "")
   echo ""
   if [ -z "$END_STATUS" ]; then
     echo "$STORY_ID: could not read status back from $PRD_FILE."
@@ -558,6 +589,10 @@ Additional context: $EXTRA_PROMPT"
   if [ -n "$END_PR_URL" ] && [ "$END_PR_URL" != "$STORY_PR_URL" ]; then
     echo "$STORY_ID: PR $END_PR_URL"
   fi
+  # The watcher polls, so it can be stopped between the PR landing and its next
+  # look. This is the same title, from the number the PRD just gave back.
+  bot_set_terminal_title \
+    "$(bot_story_title "$STORY_ISSUE" "$END_PR_NUMBER" "$STORY_ID" "$STORY_TITLE")"
 
   # Check for completion signal (print mode only — TUI mode skips this since user is watching).
   # Match ONLY the agent's own final message, never raw tool/file output: the marker is
