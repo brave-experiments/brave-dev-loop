@@ -14,6 +14,11 @@
 
 3. Push the branch: `git push -u origin <branch-name>`
 
+   The branch must already sit on current upstream, with the presubmit sequence passed
+   there ([workflow-pending.md](./workflow-pending.md) step 11). Where upstream moved while
+   those checks ran, rebase and re-run them before pushing: a rebase before the first push
+   is free, and one afterwards costs a force push.
+
 4. **Scan other open issues for overlap with this fix:**
 
    Before writing the PR, check whether this same fix resolves (or is substantially similar to) other open issues. This avoids duplicate PRs and surfaces issues that can be closed together. Check both issues assigned to the bot AND a broader search of the issue repo — a related issue may not be assigned to the bot account.
