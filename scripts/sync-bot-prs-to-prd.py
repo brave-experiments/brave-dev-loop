@@ -36,6 +36,7 @@ from lib.load_config import (
     load_config,
     load_profile,
     require_config,
+    require_matching_profile,
     test_step,
 )
 from lib.prd_store import prd_lock, save_prd
@@ -263,6 +264,10 @@ def main():
         help="Report what would be added, write nothing",
     )
     args = parser.parse_args()
+    # Acceptance criteria come from the profile, and a story keeps the ones
+    # it was written with. Writing them from a profile nobody chose leaves
+    # wrong criteria in the PRD long after the config is fixed.
+    require_matching_profile(_config, _bot_dir)
 
     prs = fetch_bot_prs(pr_number=args.pr, state=args.state)
 

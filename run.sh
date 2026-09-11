@@ -93,6 +93,14 @@ source "$SCRIPT_DIR/scripts/lib/git-identity.sh"
 # Pin this run to the bot's GitHub identity before anything can touch GitHub.
 bot_export_identity_env "$BOT_SSH_KEY_PATH" "$BOT_GH_ACCOUNT" || exit 1
 
+# A profile nobody chose produces wrong work rather than no work — generic
+# validations, the wrong docs — and does it silently, iteration after
+# iteration. Stop instead, saying which line to change.
+if PROFILE_MISMATCH=$(bot_profile_mismatch); then
+  echo "Error: $PROFILE_MISMATCH" >&2
+  exit 1
+fi
+
 # --- Concurrency ----------------------------------------------------------
 # Running two agents against one working tree destroys work, so concurrency is
 # allowed only for a profile that gives every story its own git worktree.
@@ -408,12 +416,20 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   # We point them all at the same workflow docs via the prompt itself.
   BOT_DIRNAME=$(basename "$SCRIPT_DIR")
   BOT_CONFIG=$(cat "$SCRIPT_DIR/config.json")
+  # A profile need not ship docs, and pointing an agent at a directory that is
+  # not there costs it a search and teaches it the prompt lies.
+  if [ -d "$BOT_PROFILE_DIR/docs" ]; then
+    PROJECT_RULES="Project-specific rules live in ./$BOT_DIRNAME/projects/$BOT_PROFILE/docs/.
+Where a workflow doc says a step is project-specific, read the named file there."
+  else
+    PROJECT_RULES="The '$BOT_PROFILE' profile ships no project-specific docs, so where a workflow
+doc says a step is project-specific there is nothing further to read."
+  fi
   AGENT_PROMPT="You are working on story $STORY_ID (current status: $STORY_STATUS).
 Follow ./$BOT_DIRNAME/docs/workflow-${STORY_STATUS}.md for the workflow.
 Follow the general instructions in ./$BOT_DIRNAME/.claude/CLAUDE.md.
 
-Project-specific rules live in ./$BOT_DIRNAME/projects/$BOT_PROFILE/docs/.
-Where a workflow doc says a step is project-specific, read the named file there.
+$PROJECT_RULES
 
 Story details:
 $STORY_DETAILS

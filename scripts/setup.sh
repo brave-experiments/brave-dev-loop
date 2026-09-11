@@ -48,6 +48,7 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_BOT_EMAIL=$(_prev '.bot.email')
     PREV_SSH_KEY=$(_prev '.bot.sshKeyPath')
     PREV_GH_ACCOUNT=$(_prev '.bot.ghAccount')
+    PREV_PROFILE=$(_prev '.project.profile')
   fi
 
   prompt_required() {
@@ -86,6 +87,29 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_TARGET_REPO=$(jq -r '.project.targetRepoPath // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
   fi
   prompt_required CFG_TARGET_REPO "Target repo path (e.g. ../src/brave, /abs/path/to/repo): " "$PREV_TARGET_REPO"
+
+  echo ""
+  echo "─── Project Profile ───"
+  echo "Which projects/<name>/ supplies this project's rules: validation steps,"
+  echo "test targets, and the docs the workflows point at."
+  echo "'default' is the generic profile — no build system or test runner assumed."
+  # A profile named after the project is that project's profile, so offer it
+  # rather than the generic one. Carrying the previous value forward matters
+  # just as much: this script is re-run to change one unrelated answer, and
+  # before it kept the profile every such run quietly reset it to 'default'.
+  if [ -n "$PREV_PROFILE" ]; then
+    DEFAULT_CFG_PROFILE="$PREV_PROFILE"
+  elif [ -f "$PROJECT_ROOT/projects/$CFG_PROJECT_NAME/profile.json" ]; then
+    DEFAULT_CFG_PROFILE="$CFG_PROJECT_NAME"
+  else
+    DEFAULT_CFG_PROFILE="default"
+  fi
+  read -p "Profile [$DEFAULT_CFG_PROFILE]: " CFG_PROFILE
+  CFG_PROFILE="${CFG_PROFILE:-$DEFAULT_CFG_PROFILE}"
+  if [ ! -f "$PROJECT_ROOT/projects/$CFG_PROFILE/profile.json" ]; then
+    echo "  ⚠️  projects/$CFG_PROFILE/profile.json does not exist — the bot will fall"
+    echo "     back to the generic profile until you create it."
+  fi
 
   echo ""
   echo "─── PRD Mode ───"

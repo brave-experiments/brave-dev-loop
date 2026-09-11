@@ -107,9 +107,39 @@ BOT_TARGET_REPO_PATH=$(bot_config '.project.targetRepoPath')
 BOT_PRD_MODE=$(bot_config '.project.prdMode')
 BOT_PRD_MODE="${BOT_PRD_MODE:-curated}"
 # Absent project.profile means a deployment predating profiles — all brave-core.
-BOT_PROFILE=$(bot_config '.project.profile')
-BOT_PROFILE="${BOT_PROFILE:-brave-core}"
+BOT_PROFILE_CONFIGURED=$(bot_config '.project.profile')
+BOT_PROFILE="${BOT_PROFILE_CONFIGURED:-brave-core}"
 BOT_PROFILE_DIR="$BOT_DIR/projects/$BOT_PROFILE"
+
+# A profile directory named after the project is that project's profile. When
+# one exists and the config still carries a value nobody chose — the wizard's
+# "default", or nothing at all — the profile was never picked, and every story
+# then runs under generic validations, misses the project's worktree rules, and
+# is pointed at a projects/<profile>/docs that does not exist. Nothing about
+# that fails; the work just comes out wrong, so it is worth stopping over.
+#
+# Mirrors profile_mismatch() in load_config.py — keep the two in sync.
+BOT_PROFILE_FOR_PROJECT=""
+if [ -n "$BOT_PROJECT_NAME" ] &&
+   [ "$BOT_PROFILE" != "$BOT_PROJECT_NAME" ] &&
+   { [ -z "$BOT_PROFILE_CONFIGURED" ] || [ "$BOT_PROFILE_CONFIGURED" = "default" ]; } &&
+   [ -f "$BOT_DIR/projects/$BOT_PROJECT_NAME/profile.json" ]; then
+  BOT_PROFILE_FOR_PROJECT="$BOT_PROJECT_NAME"
+fi
+
+# Says what is wrong and what to change, once, for every caller that reports it.
+# 0 = a mismatch was printed on stdout, 1 = the profile is fine.
+bot_profile_mismatch() {
+  [ -n "$BOT_PROFILE_FOR_PROJECT" ] || return 1
+  if [ -z "$BOT_PROFILE_CONFIGURED" ]; then
+    echo "config.json sets no project.profile, so it defaults to '$BOT_PROFILE' — but projects/$BOT_PROFILE_FOR_PROJECT/ exists and is $BOT_PROJECT_NAME's profile."
+  else
+    echo "config.json sets project.profile to '$BOT_PROFILE_CONFIGURED' — but projects/$BOT_PROFILE_FOR_PROJECT/ exists and is $BOT_PROJECT_NAME's profile."
+  fi
+  echo "  Under '$BOT_PROFILE' every story gets that profile's validations and docs, not $BOT_PROJECT_NAME's."
+  echo "  Set \"profile\": \"$BOT_PROFILE_FOR_PROJECT\" under \"project\" in config.json."
+  return 0
+}
 
 # How many run.sh instances may share this bot directory. See docs/concurrent-runs.md.
 # Default 1: a deployment that never sets it behaves exactly as it did before

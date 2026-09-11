@@ -118,6 +118,11 @@ if [ "$JSON" = true ]; then
 fi
 
 echo "$BOT_PROJECT_NAME — profile ${BOT_PROFILE:-unset}, maxConcurrentRuns=$MAX_SLOTS"
+# run.sh refuses to start on this; say so here rather than leaving the operator
+# to wonder why nothing runs.
+if MISMATCH=$(bot_profile_mismatch); then
+  echo "Warning: $MISMATCH"
+fi
 case "$(bot_lock_backend)" in
   mkdir) echo "Lock backend: mkdir (no flock or python3 here — a killed run can leave a lock behind)" ;;
   *)     echo "Lock backend: $(bot_lock_backend) (kernel-held — a killed run releases its slot immediately)" ;;

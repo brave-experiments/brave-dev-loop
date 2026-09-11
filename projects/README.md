@@ -28,7 +28,18 @@ path in the agent prompt.
 **Defaulting.** A config with no `project.profile` resolves to `brave-core`,
 because every deployment predating profiles is a brave-core one and an
 unattended bot must not change behaviour just because a key is missing. New
-setups get `default`.
+setups get the profile named after the project when a directory of that name
+exists here, and `default` otherwise.
+
+**A profile named after the project is that project's profile**, so a config
+that still says `default` (or nothing) while `projects/<project.name>/` exists
+is one where nobody chose. `run.sh` refuses to start on that rather than
+running the story under generic validations, and `add-backlog-to-prd.py` and
+`sync-bot-prs-to-prd.py` refuse to write stories from it — wrong acceptance
+criteria outlive the config that produced them. `./run.sh --status` says the
+same thing without stopping anything. Deliberately pairing a project with a
+differently named profile is fine: name it in `project.profile` and nothing
+complains.
 
 **Adding a project.** Copy `projects/default/`, fill in `profile.json`, and add
 only the docs your workflows actually need — an absent doc just means the

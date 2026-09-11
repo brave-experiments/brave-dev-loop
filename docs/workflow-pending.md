@@ -215,13 +215,17 @@
 
    Project-specific. See the project profile's `docs/testing.md` (path given in the prompt). Projects without an upstream to inherit tests from can skip this step.
 
-9. **REQUIRED: Self-review using the target repo's `/review` skill (local mode):**
+9. **REQUIRED: Self-review your changes before committing:**
 
-   **CRITICAL: Do NOT read best practices docs in the main context — they are 1000+ lines each and will fill the context window, causing compaction. The review skill handles this via chunked parallel subagents.**
+   **CRITICAL: Do NOT read best practices docs in the main context — they are 1000+ lines each and will fill the context window, causing compaction. A review skill handles this via chunked parallel subagents.**
 
-   After implementing and passing tests, run the `/review` skill from the target repo in local mode to self-review your changes. This checks best practices (via auto-discovery and chunked subagents), root cause analysis quality, timing-based fix detection, and more.
+   Which reviewer to use depends on what the target repo ships. Check before you
+   assume: most target repos have no review skill of their own, and reaching for
+   one that is not there wastes an iteration.
 
-   ### How to run
+   ### If `[targetRepoPath]/.claude/skills/review/SKILL.md` exists
+
+   Run it in local mode. It checks best practices (via auto-discovery and chunked subagents), root cause analysis quality, timing-based fix detection, and more.
 
    1. `cd [targetRepoPath from bot config]`
    2. Read the review skill instructions at `[targetRepoPath]/.claude/skills/review/SKILL.md`
@@ -229,11 +233,22 @@
    4. **Fix all violations automatically** — do not prompt for confirmation, treat every validated violation as "fix all"
    5. If the review verdict is **FAIL**, fix the issues and re-run the review until it passes
 
-   ### What to skip from the review skill
+   What to skip from that skill:
 
    - Skip Step 10 (Generate Review Report) — you don't need to produce a formatted report for yourself
    - Skip any "post to GitHub" steps — this is a self-review, not a PR review
    - Skip Step 2 (Research Previous Fix Attempts) — you already did this in step 4 above
+
+   ### If it does not
+
+   Run the harness's own `/code-review` skill over the branch diff. For the
+   project's rules, read what the target repo actually has — the profile's
+   `docs/`, and the `AGENTS.md` or `CLAUDE.md` at the repo root — not a
+   best-practices index the project may not ship.
+
+   A finding you decline is one you have **verified** is wrong or pre-existing:
+   check it against the code and say so in the PR description. Declining a
+   finding because you disagree with it is not a review.
 
    ### What to do with results
 

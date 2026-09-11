@@ -16,11 +16,18 @@ import sys
 def load_config(config_path=None):
     """Load config.json, falling back to config.example.json.
 
-    If config_path is None, searches relative to the bot repo root
+    If config_path is None, honours $BOT_CONFIG_FILE -- load-config.sh exports
+    it, so a script launched from a shell script reads the same file its
+    caller did -- and otherwise searches relative to the bot repo root
     (derived from this file's location: lib/ -> scripts/ -> repo root).
     """
     if config_path and os.path.exists(config_path):
         with open(config_path) as f:
+            return json.load(f)
+
+    from_env = os.environ.get("BOT_CONFIG_FILE")
+    if from_env and os.path.exists(from_env):
+        with open(from_env) as f:
             return json.load(f)
 
     bot_dir = os.path.dirname(
@@ -149,6 +156,46 @@ def profile_dir(config, base_dir=None):
     """Absolute path to the selected project profile directory."""
     name = get_config(config, "project.profile") or DEFAULT_PROFILE
     return os.path.join(base_dir or bot_dir(), "projects", name)
+
+
+def profile_mismatch(config, base_dir=None):
+    """Why the configured profile is the wrong one, or None when it is fine.
+
+    A profile directory named after the project is that project's profile.
+    When one exists and the config still carries a value nobody chose -- the
+    setup wizard's "default", or nothing at all -- the profile was never
+    picked, and every story built from here gets generic validations and a
+    docs pointer into a directory that does not exist. Nothing fails; the work
+    just comes out wrong, which is why it is worth refusing to proceed.
+
+    Mirrors bot_profile_mismatch() in load-config.sh -- keep the two in sync.
+    """
+    configured = get_config(config, "project.profile") or ""
+    effective = configured or DEFAULT_PROFILE
+    project = get_config(config, "project.name") or ""
+    if not project or effective == project or configured not in ("", "default"):
+        return None
+    base = base_dir or bot_dir()
+    if not os.path.exists(os.path.join(base, "projects", project, "profile.json")):
+        return None
+    if configured:
+        first = f"config.json sets project.profile to '{configured}'"
+    else:
+        first = f"config.json sets no project.profile, so it defaults to '{effective}'"
+    return (
+        f"{first} -- but projects/{project}/ exists and is {project}'s profile.\n"
+        f"  Under '{effective}' every story gets that profile's validations and "
+        f"docs, not {project}'s.\n"
+        f'  Set "profile": "{project}" under "project" in config.json.'
+    )
+
+
+def require_matching_profile(config, base_dir=None):
+    """Exit rather than write stories built from a profile nobody chose."""
+    message = profile_mismatch(config, base_dir)
+    if message:
+        print(f"Error: {message}", file=sys.stderr)
+        sys.exit(1)
 
 
 def load_profile(config, base_dir=None):
