@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import claims as claims_lib
 from lib import slots, triage
+from lib.load_config import build_research, load_config, load_profile
 from lib.prd_store import bot_dir_for, load_prd, prd_lock, save_prd
 
 TIER_URGENT = 1  # pushed + lastActivityBy == "reviewer"
@@ -81,6 +82,23 @@ def now_iso():
 def pending_attempts(story):
     """Number of times a pending story has been selected (its iterationLogs)."""
     return len(story.get("iterationLogs") or [])
+
+
+def research_steps(bot_dir):
+    """The reading steps every story starts with, rendered for this project.
+
+    Profile state, not story state. A story's acceptance criteria are written
+    once, when the story is created, so a story that predates a reading step
+    never grows one: the stories in flight when a profile gains a document
+    carry criteria from before it existed. Rendering the steps per iteration
+    puts them in front of that work too.
+
+    Empty where a profile declares no steps. Where a substitution does not
+    resolve, build_research drops that step rather than naming a path this
+    project does not have.
+    """
+    config = load_config()
+    return build_research(load_profile(config, bot_dir), config, bot_dir)
 
 
 def issue_number(story):
@@ -507,6 +525,7 @@ def _select_locked(args, prd_path, run_state_path, bot_dir):
         "candidateCount": len(candidates),
         "slot": args.slot,
         "storyDetails": selected,
+        "research": research_steps(bot_dir),
     }
     print(json.dumps(result))
     return 0
