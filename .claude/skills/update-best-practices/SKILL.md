@@ -104,7 +104,21 @@ Scan ALL best practices files for internal contradictions. Common conflict patte
 - A "banned" item in one file is described as "use carefully" in another
 - Testing guidance that contradicts coding standards
 
+**Also check every rule you are about to add or edit against the rules already
+in the file you are inserting it into.** The most common self-inflicted conflict
+is adding guidance that a reviewer is expected to enforce next to a rule that
+says the opposite. Real example: a new paragraph in `coding-standards.md` told
+reviewers to check that platform includes keep "the normal include order within
+that section", while `CS-010` in the same file says **"Do NOT enforce include
+order — include ordering is handled by code formatting tools and lint, not by
+code review"**. When upstream guidance is about formatting that tooling already
+enforces, either drop it or state explicitly that it is not review-enforced, and
+link the rule that owns the exception.
+
 **Pay special attention to:**
+- Meta-rules about what reviewers should and should not flag (formatting,
+  include order, line wrapping) — new rules must not re-import what these
+  explicitly exclude
 - Smart pointer usage rules (unique_ptr, shared_ptr, scoped_refptr, raw_ptr, WeakPtr)
 - Thread safety and callback patterns (Unretained, WeakPtr, PostTask)
 - Feature flag guidance (when to guard, where to check)
