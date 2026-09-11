@@ -10,8 +10,11 @@
 
 2. **CRITICAL BRANCH MANAGEMENT**:
    - Change to the git repo: `cd [targetRepoPath from bot config]`
-   - Checkout master: `git checkout master`
-   - Pull latest changes: `git pull origin master`
+   - Fetch the upstream default branch: `git fetch upstream`
+   - A new branch starts from `upstream/master`, never `origin/master`: with
+     `project.useFork` true, `origin` is the bot's fork and its default branch is only as
+     current as the last push to it. See
+     [git-repository.md](./git-repository.md#branch-management-for-each-user-story).
 
    **Check if story already has a branch:**
    - If story has `branchName` field with a value: Use that existing branch (`git checkout <branchName>`)

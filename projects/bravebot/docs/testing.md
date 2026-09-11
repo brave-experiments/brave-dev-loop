@@ -40,7 +40,13 @@ make check-linux     # the same fmt/clippy/tests on Linux stable (Docker)
 - **check-reviewdog** drives the same opengrep and npm-audit runners the
   organization workflow drives, so a finding here is a comment the bot would
   post on the PR. `check-reviewdog-full` scans the whole tree and reports plenty
-  that predates the branch — the branch-scoped one is the gate.
+  that predates the branch — the branch-scoped one is the gate. Run it as
+  `contrib/check-reviewdog.sh --base upstream/main`: its own default base is
+  `origin/main`, which is the fork's stale ref here (see
+  [repo.md](./repo.md#entering-the-worktree--the-first-step-of-every-iteration)),
+  so the scan takes its baseline from a commit the branch is not based on, covers
+  every commit the fork is behind, and reports whatever it finds in them against
+  the branch.
 - **check-linux** is not a CI job; it is the coverage a macOS host lacks. Run it
   whenever the change touches platform-specific code, and for anything clippy
   might lint differently on a newer stable.

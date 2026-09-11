@@ -13,14 +13,20 @@ Project-specific: a profile may give each story its own worktree instead of work
 
 ## Branch Management for Each User Story
 
-Every user story MUST start with a fresh branch from origin/master:
+Every user story MUST start with a fresh branch from the upstream default branch:
 
 ```bash
 cd [targetRepoPath from bot config]
-git checkout master
-git pull origin master
-git checkout -b fix-<test-name-or-feature>
+git fetch upstream
+git checkout -b fix-<test-name-or-feature> upstream/master
 ```
+
+**The base is `upstream/master`, not `origin/master`.** Where `project.useFork` is true —
+the default — `origin` is the bot's own fork, and nothing in the development flow pushes
+upstream's commits to it, so `origin/master` is only as current as the last time somebody
+updated the fork. A branch based on it starts on an old tree and puts commits the bot did
+not write into its own pull request. Where `useFork` is false, `origin` and `upstream` name
+the same repository and either ref does.
 
 **Branch Naming**: DO NOT include "ralph" in the branch name. Use descriptive names based on the specific test or feature being fixed (e.g., "fix-solana-provider-test", "fix-ai-chat-task-test").
 

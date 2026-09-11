@@ -2413,6 +2413,18 @@ class TestBravebotWorktrees:
         doc = self._repo_doc()
         assert "../bravebot-<issue-number>" in doc
 
+    def test_the_worktree_is_based_on_upstream_and_not_the_fork(self):
+        """`origin` is the bot's fork, and nothing in the story flow pushes
+        upstream's commits to it, so a worktree added from `origin/main` starts on
+        whatever the fork last held -- a tree old enough to be missing the documents
+        the story's own research step tells it to read."""
+        doc = self._repo_doc()
+        assert 'worktree add -b <branch-name> "$WORK" upstream/main' in doc
+        assert 'worktree add -b <branch-name> "$WORK" origin/main' not in doc, (
+            "a new story branch is based on the fork"
+        )
+        assert "fetch upstream" in doc, "nothing makes the base current"
+
     def test_repo_doc_covers_create_reuse_and_removal(self):
         """A story spans iterations: the second one must re-enter the worktree
         it already has rather than add a second, and merged stories must not
@@ -2443,6 +2455,45 @@ class TestBravebotWorktrees:
             with open(os.path.join(DOCS_DIR, name)) as f:
                 text = f.read()
             assert "bravebot" not in text, f"docs/{name} hard-codes bravebot"
+
+
+class TestStoryBranchesComeFromUpstream:
+    """Where `project.useFork` is true -- the default -- `origin` is the bot's own
+    fork and nothing in the flow pushes upstream's commits to it. A story branch
+    based on the fork's default branch starts on an old tree and carries commits the
+    bot did not write into its own pull request."""
+
+    FORK_BASES = (
+        "git pull origin master",
+        "git pull origin main",
+        "rebase origin/master",
+        "rebase origin/main",
+        "origin/master\n",
+        "origin/main\n",
+    )
+
+    def _target_repo_docs(self):
+        """Every document that tells the agent how to work the target repo: the
+        shared workflow docs and each profile's own. The bot directory is not a
+        fork, so `learnable-patterns.md`, which branches there, is not in this set."""
+        for name in sorted(os.listdir(DOCS_DIR)):
+            if name.endswith(".md") and name != "learnable-patterns.md":
+                yield os.path.join("docs", name)
+        for profile in sorted(os.listdir(PROJECTS_DIR)):
+            profile_docs = os.path.join(PROJECTS_DIR, profile, "docs")
+            if not os.path.isdir(profile_docs):
+                continue
+            for name in sorted(os.listdir(profile_docs)):
+                if name.endswith(".md"):
+                    yield os.path.join("projects", profile, "docs", name)
+
+    def test_no_doc_bases_a_story_branch_on_the_forks_default_branch(self):
+        root = os.path.join(os.path.dirname(__file__), os.pardir)
+        for relative in self._target_repo_docs():
+            with open(os.path.join(root, relative)) as f:
+                text = f.read()
+            for phrase in self.FORK_BASES:
+                assert phrase not in text, f"{relative} bases work on {phrase!r}"
 
 
 class TestPrdMode:
