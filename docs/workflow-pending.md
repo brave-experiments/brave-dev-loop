@@ -264,8 +264,17 @@
 
    ### If it does not
 
-   Run the harness's own `/code-review` skill over the branch diff. For the
-   project's rules, read what the target repo actually has — the profile's
+   Run the harness's own `/code-review` skill over the branch diff, and **give it
+   the path the story works in**: `/code-review [targetRepoPath from bot config]`,
+   or the story's worktree where the profile uses one. The skill reviews the
+   session's working directory, which is the bot directory rather than the target
+   repo, so `/code-review` with no path reviews *this* repository's diff and
+   returns findings about the loop's own scripts and docs. Those findings look
+   plausible, so check the scope it reports before acting on any of them: a review
+   naming files your branch did not touch read the wrong tree, and none of it is
+   about your change.
+
+   For the project's rules, read what the target repo actually has — the profile's
    `docs/`, and the `AGENTS.md` or `CLAUDE.md` at the repo root — not a
    best-practices index the project may not ship.
 
