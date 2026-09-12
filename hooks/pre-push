@@ -1,0 +1,102 @@
+#!/bin/bash
+# Pre-push hook to keep bot work under the bot's identity.
+# Note: __BOT_USERNAME__ is replaced by setup.sh during installation.
+#
+# The bot commits and pushes as a different GitHub account than the machine owner, and the two
+# halves are configured independently. A commit's author comes from the repo's user.name, which
+# setup.sh pins. Which account opens a pull request comes from whichever token gh is using, which
+# setup.sh does not pin and cannot: `gh pr create` reads no git config at all.
+#
+# So the failure this catches is a branch whose every commit is correctly authored and signed by
+# the bot, pushed, and then turned into a pull request opened by the machine owner. That happened
+# on brave/bravebot#248, which had to be closed and opened again, because a commit's author can be
+# rewritten afterwards and a pull request's author cannot be reassigned at all.
+#
+# Everything here is gated on the repo already being configured as the bot, the same way
+# hooks/pre-commit is. A clone belonging to a person, or one setup.sh has not touched, exits at the
+# first check having done nothing.
+
+GIT_USER=$(git config user.name)
+
+if [ "$GIT_USER" != "__BOT_USERNAME__" ]; then
+  exit 0
+fi
+
+GIT_EMAIL=$(git config user.email)
+
+if [ -z "$GIT_EMAIL" ]; then
+  echo "❌ PUSH BLOCKED: user.name is $GIT_USER but no user.email is set," >&2
+  echo "   so there is no identity to check this push against." >&2
+  echo "" >&2
+  echo "SOLUTION: re-run 'make setup' in brave-dev-loop to configure this repo." >&2
+  exit 1
+fi
+
+# Only commits this push would create are the subject. Anything already on a remote-tracking ref
+# arrived from somebody else, which is what keeps a branch rebased onto upstream work from being
+# blamed for who wrote that work.
+MISMATCHED=()
+
+while read -r _local_ref LOCAL_SHA _remote_ref _remote_sha; do
+  # An all-zero local sha is a branch deletion, which creates no commits.
+  case "$LOCAL_SHA" in
+    *[!0]*) ;;
+    *) continue ;;
+  esac
+
+  while read -r commit; do
+    [ -n "$commit" ] || continue
+    if [ "$(git log -1 --format=%an "$commit")" != "$GIT_USER" ] ||
+      [ "$(git log -1 --format=%ae "$commit")" != "$GIT_EMAIL" ] ||
+      [ "$(git log -1 --format=%cn "$commit")" != "$GIT_USER" ] ||
+      [ "$(git log -1 --format=%ce "$commit")" != "$GIT_EMAIL" ]; then
+      MISMATCHED+=("$(git log -1 --format='%h  author %an <%ae>  committer %cn <%ce>' "$commit")")
+    fi
+  done <<<"$(git rev-list "$LOCAL_SHA" --not --remotes)"
+done
+
+if [ ${#MISMATCHED[@]} -gt 0 ]; then
+  echo "❌ PUSH BLOCKED: commits not authored by $GIT_USER <$GIT_EMAIL>" >&2
+  echo "" >&2
+  for line in "${MISMATCHED[@]}"; do
+    echo "  $line" >&2
+  done
+  echo "" >&2
+  echo "REASON: this repo is configured to commit as $GIT_USER. A commit carrying the machine" >&2
+  echo "        owner's name instead lands the bot's work under a person's account." >&2
+  echo "" >&2
+  echo "SOLUTION: rewrite the branch under the configured identity:" >&2
+  echo "          git rebase -x 'git commit --amend --no-edit --reset-author' <base>" >&2
+  exit 1
+fi
+
+# Which account a pull request would come from. GH_TOKEN set in the environment is how
+# bot_export_identity_env pins this for a run, so a caller that has already done it is trusted and
+# nothing here second-guesses it.
+if [ -z "${GH_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+  ACTIVE_ACCOUNT=$(gh auth status --active 2>/dev/null |
+    sed -n 's/.*account \([A-Za-z0-9._-]*\).*/\1/p' | head -1)
+
+  if [ -n "$ACTIVE_ACCOUNT" ] && [ "$ACTIVE_ACCOUNT" != "$GIT_USER" ]; then
+    if gh auth token --user "$GIT_USER" >/dev/null 2>&1; then
+      echo "❌ PUSH BLOCKED: gh would act as $ACTIVE_ACCOUNT, not $GIT_USER" >&2
+      echo "" >&2
+      echo "REASON: gh reads no git config, so a pull request opened after this push would be" >&2
+      echo "        authored by $ACTIVE_ACCOUNT. A pull request's author cannot be reassigned," >&2
+      echo "        only closed and opened again." >&2
+      echo "" >&2
+      echo "SOLUTION: pin gh to $GIT_USER for this shell, which leaves gh's active account and" >&2
+      echo "          every other terminal alone:" >&2
+      echo "            export GH_TOKEN=\$(gh auth token --user $GIT_USER)" >&2
+      exit 1
+    fi
+
+    echo "⚠️  gh would act as $ACTIVE_ACCOUNT, not $GIT_USER, and gh has no stored token for" >&2
+    echo "   $GIT_USER to use instead. A pull request opened after this push would be authored" >&2
+    echo "   by $ACTIVE_ACCOUNT." >&2
+    echo "" >&2
+    echo "   Add that account with 'gh auth login', then re-run 'make setup'." >&2
+  fi
+fi
+
+exit 0

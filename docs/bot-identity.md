@@ -28,15 +28,28 @@ gh auth login --hostname github.com   # makes the new account active
 gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
 ```
 
-## Pre-commit Hooks
+## Hooks
 
-Two hooks are installed by `make setup`:
+Three hooks are installed by `make setup`:
 
-**Target repo hook** (`hooks/pre-commit`):
+**Target repo pre-commit** (`hooks/pre-commit`):
 Blocks the configured bot account from modifying dependency files (package.json, DEPS, Cargo.toml, go.mod, etc.). Prevents bots from introducing external dependencies without review.
 
-**Bot repo hook** (`hooks/pre-commit-bot-repo`):
+**Target repo pre-push** (`hooks/pre-push`):
+Refuses a push whose new commits are authored or committed by anybody other than the `user.name` and `user.email` set above. Commits already on a remote-tracking ref are not its subject, so a branch rebased onto upstream work is not blamed for who wrote that work.
+
+It also checks which account would open the pull request, because `gh pr create` reads no git config at all: a branch every commit of which is correctly authored and signed can still be followed by a pull request opened by the machine owner, and a pull request's author cannot be reassigned afterwards, only closed and opened again. Where `GH_TOKEN` is already exported, as `run.sh` does, the hook trusts it and says nothing. Otherwise, if `gh`'s active account is not the bot and a stored token for the bot exists, it refuses the push and names the one-line fix:
+
+```bash
+export GH_TOKEN=$(gh auth token --user <bot-account>)
+```
+
+That pins `gh` for one shell, leaving its active account and every other terminal alone.
+
+**Bot repo pre-commit** (`hooks/pre-commit-bot-repo`):
 Blocks committing `data/prd.json`, `data/progress.txt`, and `data/run-state.json` to ensure user-specific files don't get committed.
+
+Both target-repo hooks are inert in a checkout whose `user.name` is not the bot: each exits at its first check having done nothing, so a person's clone of the same repository behaves as if neither were there.
 
 **Where a target repo's hook lands.** Not `<repo>/.git/hooks` unconditionally. `core.hooksPath` *replaces* that directory rather than adding to it, so in a target repo that sets it — as one with its own checked-in hooks does — a hook written to `.git/hooks` never runs and never says so. Setup resolves the configured path and installs into that.
 

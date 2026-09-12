@@ -9,6 +9,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-commit"
+PUSH_HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-push"
 CONFIG_FILE="$PROJECT_ROOT/config.json"
 
 source "$SCRIPT_DIR/lib/git-identity.sh"
@@ -724,11 +725,15 @@ if [ "$SKIP_GIT" = false ]; then
     fi
   fi
 
-  # Install pre-commit hook for target repo
+  # Install hooks for target repo. Both are inert unless user.name is $GIT_USER, so a clone
+  # belonging to a person is unaffected by either.
   if [ -n "$GIT_USER" ]; then
     echo "  Hooks → $(repo_hooks_dir "$GIT_REPO")"
     if repo_install_hook "$GIT_REPO" "$HOOK_SOURCE" pre-commit "$GIT_USER"; then
       echo "  ✓ Pre-commit hook installed (blocks $GIT_USER from modifying dependencies)"
+    fi
+    if repo_install_hook "$GIT_REPO" "$PUSH_HOOK_SOURCE" pre-push "$GIT_USER"; then
+      echo "  ✓ Pre-push hook installed (blocks a push whose commits are not $GIT_USER's)"
     fi
   fi
   echo ""
