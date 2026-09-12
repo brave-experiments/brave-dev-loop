@@ -175,12 +175,14 @@ test_required_files_exist() {
   assert_file_exists "setup.sh exists" "$ROOT_DIR/scripts/setup.sh"
   assert_file_exists "prd.json exists" "$ROOT_DIR/data/prd.json"
   assert_file_exists "pre-commit hook exists" "$ROOT_DIR/hooks/pre-commit"
+  assert_file_exists "pre-push hook exists" "$ROOT_DIR/hooks/pre-push"
 }
 
 test_scripts_executable() {
   assert_executable "run.sh is executable" "$ROOT_DIR/run.sh"
   assert_executable "setup.sh is executable" "$ROOT_DIR/scripts/setup.sh"
   assert_executable "pre-commit hook is executable" "$ROOT_DIR/hooks/pre-commit"
+  assert_executable "pre-push hook is executable" "$ROOT_DIR/hooks/pre-push"
   assert_executable "fetch-issue.sh is executable" "$ROOT_DIR/scripts/fetch-issue.sh"
   assert_executable "filter-issue-json.sh is executable" "$ROOT_DIR/scripts/filter-issue-json.sh"
 }
@@ -350,6 +352,229 @@ test_precommit_hook_allows_non_bot() {
 }
 
 #######################
+# Pre-push Hook Tests
+#######################
+
+# A scratch repo with the pre-push hook installed and one commit, echoed as its path.
+# $1 is the user.name to configure, which is what decides whether the hook does anything at all.
+make_prepush_repo() {
+  local git_user="$1" test_dir
+  test_dir=$(mktemp -d)
+
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config user.name "$git_user"
+  git -C "$test_dir" config user.email "$git_user@example.com"
+
+  sed 's/__BOT_USERNAME__/testbot/g' "$ROOT_DIR/hooks/pre-push" > "$test_dir/.git/hooks/pre-push"
+  chmod +x "$test_dir/.git/hooks/pre-push"
+
+  printf 'x\n' > "$test_dir/file.txt"
+  git -C "$test_dir" add file.txt
+  git -C "$test_dir" commit -q -m "test"
+
+  printf '%s\n' "$test_dir"
+}
+
+# Run an installed pre-push hook the way git would: from the work tree, with a ref line on stdin.
+# $2 is the local sha to report, defaulting to HEAD.
+run_prepush_hook() {
+  local test_dir="$1" local_sha="${2:-}"
+  [ -n "$local_sha" ] || local_sha=$(git -C "$test_dir" rev-parse HEAD)
+
+  ( cd "$test_dir" &&
+    printf 'refs/heads/main %s refs/heads/main %s\n' "$local_sha" "$(printf '0%.0s' {1..40})" |
+      GH_TOKEN=stub bash .git/hooks/pre-push origin git@github.com:x/y.git ) 2>&1
+}
+
+test_prepush_hook_syntax() {
+  assert_success "Pre-push hook has valid syntax" \
+    bash -n "$ROOT_DIR/hooks/pre-push"
+}
+
+test_prepush_hook_ignores_non_bot() {
+  # The reason this hook can ship to a repo other people clone: a checkout whose user.name is not
+  # the bot's must be unaffected by it, including one nobody ran setup.sh against.
+  local test_dir
+  test_dir=$(make_prepush_repo "regularuser")
+
+  local result=0
+  run_prepush_hook "$test_dir" > /dev/null 2>&1 || result=$?
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ $result -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} PASS: Pre-push hook allows a push from a non-bot account"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Pre-push hook blocked a non-bot account (exit code: $result)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Pre-push hook allows a push from a non-bot account")
+    return 1
+  fi
+}
+
+test_prepush_hook_allows_bot_commit() {
+  local test_dir
+  test_dir=$(make_prepush_repo "testbot")
+
+  local result=0
+  run_prepush_hook "$test_dir" > /dev/null 2>&1 || result=$?
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ $result -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} PASS: Pre-push hook allows a commit authored by the bot"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Pre-push hook blocked the bot's own commit (exit code: $result)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Pre-push hook allows a commit authored by the bot")
+    return 1
+  fi
+}
+
+test_prepush_hook_blocks_foreign_commit() {
+  # The failure this exists for: a repo configured as the bot, pushing a commit the machine owner
+  # authored.
+  local test_dir
+  test_dir=$(make_prepush_repo "testbot")
+
+  printf 'y\n' > "$test_dir/other.txt"
+  git -C "$test_dir" add other.txt
+  git -C "$test_dir" -c user.name="Machine Owner" -c user.email="owner@example.com" \
+    commit -q -m "not the bot"
+
+  local output
+  output=$(run_prepush_hook "$test_dir" || true)
+  local result=0
+  run_prepush_hook "$test_dir" > /dev/null 2>&1 || result=$?
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ $result -ne 0 ] && echo "$output" | grep -q "Machine Owner"; then
+    echo -e "${GREEN}✓${NC} PASS: Pre-push hook blocks a commit authored by somebody else"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Pre-push hook did not block a foreign commit (exit code: $result)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Pre-push hook blocks a commit authored by somebody else")
+    return 1
+  fi
+}
+
+test_prepush_hook_allows_branch_deletion() {
+  # An all-zero local sha creates no commits, so there is nothing to attribute and nothing to fail
+  # on. Reading it as a commit-ish would abort every `git push --delete`.
+  local test_dir
+  test_dir=$(make_prepush_repo "testbot")
+
+  local result=0
+  run_prepush_hook "$test_dir" "$(printf '0%.0s' {1..40})" > /dev/null 2>&1 || result=$?
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ $result -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} PASS: Pre-push hook allows a branch deletion"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Pre-push hook blocked a branch deletion (exit code: $result)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Pre-push hook allows a branch deletion")
+    return 1
+  fi
+}
+
+#######################
+# Hook Installation Tests
+#######################
+
+test_hooks_dir_follows_hookspath() {
+  # core.hooksPath replaces .git/hooks rather than adding to it, so a hook installed at the latter
+  # in a repo that sets the former never runs and never says so.
+  local test_dir output
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config core.hooksPath .githooks
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" && repo_hooks_dir "$test_dir" ) > /dev/null 2>&1
+  output=$( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" && repo_hooks_dir "$test_dir" )
+  rm -rf "$test_dir"
+
+  assert_contains "Hooks directory follows core.hooksPath" "/.githooks" "$output"
+}
+
+test_hook_install_refuses_tracked_hook() {
+  # A target repo with its own checked-in hook of the same name: overwriting it would destroy
+  # committed work and show up as a modified tracked file in somebody's checkout.
+  local test_dir result=0
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config user.name "testbot"
+  git -C "$test_dir" config user.email "testbot@example.com"
+  git -C "$test_dir" config core.hooksPath .githooks
+
+  mkdir -p "$test_dir/.githooks"
+  printf '#!/bin/sh\nexit 0\n' > "$test_dir/.githooks/pre-commit"
+  chmod +x "$test_dir/.githooks/pre-commit"
+  git -C "$test_dir" add -f .githooks/pre-commit
+  git -C "$test_dir" commit -q -m "own hook"
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" &&
+    repo_install_hook "$test_dir" "$ROOT_DIR/hooks/pre-commit" pre-commit testbot ) > /dev/null 2>&1 ||
+    result=$?
+
+  local still_theirs=1
+  grep -q "^exit 0$" "$test_dir/.githooks/pre-commit" && still_theirs=0
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ $result -ne 0 ] && [ $still_theirs -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} PASS: Hook install refuses to overwrite a hook the target repo tracks"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Hook install overwrote a tracked hook (exit code: $result)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Hook install refuses to overwrite a hook the target repo tracks")
+    return 1
+  fi
+}
+
+test_hook_install_leaves_status_clean() {
+  # An in-tree hooks directory means the installed file sits among version-controlled ones, where it
+  # would otherwise show up as untracked in the target repo.
+  local test_dir status
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config user.name "testbot"
+  git -C "$test_dir" config user.email "testbot@example.com"
+  git -C "$test_dir" config core.hooksPath .githooks
+  git -C "$test_dir" commit -q --allow-empty -m "init"
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" &&
+    repo_install_hook "$test_dir" "$ROOT_DIR/hooks/pre-commit" pre-commit testbot ) > /dev/null 2>&1
+
+  status=$(git -C "$test_dir" status --porcelain)
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ -z "$status" ]; then
+    echo -e "${GREEN}✓${NC} PASS: An in-tree installed hook does not show up in git status"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Installed hook left the target repo dirty ($status)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("An in-tree installed hook does not show up in git status")
+    return 1
+  fi
+}
+
+#######################
 # Configuration Tests
 #######################
 
@@ -414,6 +639,20 @@ run_all_tests() {
   test_precommit_hook_syntax
   test_precommit_hook_blocks_package_json
   test_precommit_hook_allows_non_bot
+  echo ""
+
+  echo "=== Pre-push Hook Tests ==="
+  test_prepush_hook_syntax
+  test_prepush_hook_ignores_non_bot
+  test_prepush_hook_allows_bot_commit
+  test_prepush_hook_blocks_foreign_commit
+  test_prepush_hook_allows_branch_deletion
+  echo ""
+
+  echo "=== Hook Installation Tests ==="
+  test_hooks_dir_follows_hookspath
+  test_hook_install_refuses_tracked_hook
+  test_hook_install_leaves_status_clean
   echo ""
 
   echo "=== Configuration Tests ==="
