@@ -324,6 +324,29 @@
 
    This ensures the final committed state is fully verified. Do NOT create a PR until all checks pass on the final committed state.
 
+   **A gate that fails on a test the diff cannot reach does not block the story.**
+   "Run them all" means run them all, not pass them all regardless of cause. Where a
+   gate fails on a test in a file this branch does not touch and whose code path the
+   change cannot enter, establish that **once** and move on:
+
+   - Say concretely why the diff cannot reach it — the files the commit touches, and
+     the fact that the failing test exercises none of them. `git diff --stat
+     <upstream-default>..HEAD` is usually the whole argument.
+   - Name every failing test in the PR body's test plan, in a `<details>` block, and
+     say the gate was otherwise clean. Do not mark the gate as a plain pass.
+   - Record it in `$BOT_DIR/data/progress.txt` too, so the next iteration does not
+     rediscover it.
+
+   Then continue to step 12. Do **not** re-run the gate hoping for green: suites that
+   stand up real servers or wait on a clock fail under load, a different test each
+   time, and several runs share this machine. Two runs that fail on non-overlapping
+   sets of unrelated tests have already proved the point. Where the target repo has
+   its own guidance on this, it wins — read it before applying this rule.
+
+   The rule is narrow. A failure in a file the diff touches is yours. A failure that
+   repeats on the *same* test every run is yours until you show otherwise. A compile
+   error, a lint, or a formatting diff is never a flake.
+
 12. **Once all verifications pass:**
    - Update the PRD status:
      ```bash
@@ -338,6 +361,40 @@
    - Keep `branchName` (so we can continue on same branch next iteration)
    - Document failure in `$BOT_DIR/data/progress.txt`
    - **END THE ITERATION** - Stop processing
+
+## Never stop without leaving a record
+
+`progress.txt` gets an entry at a status transition, so an iteration that ends
+*without* one writes nothing at all — and everything it learned dies with the
+session. The next run then re-clones the state from scratch: it re-runs gates that
+already passed, re-derives what the root cause was, and can redo work that is
+already committed on the branch. A story has burned three sessions this way.
+
+**Any iteration that ends while the story stays `pending` MUST append a progress
+entry first** (see [progress-reporting.md](./progress-reporting.md#for-an-iteration-that-ends-without-a-status-transition)).
+This covers every exit, not just a test failure: a gate you could not finish, a
+blocked dependency, a rebase you decided against, running out of room. Record the
+branch and commit SHA, each gate that passed with its exit code, the one gate that
+is outstanding, and the exact next command.
+
+The cost is one script call. The cost of skipping it is a full re-run of a presubmit
+sequence that can take hours.
+
+Two traps make this worse than it looks, and both have produced false "all green"
+reports:
+
+- **A backgrounded check's completion notification reports the wrong exit code.**
+  `make check-x > log 2>&1; echo "EXIT=$?"` ends in the `echo`, so the harness
+  reports *`echo`'s* status and a failed check arrives as "exit code 0". Put the
+  echo inside the redirect — `{ make check-x; echo "EXIT=$?"; } > log 2>&1` — and
+  read the status out of the log. Never quote a notification's exit code as a
+  check's result.
+- **A container-based check outlives the command that started it.** When the
+  foreground `make` is killed, the container it launched usually keeps running, so
+  its result is still recoverable: `docker ps` finds it, `docker inspect` confirms
+  the mount is *your* worktree, and `docker logs -f <name>` plus `docker wait
+  <name>` give you the output and the real exit code. Check for that before paying
+  for another cold run.
 
 ## Retry Policy for Persistent Failures
 
