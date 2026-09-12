@@ -38,6 +38,10 @@ Blocks the configured bot account from modifying dependency files (package.json,
 **Bot repo hook** (`hooks/pre-commit-bot-repo`):
 Blocks committing `data/prd.json`, `data/progress.txt`, and `data/run-state.json` to ensure user-specific files don't get committed.
 
+**Where a target repo's hook lands.** Not `<repo>/.git/hooks` unconditionally. `core.hooksPath` *replaces* that directory rather than adding to it, so in a target repo that sets it — as one with its own checked-in hooks does — a hook written to `.git/hooks` never runs and never says so. Setup resolves the configured path and installs into that.
+
+Two things follow from the resolved directory usually being inside the working tree. Setup adds an entry to the target repo's `.git/info/exclude`, which is local to the clone, so the installed file does not show up as untracked and no tracked `.gitignore` is touched. And where the target repo already tracks a hook of that name, setup installs nothing and says so, rather than overwriting a file somebody committed.
+
 ## Commit Format
 
 ```

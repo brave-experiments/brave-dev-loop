@@ -12,6 +12,7 @@ HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-commit"
 CONFIG_FILE="$PROJECT_ROOT/config.json"
 
 source "$SCRIPT_DIR/lib/git-identity.sh"
+source "$SCRIPT_DIR/lib/repo-hooks.sh"
 
 echo "==================================="
 echo "  Brave Dev Loop Setup"
@@ -725,10 +726,10 @@ if [ "$SKIP_GIT" = false ]; then
 
   # Install pre-commit hook for target repo
   if [ -n "$GIT_USER" ]; then
-    HOOK_DEST="$GIT_REPO/.git/hooks/pre-commit"
-    sed "s/__BOT_USERNAME__/$GIT_USER/g" "$HOOK_SOURCE" > "$HOOK_DEST"
-    chmod +x "$HOOK_DEST"
-    echo "  ✓ Pre-commit hook installed (blocks $GIT_USER from modifying dependencies)"
+    echo "  Hooks → $(repo_hooks_dir "$GIT_REPO")"
+    if repo_install_hook "$GIT_REPO" "$HOOK_SOURCE" pre-commit "$GIT_USER"; then
+      echo "  ✓ Pre-commit hook installed (blocks $GIT_USER from modifying dependencies)"
+    fi
   fi
   echo ""
 fi

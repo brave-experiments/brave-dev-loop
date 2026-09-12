@@ -350,6 +350,92 @@ test_precommit_hook_allows_non_bot() {
 }
 
 #######################
+# Hook Installation Tests
+#######################
+
+test_hooks_dir_follows_hookspath() {
+  # core.hooksPath replaces .git/hooks rather than adding to it, so a hook installed at the latter
+  # in a repo that sets the former never runs and never says so.
+  local test_dir output
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config core.hooksPath .githooks
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" && repo_hooks_dir "$test_dir" ) > /dev/null 2>&1
+  output=$( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" && repo_hooks_dir "$test_dir" )
+  rm -rf "$test_dir"
+
+  assert_contains "Hooks directory follows core.hooksPath" "/.githooks" "$output"
+}
+
+test_hook_install_refuses_tracked_hook() {
+  # A target repo with its own checked-in hook of the same name: overwriting it would destroy
+  # committed work and show up as a modified tracked file in somebody's checkout.
+  local test_dir result=0
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config user.name "testbot"
+  git -C "$test_dir" config user.email "testbot@example.com"
+  git -C "$test_dir" config core.hooksPath .githooks
+
+  mkdir -p "$test_dir/.githooks"
+  printf '#!/bin/sh\nexit 0\n' > "$test_dir/.githooks/pre-commit"
+  chmod +x "$test_dir/.githooks/pre-commit"
+  git -C "$test_dir" add -f .githooks/pre-commit
+  git -C "$test_dir" commit -q -m "own hook"
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" &&
+    repo_install_hook "$test_dir" "$ROOT_DIR/hooks/pre-commit" pre-commit testbot ) > /dev/null 2>&1 ||
+    result=$?
+
+  local still_theirs=1
+  grep -q "^exit 0$" "$test_dir/.githooks/pre-commit" && still_theirs=0
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ $result -ne 0 ] && [ $still_theirs -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} PASS: Hook install refuses to overwrite a hook the target repo tracks"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Hook install overwrote a tracked hook (exit code: $result)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Hook install refuses to overwrite a hook the target repo tracks")
+    return 1
+  fi
+}
+
+test_hook_install_leaves_status_clean() {
+  # An in-tree hooks directory means the installed file sits among version-controlled ones, where it
+  # would otherwise show up as untracked in the target repo.
+  local test_dir status
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config user.name "testbot"
+  git -C "$test_dir" config user.email "testbot@example.com"
+  git -C "$test_dir" config core.hooksPath .githooks
+  git -C "$test_dir" commit -q --allow-empty -m "init"
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" &&
+    repo_install_hook "$test_dir" "$ROOT_DIR/hooks/pre-commit" pre-commit testbot ) > /dev/null 2>&1
+
+  status=$(git -C "$test_dir" status --porcelain)
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ -z "$status" ]; then
+    echo -e "${GREEN}✓${NC} PASS: An in-tree installed hook does not show up in git status"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Installed hook left the target repo dirty ($status)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("An in-tree installed hook does not show up in git status")
+    return 1
+  fi
+}
+
+#######################
 # Configuration Tests
 #######################
 
@@ -414,6 +500,12 @@ run_all_tests() {
   test_precommit_hook_syntax
   test_precommit_hook_blocks_package_json
   test_precommit_hook_allows_non_bot
+  echo ""
+
+  echo "=== Hook Installation Tests ==="
+  test_hooks_dir_follows_hookspath
+  test_hook_install_refuses_tracked_hook
+  test_hook_install_leaves_status_clean
   echo ""
 
   echo "=== Configuration Tests ==="
