@@ -43,6 +43,30 @@ It takes a lock, so an entry cannot interleave with another run's ([Concurrent r
 ---
 ```
 
+## For an iteration that ends without a status transition
+
+The story stays where it is, so nothing else records that this iteration happened.
+Write this before you stop — see
+[workflow-pending.md](./workflow-pending.md#never-stop-without-leaving-a-record).
+
+```
+## [Date/Time] - [Story ID] - Status: [status] (iteration ended, no transition)
+- Why it stopped: [gate not finished / blocked on X / decided against Y]
+- Branch and commit: [branch-name] at [sha], based on [upstream sha]
+- What is already done and must NOT be redone:
+  - [gate or step]: [result, with its exit code]
+  - [gate or step]: [result, with its exit code]
+- What is outstanding: [the one gate or step left]
+- Next command: [the exact command the next iteration should run first]
+- Artefacts: [log paths, /tmp files, a drafted PR body — anything the next
+  iteration would otherwise rewrite]
+- **Resume command:** `claude -r <session-id>`
+---
+```
+
+Read the newest such entry for the story **before** re-running anything: it is the
+difference between finishing a story and starting it again.
+
 ## For status: "committed" → "pushed"
 
 ```
