@@ -57,15 +57,33 @@ make check-linux     # the same fmt/clippy/tests on Linux stable (Docker)
 Many tests there stand up a real mock HTTP server on an ephemeral port or wait on a
 clock, and the container runs at `--test-threads=4` while other run slots build on
 the same machine. So a *different* handful fails on each attempt: `Connection
-refused`, `Aichat(NoContent)`, an off-by-one round count, or an assertion on a
-request body that was still in flight when the test drained the channel with
-`try_iter`. One story saw five distinct `turn.rs` tests fail across three runs with
-no overlap between them.
+refused`, `Aichat(NoContent)`, `Transport { detail: "io: Peer disconnected" }`, an
+off-by-one round count, or an assertion on a request body that was still in flight
+when the test drained the channel with `try_iter`. One story saw five distinct
+`turn.rs` tests fail across three runs with no overlap between them.
 
-Do not re-run the target hoping for green. Apply the rule in step 11 of
-[workflow-pending.md](../../../docs/workflow-pending.md): if the diff touches no
-turn-mode code, say so, name the failing tests in the PR body, and carry on. bravebot's own `docs/development/checks.md` says the same thing first, and it
-wins: "a test that fails on the parent commit is not yours to fix".
+Re-run the test the run named, by itself, per step 11 of
+[workflow-pending.md](../../../docs/workflow-pending.md) — not the target. The
+container is what makes that cheap, so **start it yourself rather than through
+`make`**: the Makefile's `check-linux` passes `--rm`, which throws the compiled tree
+away at the moment you learn you need it.
+
+```sh
+docker run --name bb-linux --platform linux/amd64 -e BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 \
+  -e USER=root -e BRAVEBOT_ALLOW_MISSING_LANDLOCK=1 -v "$PWD:/src:ro" -w /work rust:slim \
+  sh -c 'cp -r /src/. /work && cargo test --all --no-fail-fast -- --test-threads=4'
+
+docker commit bb-linux bb-linux-snap    # keeps /work, so the re-run mostly skips the build
+docker run --rm --platform linux/amd64 -e BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 \
+  -e USER=root -e BRAVEBOT_ALLOW_MISSING_LANDLOCK=1 -w /work bb-linux-snap \
+  sh -c 'cargo test -p bravebot-agent --test turn -- --test-threads=1 <test-name>'
+```
+
+The snapshot loses the fingerprints of the crates with build scripts, so the isolated
+run is not free: about a dozen crates rebuild in some 20 seconds, against 135 cold.
+A test that passes alone was load, and the gate counts as passed with the flake named
+in the PR body. bravebot's own `docs/development/checks.md` covers the case where it
+fails alone too: "a test that fails on the parent commit is not yours to fix".
 
 Two Docker specifics worth knowing before you spend twelve minutes:
 

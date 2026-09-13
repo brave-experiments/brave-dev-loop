@@ -324,28 +324,36 @@
 
    This ensures the final committed state is fully verified. Do NOT create a PR until all checks pass on the final committed state.
 
-   **A gate that fails on a test the diff cannot reach does not block the story.**
-   "Run them all" means run them all, not pass them all regardless of cause. Where a
-   gate fails on a test in a file this branch does not touch and whose code path the
-   change cannot enter, establish that **once** and move on:
+   **A gate that failed under load is not a failed gate. Re-run the test it named,
+   by itself.** "Run them all" means run them all, not pass them all regardless of
+   cause. A suite that stands up real servers or waits on a clock fails a *different*
+   test on each attempt when several runs share this machine, so the failure is
+   settled with evidence rather than with an argument about the diff:
 
-   - Say concretely why the diff cannot reach it — the files the commit touches, and
-     the fact that the failing test exercises none of them. `git diff --stat
-     <upstream-default>..HEAD` is usually the whole argument.
-   - Name every failing test in the PR body's test plan, in a `<details>` block, and
-     say the gate was otherwise clean. Do not mark the gate as a plain pass.
-   - Record it in `$BOT_DIR/data/progress.txt` too, so the next iteration does not
-     rediscover it.
+   1. **Re-run each failing test on its own, in the environment the gate used.** One
+      test alone is seconds where the gate was minutes or hours, and it answers the
+      whole question. Where the gate ran in a container, re-use that container rather
+      than paying for a cold build — see the project profile's `docs/testing.md`.
+   2. **Passes alone: it was load, and the gate counts as passed.** Name the test that
+      flaked in the PR body's test plan, say it passed in isolation, and record it in
+      `$BOT_DIR/data/progress.txt`. Never mark a gate green in silence.
+   3. **Fails alone: it is a real failure.** If it fails the same way on the parent
+      commit it is still not this story's to fix — say why the diff cannot reach it
+      (the files the commit touches, and the fact that the failing test exercises none
+      of them; `git diff --stat <upstream-default>..HEAD` is usually the whole
+      argument), name it in the PR body's test plan in a `<details>` block, say the
+      gate was otherwise clean, and record it in progress.txt. Do not mark the gate as
+      a plain pass. If it passes on the parent, it is yours: go to step 13.
 
-   Then continue to step 12. Do **not** re-run the gate hoping for green: suites that
-   stand up real servers or wait on a clock fail under load, a different test each
-   time, and several runs share this machine. Two runs that fail on non-overlapping
-   sets of unrelated tests have already proved the point. Where the target repo has
-   its own guidance on this, it wins — read it before applying this rule.
+   Do **not** re-run the *whole* gate hoping for green. That is the expensive way to
+   learn what one test tells you in seconds, and under load the flake just moves to
+   another test.
 
-   The rule is narrow. A failure in a file the diff touches is yours. A failure that
-   repeats on the *same* test every run is yours until you show otherwise. A compile
-   error, a lint, or a formatting diff is never a flake.
+   The rule is narrow. A failure that repeats on the *same* test every run is yours
+   until you show otherwise, and one in a file the diff touches is yours until an
+   isolated run says otherwise. A compile error, a lint, or a formatting diff is never
+   a flake. Where the target repo has its own guidance on this, it wins — read it
+   before applying this rule.
 
 12. **Once all verifications pass:**
    - Update the PRD status:
