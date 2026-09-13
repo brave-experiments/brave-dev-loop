@@ -7,9 +7,13 @@
 # authored, not a list of every issue somebody remembered to type in by hand;
 # before this was a script, that same append ran nightly as an agent session.
 #
-# The bot-PR sync rewrites story status from the bot's open PRs, which is only
-# true of a PRD that is a cache. It runs in "auto" alone: a curated PRD is
-# never rewritten from GitHub behind the operator.
+# The two PR syncs rewrite story status from GitHub, which is only true of a PRD
+# that is a cache. They run in "auto" alone: a curated PRD is never rewritten
+# from GitHub behind the operator. One adopts the bot's open PRs as "pushed"
+# stories, the other retires the ones that have since been merged — without it a
+# merged PR holds its place in the pushed queue, which select-task.py ranks
+# above pending work, so a run spends iterations moving statuses instead of
+# writing code.
 
 set -e
 
@@ -29,4 +33,5 @@ python3 "$SCRIPT_DIR/add-backlog-to-prd.py" || echo "WARNING: issue sync failed 
 
 if [ "$BOT_PRD_MODE" = "auto" ]; then
   python3 "$SCRIPT_DIR/sync-bot-prs-to-prd.py" || echo "WARNING: PR sync failed — continuing with the cached PRD." >&2
+  python3 "$SCRIPT_DIR/sync-merged-prs-to-prd.py" || echo "WARNING: merged-PR sync failed — continuing with the cached PRD." >&2
 fi

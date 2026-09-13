@@ -1361,6 +1361,256 @@ class TestBotExportIdentityEnv:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# sync-merged-prs-to-prd.py
+# ═══════════════════════════════════════════════════════════════════════════
+
+MAIN_WORKTREE = "/checkout/bravebot"
+STORY_WORKTREE = "/checkout/bravebot-196"
+
+
+def porcelain(*entries):
+    """A `git worktree list --porcelain` listing for (path, branch) pairs."""
+    return "".join(
+        f"worktree {path}\nHEAD {'0' * 40}\nbranch refs/heads/{branch}\n\n"
+        for path, branch in entries
+    )
+
+
+class TestSyncMergedCandidates:
+    def test_only_pushed_stories_are_asked_about(self, sync_merged_prs):
+        prd = {
+            "stories": [
+                make_story(status="pushed", id="US-001", prNumber=11),
+                make_story(status="pending", id="US-002", prNumber=22),
+                make_story(status="merged", id="US-003", prNumber=33),
+                make_story(status="committed", id="US-004", prNumber=44),
+            ]
+        }
+        assert sync_merged_prs.pushed_pr_numbers(prd) == [11]
+
+    def test_a_pushed_story_with_no_pr_number_is_skipped(self, sync_merged_prs):
+        prd = {"stories": [make_story(status="pushed", prNumber=None)]}
+        assert sync_merged_prs.pushed_pr_numbers(prd) == []
+
+    def test_one_pr_shared_by_two_stories_is_asked_about_once(self, sync_merged_prs):
+        prd = {
+            "stories": [
+                make_story(status="pushed", id="US-001", prNumber=11),
+                make_story(status="pushed", id="US-002", prNumber=11),
+            ]
+        }
+        assert sync_merged_prs.pushed_pr_numbers(prd) == [11]
+
+
+class TestSyncMergedRetire:
+    def test_it_writes_the_fields_an_iteration_writes(
+        self, sync_merged_prs, update_prd_status
+    ):
+        # A story retired here has to be indistinguishable from one an agent
+        # retired, or the post-merge workflow reads a half-populated story.
+        by_script = make_story(status="pushed", prNumber=11)
+        sync_merged_prs.retire(by_script, "2026-09-11T15:10:11Z")
+        by_agent = make_story(status="pushed", prNumber=11)
+        update_prd_status.handle_merged(by_agent, Namespace())
+        assert set(by_script) == set(by_agent)
+        assert by_script["status"] == "merged"
+
+    def test_merged_at_is_the_real_merge_time(self, sync_merged_prs):
+        story = make_story(status="pushed")
+        sync_merged_prs.retire(story, "2026-09-11T15:10:11Z")
+        assert story["mergedAt"] == "2026-09-11T15:10:11Z"
+
+    def test_a_pr_with_no_merge_time_still_retires(self, sync_merged_prs):
+        story = make_story(status="pushed")
+        sync_merged_prs.retire(story, None)
+        assert story["status"] == "merged"
+        assert story["mergedAt"]
+
+    def test_monitoring_starts_a_day_from_discovery_not_from_the_merge(
+        self, sync_merged_prs
+    ):
+        # A PR merged last week has not been watched for a week; dating the
+        # first check from the merge would leave it permanently overdue.
+        story = make_story(status="pushed")
+        sync_merged_prs.retire(story, "2026-09-01T00:00:00Z")
+        due = datetime.strptime(
+            story["nextMergedCheck"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=timezone.utc)
+        assert due > datetime.now(timezone.utc)
+
+
+class TestSyncMergedWorktreeLookup:
+    def test_a_worktree_is_found_by_the_branch_it_has_checked_out(
+        self, sync_merged_prs, monkeypatch
+    ):
+        listing = porcelain(
+            (MAIN_WORKTREE, "main"), (STORY_WORKTREE, "fix-routing-fields")
+        )
+        monkeypatch.setattr(sync_merged_prs, "run_git", lambda args: listing)
+        found = sync_merged_prs.story_worktrees(MAIN_WORKTREE, {"fix-routing-fields"})
+        assert found == {"fix-routing-fields": STORY_WORKTREE}
+
+    def test_the_main_checkout_is_never_a_candidate(
+        self, sync_merged_prs, monkeypatch
+    ):
+        # A project without worktrees leaves the story branch checked out in the
+        # main tree. Removing that would take the whole checkout with it.
+        listing = porcelain((MAIN_WORKTREE, "fix-routing-fields"))
+        monkeypatch.setattr(sync_merged_prs, "run_git", lambda args: listing)
+        assert (
+            sync_merged_prs.story_worktrees(MAIN_WORKTREE, {"fix-routing-fields"}) == {}
+        )
+
+    def test_another_story_s_worktree_is_left_alone(self, sync_merged_prs, monkeypatch):
+        listing = porcelain(
+            (MAIN_WORKTREE, "main"),
+            (STORY_WORKTREE, "fix-routing-fields"),
+            ("/checkout/bravebot-197", "fix-something-else"),
+        )
+        monkeypatch.setattr(sync_merged_prs, "run_git", lambda args: listing)
+        found = sync_merged_prs.story_worktrees(MAIN_WORKTREE, {"fix-routing-fields"})
+        assert found == {"fix-routing-fields": STORY_WORKTREE}
+
+    def test_an_unreadable_repository_yields_nothing(
+        self, sync_merged_prs, monkeypatch
+    ):
+        monkeypatch.setattr(sync_merged_prs, "run_git", lambda args: None)
+        assert sync_merged_prs.story_worktrees(MAIN_WORKTREE, {"fix-x"}) == {}
+
+
+class TestSyncMergedWorktreeIsDisposable:
+    @staticmethod
+    def _git(status="", head="deadbeef"):
+        def fake(args):
+            if "status" in args:
+                return status
+            if "rev-parse" in args:
+                return head + "\n"
+            return None
+
+        return fake
+
+    def test_clean_at_the_merged_commit(self, sync_merged_prs, monkeypatch):
+        monkeypatch.setattr(sync_merged_prs, "run_git", self._git())
+        assert sync_merged_prs.worktree_is_disposable(STORY_WORKTREE, "deadbeef")
+
+    def test_uncommitted_changes_keep_it(self, sync_merged_prs, monkeypatch):
+        monkeypatch.setattr(
+            sync_merged_prs, "run_git", self._git(status=" M src/main.rs\n")
+        )
+        assert not sync_merged_prs.worktree_is_disposable(STORY_WORKTREE, "deadbeef")
+
+    def test_a_head_the_pr_never_carried_keeps_it(self, sync_merged_prs, monkeypatch):
+        monkeypatch.setattr(sync_merged_prs, "run_git", self._git(head="c0ffee"))
+        assert not sync_merged_prs.worktree_is_disposable(STORY_WORKTREE, "deadbeef")
+
+    def test_a_pr_with_no_head_commit_keeps_it(self, sync_merged_prs, monkeypatch):
+        monkeypatch.setattr(sync_merged_prs, "run_git", self._git())
+        assert not sync_merged_prs.worktree_is_disposable(STORY_WORKTREE, None)
+
+
+class TestSyncMergedRun:
+    def _run(self, sync_merged_prs, monkeypatch, tmp_path, stories, prs, *extra):
+        prd_path = tmp_path / "prd.json"
+        prd_path.write_text(json.dumps({"stories": stories}))
+        monkeypatch.setattr(sync_merged_prs, "fetch_pr", lambda n: prs.get(n))
+        # No target checkout in the test config, so worktree cleanup is a no-op.
+        monkeypatch.setattr(
+            sys, "argv", ["sync-merged-prs-to-prd.py", "--prd", str(prd_path), *extra]
+        )
+        assert sync_merged_prs.main() == 0
+        return json.loads(prd_path.read_text())["stories"]
+
+    def test_a_merged_pr_retires_its_story(
+        self, sync_merged_prs, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_merged_prs,
+            monkeypatch,
+            tmp_path,
+            [make_story(status="pushed", prNumber=228)],
+            {228: {"state": "MERGED", "mergedAt": "2026-09-11T18:00:04Z"}},
+        )
+        assert stories[0]["status"] == "merged"
+
+    def test_an_open_pr_keeps_its_place_in_the_queue(
+        self, sync_merged_prs, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_merged_prs,
+            monkeypatch,
+            tmp_path,
+            [make_story(status="pushed", prNumber=219)],
+            {219: {"state": "OPEN", "mergedAt": None}},
+        )
+        assert stories[0]["status"] == "pushed"
+
+    def test_a_closed_but_unmerged_pr_is_left_for_an_iteration(
+        self, sync_merged_prs, monkeypatch, tmp_path
+    ):
+        # Abandoned, not landed: deciding between "skipped" and reopening it is
+        # a judgement call, so this script does not make it.
+        stories = self._run(
+            sync_merged_prs,
+            monkeypatch,
+            tmp_path,
+            [make_story(status="pushed", prNumber=137)],
+            {137: {"state": "CLOSED", "mergedAt": None}},
+        )
+        assert stories[0]["status"] == "pushed"
+
+    def test_a_pr_github_cannot_be_asked_about_is_left_alone(
+        self, sync_merged_prs, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_merged_prs,
+            monkeypatch,
+            tmp_path,
+            [make_story(status="pushed", prNumber=999)],
+            {},
+        )
+        assert stories[0]["status"] == "pushed"
+
+    def test_dry_run_writes_nothing(self, sync_merged_prs, monkeypatch, tmp_path):
+        stories = self._run(
+            sync_merged_prs,
+            monkeypatch,
+            tmp_path,
+            [make_story(status="pushed", prNumber=228)],
+            {228: {"state": "MERGED", "mergedAt": "2026-09-11T18:00:04Z"}},
+            "--dry-run",
+        )
+        assert stories[0]["status"] == "pushed"
+
+    def test_one_merged_pr_does_not_disturb_the_other_stories(
+        self, sync_merged_prs, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_merged_prs,
+            monkeypatch,
+            tmp_path,
+            [
+                make_story(status="pushed", id="US-001", prNumber=228),
+                make_story(status="pending", id="US-002"),
+                make_story(status="pushed", id="US-003", prNumber=219),
+            ],
+            {
+                228: {"state": "MERGED", "mergedAt": "2026-09-11T18:00:04Z"},
+                219: {"state": "OPEN", "mergedAt": None},
+            },
+        )
+        assert [s["status"] for s in stories] == ["merged", "pending", "pushed"]
+
+    def test_a_missing_prd_is_an_error(self, sync_merged_prs, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["sync-merged-prs-to-prd.py", "--prd", str(tmp_path / "nope.json")],
+        )
+        assert sync_merged_prs.main() == 2
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # add-backlog-to-prd.py
 # ═══════════════════════════════════════════════════════════════════════════
 
