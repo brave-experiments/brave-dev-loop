@@ -450,6 +450,9 @@ Before implementing changes, analyze review comments to detect if the reviewer i
 - Re-run EVERY test from the original story's acceptance criteria
 - Use same timeout and background settings as initial development
 - ALL tests MUST pass before proceeding
+- A gate that fails under load is not a failed gate: re-run the test it named, by
+  itself, before deciding anything — the rule is step 11 of
+  [workflow-pending.md](./workflow-pending.md) and it applies here unchanged
 - See [testing-requirements.md](./testing-requirements.md) for complete requirements
 
 ### 6b. REQUIRED: Self-review using the target repo's `/review` skill (local mode)

@@ -147,7 +147,10 @@ Project-specific. See the project profile's `docs/testing.md` for the presubmit 
 
 ## Quality Requirements
 
-- **ALL** acceptance criteria tests must pass - this is non-negotiable
+- **ALL** acceptance criteria tests must pass - this is non-negotiable. A test that
+  failed under load and passes when re-run on its own has passed; re-run it rather
+  than abandoning the iteration, and name it in the PR body. See step 11 of
+  [workflow-pending.md](./workflow-pending.md)
 - **Presubmit must pass** before creating a PR - run it after every commit
 - Do NOT commit broken code
 - Do NOT skip tests for any reason
