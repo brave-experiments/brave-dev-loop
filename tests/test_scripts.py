@@ -1433,9 +1433,9 @@ class TestSyncMergedRetire:
         # first check from the merge would leave it permanently overdue.
         story = make_story(status="pushed")
         sync_merged_prs.retire(story, "2026-09-01T00:00:00Z")
-        due = datetime.strptime(
-            story["nextMergedCheck"], "%Y-%m-%dT%H:%M:%SZ"
-        ).replace(tzinfo=timezone.utc)
+        due = datetime.strptime(story["nextMergedCheck"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
         assert due > datetime.now(timezone.utc)
 
 
@@ -1450,9 +1450,7 @@ class TestSyncMergedWorktreeLookup:
         found = sync_merged_prs.story_worktrees(MAIN_WORKTREE, {"fix-routing-fields"})
         assert found == {"fix-routing-fields": STORY_WORKTREE}
 
-    def test_the_main_checkout_is_never_a_candidate(
-        self, sync_merged_prs, monkeypatch
-    ):
+    def test_the_main_checkout_is_never_a_candidate(self, sync_merged_prs, monkeypatch):
         # A project without worktrees leaves the story branch checked out in the
         # main tree. Removing that would take the whole checkout with it.
         listing = porcelain((MAIN_WORKTREE, "fix-routing-fields"))
