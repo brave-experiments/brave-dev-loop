@@ -1,6 +1,7 @@
 #!/bin/bash
 # Long-running AI agent loop
-# Usage: ./run.sh [max_iterations] [tui] [--agent claude|codex|cursor] [--model model] [extra_prompt_info...]
+# Usage: ./run.sh [max_iterations] [tui] [--agent claude|codex|cursor|bravebot] [--model model]
+#                 [--agent-bin path] [extra_prompt_info...]
 #        ./run.sh --status     # what is running in this bot directory
 #
 # Several runs can share one bot directory when bot.maxConcurrentRuns is above
@@ -15,7 +16,13 @@
 #   4. "claude" default
 #
 # Model selection:
-#   --model <name> overrides bot.claudeModel, bot.codexModel, or bot.cursorModel for the selected agent.
+#   --model <name> overrides bot.claudeModel, bot.codexModel, or bot.cursorModel for the selected
+#   agent. bravebot has no config key, so --model is the only way to name a model for it.
+#
+# Binary selection:
+#   --agent-bin <path> runs the selected agent from that path instead of the configured
+#   one. bravebot has no config key of its own, so this is how a locally built binary is
+#   used: ./run.sh --agent bravebot --agent-bin target/release/bravebot
 
 set -e
 
@@ -35,8 +42,10 @@ EXTRA_PROMPT=""
 PAST_TUI=false
 CLI_AGENT=""
 CLI_MODEL=""
+CLI_AGENT_BIN=""
 EXPECT_AGENT_VALUE=false
 EXPECT_MODEL_VALUE=false
+EXPECT_AGENT_BIN_VALUE=false
 
 for arg in "$@"; do
   if [ "$EXPECT_AGENT_VALUE" = true ]; then
@@ -49,12 +58,23 @@ for arg in "$@"; do
     EXPECT_MODEL_VALUE=false
     continue
   fi
+  if [ "$EXPECT_AGENT_BIN_VALUE" = true ]; then
+    CLI_AGENT_BIN="$arg"
+    EXPECT_AGENT_BIN_VALUE=false
+    continue
+  fi
   # --agent is recognized regardless of position (before or after `tui`).
   if [[ "$arg" == "--agent" ]]; then
     EXPECT_AGENT_VALUE=true
     continue
   elif [[ "$arg" == --agent=* ]]; then
     CLI_AGENT="${arg#--agent=}"
+    continue
+  elif [[ "$arg" == "--agent-bin" ]]; then
+    EXPECT_AGENT_BIN_VALUE=true
+    continue
+  elif [[ "$arg" == --agent-bin=* ]]; then
+    CLI_AGENT_BIN="${arg#--agent-bin=}"
     continue
   elif [[ "$arg" == "--model" ]]; then
     EXPECT_MODEL_VALUE=true
@@ -79,11 +99,15 @@ for arg in "$@"; do
 done
 
 if [ "$EXPECT_AGENT_VALUE" = true ]; then
-  echo "Error: --agent requires a value (expected: claude | codex | cursor)" >&2
+  echo "Error: --agent requires a value (expected: claude | codex | cursor | bravebot)" >&2
   exit 1
 fi
 if [ "$EXPECT_MODEL_VALUE" = true ]; then
   echo "Error: --model requires a value" >&2
+  exit 1
+fi
+if [ "$EXPECT_AGENT_BIN_VALUE" = true ]; then
+  echo "Error: --agent-bin requires a value" >&2
   exit 1
 fi
 
@@ -140,9 +164,9 @@ if [ -n "$CLI_AGENT" ]; then
   BOT_AGENT="$CLI_AGENT"
 fi
 case "$BOT_AGENT" in
-  claude|codex|cursor) ;;
+  claude|codex|cursor|bravebot) ;;
   *)
-    echo "Error: unsupported agent '$BOT_AGENT' (expected: claude | codex | cursor)" >&2
+    echo "Error: unsupported agent '$BOT_AGENT' (expected: claude | codex | cursor | bravebot)" >&2
     exit 1
     ;;
 esac
@@ -151,8 +175,22 @@ if [ -n "$CLI_MODEL" ]; then
     BOT_CODEX_MODEL="$CLI_MODEL"
   elif [ "$BOT_AGENT" = "cursor" ]; then
     BOT_CURSOR_MODEL="$CLI_MODEL"
+  elif [ "$BOT_AGENT" = "bravebot" ]; then
+    BOT_BRAVEBOT_MODEL="$CLI_MODEL"
   else
     BOT_CLAUDE_MODEL="$CLI_MODEL"
+  fi
+fi
+# Applied to whichever agent is selected, so a locally built binary needs no config edit.
+if [ -n "$CLI_AGENT_BIN" ]; then
+  if [ "$BOT_AGENT" = "codex" ]; then
+    BOT_CODEX_BIN="$CLI_AGENT_BIN"
+  elif [ "$BOT_AGENT" = "cursor" ]; then
+    BOT_CURSOR_BIN="$CLI_AGENT_BIN"
+  elif [ "$BOT_AGENT" = "bravebot" ]; then
+    BOT_BRAVEBOT_BIN="$CLI_AGENT_BIN"
+  else
+    BOT_CLAUDE_BIN="$CLI_AGENT_BIN"
   fi
 fi
 
@@ -267,6 +305,8 @@ if [ "$BOT_AGENT" = "codex" ]; then
   echo "Starting Codex agent - Max iterations: $MAX_ITERATIONS"
 elif [ "$BOT_AGENT" = "cursor" ]; then
   echo "Starting Cursor agent - Max iterations: $MAX_ITERATIONS"
+elif [ "$BOT_AGENT" = "bravebot" ]; then
+  echo "Starting bravebot agent - Max iterations: $MAX_ITERATIONS"
 else
   echo "Starting Claude Code agent - Max iterations: $MAX_ITERATIONS"
 fi
@@ -412,8 +452,9 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   # Run Claude Code with the agent prompt
   # Use a temp file to capture output while allowing real-time streaming
   TEMP_OUTPUT=$(mktemp)
-  # Codex writes only its final agent message here (used for completion detection,
-  # so file contents read mid-iteration can never trip the <promise>COMPLETE</promise> check).
+  # Codex and bravebot leave only their final agent message here (used for completion
+  # detection, so file contents read mid-iteration can never trip the
+  # <promise>COMPLETE</promise> check).
   TEMP_LAST_MSG=$(mktemp)
 
   # Change to the parent directory (brave-browser) so relative paths in .claude/CLAUDE.md work
@@ -430,6 +471,11 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   elif [ "$BOT_AGENT" = "cursor" ]; then
     echo ""
     echo "Cursor session: resume with 'cursor-agent resume' after the iteration."
+    echo ""
+  elif [ "$BOT_AGENT" = "bravebot" ]; then
+    echo ""
+    # bravebot keeps sessions per directory, and this one runs in BRAVE_ROOT.
+    echo "bravebot session: resume with 'bravebot --continue' in $BRAVE_ROOT after the iteration."
     echo ""
   else
     echo ""
@@ -532,6 +578,24 @@ Additional context: $EXTRA_PROMPT"
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CODEX_BIN exec $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check --output-last-message "$TEMP_LAST_MSG" "$AGENT_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
     fi
+  elif [ "$BOT_AGENT" = "bravebot" ]; then
+    BRAVEBOT_MODEL_FLAG=""
+    if [ -n "$BOT_BRAVEBOT_MODEL" ]; then
+      BRAVEBOT_MODEL_FLAG="--model $BOT_BRAVEBOT_MODEL"
+    fi
+    # A prompt on the command line is always a one-shot run: bravebot has no way to
+    # start an interactive session with the prompt already in it. So TUI mode differs
+    # only in owning the terminal, which is what lets it be watched and interrupted.
+    if [ "$USE_TUI" = true ]; then
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" || true
+    else
+      # bravebot keeps stdout to the final reply alone and puts progress on stderr,
+      # previews of quarantined content included. Since a preview can quote a file
+      # that documents <promise>COMPLETE</promise>, stderr goes straight to the log
+      # and only the reply reaches the file the completion check reads.
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" </dev/null 2>>"$ITERATION_LOG" \
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_LAST_MSG" || true
+    fi
   elif [ "$BOT_AGENT" = "cursor" ]; then
     CURSOR_MODEL_FLAG=""
     if [ -n "$BOT_CURSOR_MODEL" ]; then
@@ -568,6 +632,8 @@ Additional context: $EXTRA_PROMPT"
     echo "To continue this session: claude --resume $SESSION_ID"
   elif [ "$BOT_AGENT" = "cursor" ]; then
     echo "To continue this session: cursor-agent resume"
+  elif [ "$BOT_AGENT" = "bravebot" ]; then
+    echo "To continue this session: bravebot --continue (in $BRAVE_ROOT)"
   else
     echo "To continue this session: codex resume --last"
   fi
@@ -609,6 +675,9 @@ Additional context: $EXTRA_PROMPT"
       # (A logged-in maintainer can switch to --output-format stream-json parsing
       # once its event schema is known, to avoid false positives from echoed doc text.)
       COMPLETION_CHECK=$(grep -c -F "<promise>COMPLETE</promise>" "$TEMP_OUTPUT" 2>/dev/null | tail -1)
+    elif [ "$BOT_AGENT" = "bravebot" ]; then
+      # bravebot's stdout is the final agent message, captured on its own above.
+      COMPLETION_CHECK=$(grep -c -F "<promise>COMPLETE</promise>" "$TEMP_LAST_MSG" 2>/dev/null | tail -1)
     else
       # Claude stream-json: extract assistant text only, excluding tool_result events.
       COMPLETION_CHECK=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' "$TEMP_OUTPUT" 2>/dev/null | grep -c -F "<promise>COMPLETE</promise>" 2>/dev/null | tail -1)

@@ -21,7 +21,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `bot.signingKeyPath`: public key the bot signs commits and tags with (`null` = the same key it pushes with, `bot.sshKeyPath`). Signing with any other key — including the machine owner's — makes GitHub mark every bot commit Unverified. The key must also be registered on the bot's GitHub account as a **signing** key; authentication keys are a separate list
 - `bot.ghAccount`: `gh` account whose token the bot uses (`null` = same as `bot.username`)
 - `bot.ghConfigDir`: isolated `gh` config directory for the bot (`null` = use `~/.config/gh`). Set this to keep the bot's GitHub login out of your personal `gh` config entirely — no account is added, switched, or made active outside this repo. Create it with `GH_CONFIG_DIR=<dir> gh auth login`
-- `bot.agent`: Which agent to run, `claude` (default), `codex`, or `cursor`
+- `bot.agent`: Which agent to run, `claude` (default), `codex`, `cursor`, or `bravebot`
 - `bot.maxConcurrentRuns`: How many `run.sh` instances may share this bot directory (default `1`). Above 1 requires a profile with `"worktrees": true` — without per-story worktrees two runs share one working tree and overwrite each other. See [Concurrent runs](./concurrent-runs.md)
 - `bot.claudeModel`: Claude model to use (`opus`, `sonnet`, etc.; overridden by `./run.sh --model` for Claude runs)
 - `bot.claudeBin`: Path to the `claude` binary (`null` = found on PATH)
@@ -29,6 +29,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `bot.codexBin`: Path to the `codex` binary (`null` = found on PATH)
 - `bot.cursorModel`: Cursor model to use (`null` = account default; overridden by `./run.sh --model` for Cursor runs)
 - `bot.cursorBin`: Path to the `cursor-agent` binary (`null` = found on PATH)
+- bravebot has no config keys. Its binary comes from `./run.sh --agent-bin <path>` (`bravebot` on PATH when not given) and its model from `./run.sh --model`, so a locally built binary is a flag rather than a config edit
 - `labels.*`: legacy. Labels now live in the project profile (`projects/<name>/profile.json`); `labels.disabledTestLabel` is still honoured as a fallback for deployments that set it by hand. See [Project profiles](../projects/README.md)
 - `bestPractices.docsDir`: Path to the docs directory containing best practices (relative to bot dir)
 

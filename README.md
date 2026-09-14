@@ -30,7 +30,7 @@ full state machine and selection tiers.
 
 ## Prerequisites
 
-- **Claude Code CLI** (or `codex` / `cursor-agent`, per `bot.agent`)
+- **Claude Code CLI** (or `codex` / `cursor-agent` / `bravebot`, per `bot.agent`)
 - **GitHub CLI** (`gh`), authenticated
 - **Git**, **Python 3**
 - **jq** — `brew install jq` / `apt install jq`
@@ -64,13 +64,17 @@ first to skip the wizard, then run `make setup`.
 
 ./run.sh --agent codex --model gpt-5
 ./run.sh --agent cursor
+./run.sh --agent bravebot
+./run.sh --agent bravebot --agent-bin ~/bravebot/target/release/bravebot
 ./run.sh --model opus
 
 ./run.sh --status     # what is running in this directory
 ```
 
 Agent precedence is `--agent` flag > `BOT_AGENT` env var > `bot.agent` in
-config. `--model` overrides the model for whichever agent is selected.
+config. `--model` overrides the model for whichever agent is selected, and
+`--agent-bin` overrides the binary it runs from — which is how bravebot is
+pointed at a local build, since it has no config keys of its own.
 
 ```bash
 tail -f data/progress.txt        # watch progress

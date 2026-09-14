@@ -11,7 +11,8 @@
 #   BOT_SSH_KEY_PATH, BOT_GH_ACCOUNT,
 #   BOT_AGENT, BOT_CLAUDE_MODEL, BOT_CLAUDE_BIN,
 #   BOT_CODEX_MODEL, BOT_CODEX_BIN,
-#   BOT_CURSOR_MODEL, BOT_CURSOR_BIN, BOT_BP_DOCS_DIR,
+#   BOT_CURSOR_MODEL, BOT_CURSOR_BIN,
+#   BOT_BRAVEBOT_MODEL, BOT_BRAVEBOT_BIN, BOT_BP_DOCS_DIR,
 #   BOT_TARGET_REPO_DIR (absolute; prefer over the raw BOT_TARGET_REPO_PATH)
 #
 # Also provides:
@@ -217,6 +218,14 @@ if [ -z "$BOT_CURSOR_BIN" ]; then
   BOT_CURSOR_BIN="$(which cursor-agent 2>/dev/null || echo "cursor-agent")"
 fi
 
+# bravebot is asked for per run rather than configured, so it has no config keys: the
+# binary comes from `./run.sh --agent-bin`, the model from `--model`, and everything
+# else from bravebot's own settings. Both are honoured from the environment too.
+if [ -z "${BOT_BRAVEBOT_BIN:-}" ]; then
+  BOT_BRAVEBOT_BIN="$(which bravebot 2>/dev/null || echo "bravebot")"
+fi
+BOT_BRAVEBOT_MODEL="${BOT_BRAVEBOT_MODEL:-}"
+
 # Default agent is 'claude' if not configured. BOT_AGENT env var overrides config.
 BOT_AGENT="${BOT_AGENT:-claude}"
 
@@ -230,4 +239,5 @@ export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BO
 export BOT_PROFILE BOT_PROFILE_DIR BOT_PROFILE_WORKTREES BOT_MAX_CONCURRENT_RUNS
 export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_SIGNING_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
 export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN
+export BOT_BRAVEBOT_MODEL BOT_BRAVEBOT_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS
