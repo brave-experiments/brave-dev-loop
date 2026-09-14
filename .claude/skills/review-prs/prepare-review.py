@@ -9,6 +9,7 @@ Usage:
     python3 prepare-review.py [days|page<N>|#<PR>] [open|closed|all] [--auto] [--reviewer-priority] [--max-prs N]
 """
 
+import functools
 import json
 import os
 import re
@@ -85,6 +86,34 @@ def log(msg):
 _git_fetch_lock = threading.Lock()
 
 
+@functools.lru_cache(maxsize=1)
+def pr_remote():
+    """Name of the remote hosting PR_REPO.
+
+    refs/pull/*/head only exist on the repo the PRs were opened against. That
+    is usually an upstream remote, not `origin` — `origin` is typically the
+    bot's own fork, which carries no pull refs.
+    """
+    result = subprocess.run(
+        ["git", "-C", TARGET_REPO_PATH, "remote", "-v"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == 0:
+        pattern = re.compile(rf"[:/]{re.escape(PR_REPO)}(\.git)?$")
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and pattern.search(parts[1]):
+                return parts[0]
+    log(
+        f"  WARNING: no remote matches {PR_REPO}; falling back to 'origin'. "
+        "PR head fetches will likely fail and reviews will run against "
+        f"{DEFAULT_BRANCH}."
+    )
+    return "origin"
+
+
 def fetch_and_create_worktree(pr_number, head_sha, worktree_path):
     """Fetch PR head commit and create an isolated git worktree for it.
 
@@ -99,7 +128,7 @@ def fetch_and_create_worktree(pr_number, head_sha, worktree_path):
                 "-C",
                 TARGET_REPO_PATH,
                 "fetch",
-                "origin",
+                pr_remote(),
                 f"pull/{pr_number}/head",
                 "--no-tags",
             ],
