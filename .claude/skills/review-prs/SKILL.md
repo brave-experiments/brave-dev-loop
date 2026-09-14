@@ -73,6 +73,8 @@ If no PRs to review (empty `prs` array), skip to Step 4.
 
 `prepare-review.py` already fetched each PR's head commit and created an isolated `git worktree` for it. Subagent prompts reference those worktrees as the source tree, so file contents and line numbers match the diff. No checkout work needed here.
 
+A worktree is a full checkout of the target repo, so a run needs tens of gigabytes. They are created under `/var/tmp/review-prs` — override with `REVIEW_PRS_WORK_DIR`, pointing it at a filesystem with room rather than a tmpfs. In `auto` mode a PR whose worktree could not be created is dropped from the run with a `worktree` entry in `errors`, because reviewing it would read the default branch while judging a diff from the PR head. Report those PRs as skipped.
+
 For every PR in `prs`, for every entry in that PR's `subagent_prompts`, launch a **Task subagent** (subagent_type: "general-purpose") with this prompt:
 
 ```

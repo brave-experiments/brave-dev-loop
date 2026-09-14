@@ -13,10 +13,12 @@ import functools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -80,6 +82,63 @@ TARGET_REPO_PATH = resolve_target_repo(_config, _BOT_DIR)
 
 def log(msg):
     print(msg, file=sys.stderr)
+
+
+def work_dir_base():
+    """Directory the per-run work directory is created under.
+
+    Every PR gets a worktree, and a worktree is a full checkout of the target
+    repo, so one run needs tens of gigabytes. tempfile's default is /tmp, which
+    is a tmpfs on plenty of machines: it fills partway through a run and the
+    rest of the PRs lose their worktree. Default somewhere on real disk and let
+    a caller override.
+    """
+    base = os.environ.get("REVIEW_PRS_WORK_DIR") or "/var/tmp/review-prs"
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+# A run older than this lost its cleanup: the job is capped well below it, so
+# anything still on disk at this age belongs to a run that died before the
+# collector could tear it down.
+STALE_WORK_DIR_AGE_S = 24 * 60 * 60
+
+
+def prune_stale_work_dirs():
+    """Remove work directories and worktrees left by runs that died.
+
+    The collector tears down its own worktrees, but only on the path where it
+    finishes. A run that is killed, times out, or halts partway leaves a full
+    checkout per PR behind, and nothing else ever removes them. Do it at the
+    start of a run, where it happens no matter how the last one ended.
+
+    Age-gated so a concurrent run's directory is never touched.
+    """
+    base = work_dir_base()
+    cutoff = time.time() - STALE_WORK_DIR_AGE_S
+    removed = 0
+    for name in os.listdir(base):
+        if not name.startswith("review-prs-"):
+            continue
+        path = os.path.join(base, name)
+        try:
+            if os.path.getmtime(path) > cutoff:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+        except OSError as e:
+            log(f"  WARNING: could not remove stale work dir {path}: {e}")
+
+    # Deregister worktrees whose directories are now gone, including any the
+    # loop above removed and any left under an older work_dir_base.
+    subprocess.run(
+        ["git", "-C", TARGET_REPO_PATH, "worktree", "prune"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if removed:
+        log(f"Pruned {removed} stale work director{'y' if removed == 1 else 'ies'}.")
 
 
 # Serializes concurrent git fetches to the same repo (git locks packed-refs).
@@ -1035,7 +1094,7 @@ def build_subagent_prompt(
 # ---------------------------------------------------------------------------
 # Process a single PR (for ThreadPoolExecutor)
 # ---------------------------------------------------------------------------
-def process_pr(pr, bot_username, org_members, work_dir):
+def process_pr(pr, bot_username, org_members, work_dir, auto_mode=False):
     """Process a single PR: fetch diff, classify, comments, images, threads, chunks.
     Writes prompt files to work_dir. Returns a dict for the manifest or an error dict."""
     pr_number = pr["number"]
@@ -1114,6 +1173,19 @@ def process_pr(pr, bot_username, org_members, work_dir):
     effective_repo_path = worktree_path if worktree_path else TARGET_REPO_PATH
     if worktree_path:
         log(f"  Worktree created for PR #{pr_number}: {worktree_path}")
+    elif auto_mode:
+        # The fallback reads the target checkout, which is on the default
+        # branch, while the diff being judged comes from the PR head. Findings
+        # land on lines that moved or on files the PR never touched. In auto
+        # mode nobody sees them before they post, so drop the PR instead.
+        return None, {
+            "pr_number": pr_number,
+            "stage": "worktree",
+            "error": (
+                "no worktree at the PR head, so the review would read "
+                f"{DEFAULT_BRANCH} instead; refusing in auto mode"
+            ),
+        }
     else:
         log(
             f"  WARNING: worktree unavailable for PR #{pr_number}, "
@@ -1375,8 +1447,10 @@ def main():
 
     log("\n".join(progress_lines))
 
+    prune_stale_work_dirs()
+
     # Create work directory for prompt/result files
-    work_dir = tempfile.mkdtemp(prefix="review-prs-")
+    work_dir = tempfile.mkdtemp(prefix="review-prs-", dir=work_dir_base())
     log(f"Work directory: {work_dir}")
 
     # 4. Process each PR in parallel
@@ -1387,7 +1461,9 @@ def main():
         log(f"\nProcessing {len(prs_to_process)} PRs in parallel...")
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
-                executor.submit(process_pr, pr, bot_username, org_members, work_dir): pr
+                executor.submit(
+                    process_pr, pr, bot_username, org_members, work_dir, auto_mode
+                ): pr
                 for pr in prs_to_process
             }
             for future in as_completed(futures):
