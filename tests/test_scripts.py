@@ -2695,6 +2695,10 @@ class TestBravebotWorktrees:
                 continue
             assert "worktree" in text, f"docs/{name} names the checkout with no pointer"
 
+    # The agent named bravebot is not the project named bravebot: any profile may
+    # run it, so the lines that document choosing an agent are allowed to say so.
+    AGENT_SELECTION = ("bot.agent", "--agent", "BOT_AGENT")
+
     def test_the_pointers_stay_project_neutral(self):
         """Shared docs serve every profile; brave-core has no worktrees."""
         for name in sorted(os.listdir(DOCS_DIR)):
@@ -2702,7 +2706,10 @@ class TestBravebotWorktrees:
                 continue
             with open(os.path.join(DOCS_DIR, name)) as f:
                 text = f.read()
-            assert "bravebot" not in text, f"docs/{name} hard-codes bravebot"
+            for line in text.splitlines():
+                if any(marker in line for marker in self.AGENT_SELECTION):
+                    continue
+                assert "bravebot" not in line, f"docs/{name} hard-codes bravebot"
 
 
 class TestStoryBranchesComeFromUpstream:
@@ -3151,3 +3158,112 @@ class TestProfileMismatch:
         with open(os.path.join(SCRIPT_DIR, os.pardir, "run.sh")) as f:
             body = f.read()
         assert '-d "$BOT_PROFILE_DIR/docs"' in body
+
+
+class TestAgentSelection:
+    """An agent the loop will select but has no branch for runs another agent's
+    command line instead of its own: the launcher falls through to Claude, and the
+    resume note fell through to Codex. Neither fails — the run just uses the wrong
+    binary and prints the wrong advice. So every name the validation accepts must
+    appear at each point that switches on the agent."""
+
+    RUN_SH = os.path.join(SCRIPT_DIR, os.pardir, "run.sh")
+    LOAD_CONFIG = os.path.join(SCRIPT_DIR, "lib", "load-config.sh")
+
+    @classmethod
+    def _body(cls):
+        with open(cls.RUN_SH) as f:
+            return f.read()
+
+    @classmethod
+    def _accepted(cls):
+        """The agent names `case "$BOT_AGENT"` lets through."""
+        match = re.search(r"^\s*((?:[a-z]+\|)+[a-z]+)\)\s*;;", cls._body(), re.M)
+        assert match, "no agent validation case in run.sh"
+        return match.group(1).split("|")
+
+    @classmethod
+    def _region(cls, start, end):
+        body = cls._body()
+        first = body.index(start)
+        return body[first : body.index(end, first)]
+
+    def test_bravebot_is_accepted(self):
+        assert "bravebot" in self._accepted()
+
+    def test_every_accepted_agent_has_a_launch_branch(self):
+        launch = self._region(
+            "# Run the agent from the bot directory", "  stop_title_watch"
+        )
+        for agent in self._accepted():
+            if agent == "claude":
+                continue  # the else branch, reached by whatever is left
+            assert f'[ "$BOT_AGENT" = "{agent}" ]' in launch, agent
+
+    def test_every_accepted_agent_is_checked_for_completion(self):
+        check = self._region("COMPLETION_CHECK=0", 'if [ "$COMPLETION_CHECK" -gt 0 ]')
+        for agent in self._accepted():
+            if agent == "claude":
+                continue
+            assert f'[ "$BOT_AGENT" = "{agent}" ]' in check, agent
+
+    def test_every_accepted_agent_names_itself_at_startup(self):
+        banner = self._region("Run slot $BOT_RUN_SLOT", "Logs will be saved to")
+        for agent in self._accepted():
+            if agent == "claude":
+                continue
+            assert f'[ "$BOT_AGENT" = "{agent}" ]' in banner, agent
+
+    def test_model_and_binary_flags_route_to_every_accepted_agent(self):
+        """--model or --agent-bin silently doing nothing looks like the agent
+        ignoring the flag, which is unfalsifiable from the outside."""
+        routing = self._region('if [ -n "$CLI_MODEL" ]', "PRD_FILE=")
+        for agent in self._accepted():
+            assert f"BOT_{agent.upper()}_MODEL=" in routing, agent
+            assert f"BOT_{agent.upper()}_BIN=" in routing, agent
+
+    def test_the_refusal_lists_what_is_accepted(self):
+        listed = " | ".join(self._accepted())
+        assert self._body().count(f"expected: {listed}") == 2, listed
+
+    @staticmethod
+    def _bravebot_bin(tmp_dir, env=None):
+        """$BOT_BRAVEBOT_BIN as load-config.sh resolves it, with no config keys."""
+        bot = os.path.join(tmp_dir, "bot")
+        os.makedirs(os.path.join(bot, "scripts", "lib"), exist_ok=True)
+        with open(TestAgentSelection.LOAD_CONFIG) as f:
+            src = f.read()
+        with open(os.path.join(bot, "scripts", "lib", "load-config.sh"), "w") as f:
+            f.write(src)
+        with open(os.path.join(bot, "config.json"), "w") as f:
+            json.dump(
+                {
+                    "project": {
+                        "name": "p",
+                        "org": "o",
+                        "prRepository": "o/p",
+                        "issueRepository": "o/p",
+                    },
+                    "bot": {"username": "b", "agent": "bravebot"},
+                },
+                f,
+            )
+        probe = os.path.join(bot, "probe.sh")
+        with open(probe, "w") as f:
+            f.write(
+                '#!/bin/bash\nsource "$(dirname "$0")/scripts/lib/load-config.sh"\n'
+                "printf '%s' \"$BOT_BRAVEBOT_BIN\"\n"
+            )
+        os.chmod(probe, 0o755)
+        return subprocess.run(
+            [probe], capture_output=True, text=True, env={**os.environ, **(env or {})}
+        ).stdout
+
+    def test_binary_resolves_with_nothing_configured(self, tmp_dir):
+        assert os.path.basename(self._bravebot_bin(tmp_dir)) == "bravebot"
+
+    def test_binary_from_the_environment_is_kept(self, tmp_dir):
+        """There is no config key to fall back on, so the environment is the only
+        way to pin a binary for a scheduled run rather than a typed one."""
+        chosen = os.path.join(tmp_dir, "target", "release", "bravebot")
+        assert self._bravebot_bin(tmp_dir, {"BOT_BRAVEBOT_BIN": chosen}) == chosen
