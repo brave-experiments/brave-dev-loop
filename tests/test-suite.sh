@@ -185,6 +185,12 @@ test_scripts_executable() {
   assert_executable "pre-push hook is executable" "$ROOT_DIR/hooks/pre-push"
   assert_executable "fetch-issue.sh is executable" "$ROOT_DIR/scripts/fetch-issue.sh"
   assert_executable "filter-issue-json.sh is executable" "$ROOT_DIR/scripts/filter-issue-json.sh"
+  assert_executable "comparison-run.sh is executable" "$ROOT_DIR/scripts/comparison-run.sh"
+  assert_executable "comparison-evaluate.sh is executable" "$ROOT_DIR/scripts/comparison-evaluate.sh"
+  assert_executable "find-agent-session.py is executable" "$ROOT_DIR/scripts/find-agent-session.py"
+  # The shims only guard a comparison run while they are the executables PATH finds.
+  assert_executable "comparison guard gh is executable" "$ROOT_DIR/scripts/comparison-guard/gh"
+  assert_executable "comparison guard git is executable" "$ROOT_DIR/scripts/comparison-guard/git"
 }
 
 test_skills_exist() {
@@ -265,6 +271,38 @@ test_pr_filter_script_exists() {
   # Test that PR review filter script exists and is executable
   assert_executable "filter-pr-reviews.sh is executable" \
     "$ROOT_DIR/scripts/filter-pr-reviews.sh"
+}
+
+#######################
+# Comparison Run Tests
+#######################
+
+test_comparison_scripts_syntax() {
+  local script
+  for script in scripts/comparison-run.sh scripts/comparison-evaluate.sh \
+                scripts/lib/agent-launch.sh scripts/comparison-guard/guard.sh \
+                scripts/comparison-guard/gh scripts/comparison-guard/git; do
+    assert_success "$script has valid syntax" bash -n "$ROOT_DIR/$script"
+  done
+}
+
+test_comparison_guard_blocks_outreach() {
+  # The guard directory in front of the real tools is the whole enforcement: the
+  # prompt asking a comparison run to stop is not enough on its own.
+  local guarded="$ROOT_DIR/scripts/comparison-guard:$PATH"
+  assert_failure "comparison guard refuses gh pr create" \
+    env PATH="$guarded" gh pr create --title x
+  assert_failure "comparison guard refuses git push" \
+    env PATH="$guarded" git push origin HEAD
+  assert_success "comparison guard passes git status through" \
+    env PATH="$guarded" git -C "$ROOT_DIR" status --short
+}
+
+test_comparison_run_is_off_by_default() {
+  # A comparison flag with no --comparison-run would otherwise run the story once
+  # and compare nothing.
+  assert_failure "--comparison-model without --comparison-run is refused" \
+    bash "$ROOT_DIR/run.sh" --comparison-model=x
 }
 
 #######################
@@ -633,6 +671,12 @@ run_all_tests() {
   test_filter_script_json_output
   test_filter_script_markdown_output
   test_pr_filter_script_exists
+  echo ""
+
+  echo "=== Comparison Run Tests ==="
+  test_comparison_scripts_syntax
+  test_comparison_guard_blocks_outreach
+  test_comparison_run_is_off_by_default
   echo ""
 
   echo "=== Pre-commit Hook Tests ==="

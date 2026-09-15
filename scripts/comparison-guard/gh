@@ -1,0 +1,103 @@
+#!/bin/bash
+# `gh` for a comparison run: reads pass through, writes are refused.
+# See guard.sh for why this exists.
+
+source "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+
+PAIR="$(guard_command_pair "$@")"
+COMMAND="${PAIR% *}"
+SUB="${PAIR#* }"
+
+# Everything that reaches another person: pull requests, issues, releases,
+# repository and workflow state. One command/subcommand pair per line — `read`
+# puts the whole rest of a line into its last variable. Anything not listed is
+# treated as a read.
+BLOCKED="
+pr create
+pr edit
+pr merge
+pr comment
+pr close
+pr reopen
+pr review
+pr ready
+pr lock
+pr unlock
+pr sync
+issue create
+issue edit
+issue comment
+issue close
+issue reopen
+issue delete
+issue transfer
+issue pin
+issue unpin
+issue lock
+issue unlock
+release create
+release edit
+release delete
+release upload
+repo create
+repo fork
+repo delete
+repo edit
+repo rename
+repo archive
+repo sync
+workflow run
+workflow enable
+workflow disable
+run rerun
+run cancel
+run delete
+label create
+label edit
+label delete
+label clone
+secret set
+secret delete
+variable set
+variable delete
+gist create
+gist edit
+gist delete
+"
+
+if [ "$BOT_COMPARISON_GUARD_ALLOW" = "issue-create" ] &&
+   [ "$COMMAND" = "issue" ] && [ "$SUB" = "create" ]; then
+  guard_exec gh "$@"
+fi
+
+while read -r blocked_command blocked_sub; do
+  [ -n "$blocked_command" ] || continue
+  if [ "$COMMAND" = "$blocked_command" ] && [ "$SUB" = "$blocked_sub" ]; then
+    guard_refuse "gh $COMMAND $SUB"
+  fi
+done <<EOF
+$BLOCKED
+EOF
+
+# `gh api` is a read only when it stays a GET. An explicit non-GET method, or any
+# field flag (which makes gh send a POST), is a write however it is spelled.
+if [ "$COMMAND" = "api" ]; then
+  EXPECT_METHOD=false
+  for arg in "$@"; do
+    if [ "$EXPECT_METHOD" = true ]; then
+      case "$arg" in
+        GET|get) EXPECT_METHOD=false; continue ;;
+        *) guard_refuse "gh api --method $arg" ;;
+      esac
+    fi
+    case "$arg" in
+      -X|--method) EXPECT_METHOD=true ;;
+      --method=GET|--method=get) ;;
+      --method=*|-X=*) guard_refuse "gh api $arg" ;;
+      -f|--field|-F|--raw-field|--input) guard_refuse "gh api $arg (sends a POST)" ;;
+      -f=*|--field=*|-F=*|--raw-field=*|--input=*) guard_refuse "gh api $arg (sends a POST)" ;;
+    esac
+  done
+fi
+
+guard_exec gh "$@"

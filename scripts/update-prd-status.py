@@ -309,6 +309,18 @@ HANDLER_MAP = {
 
 
 def main():
+    # A comparison run repeats a story's work only so it can be compared with
+    # the base run's. Moving the story on would make the base run's own status
+    # update illegal, and the PRD would then describe work nobody pushed.
+    if os.environ.get("BOT_COMPARISON_RUN"):
+        print(
+            "This is a comparison run: the PRD is not yours to update. "
+            "Commit in the worktree and finish with a summary instead "
+            "(see docs/comparison-runs.md).",
+            file=sys.stderr,
+        )
+        return 1
+
     parser = argparse.ArgumentParser(
         description="Update prd.json story fields deterministically"
     )

@@ -68,6 +68,8 @@ first to skip the wizard, then run `make setup`.
 ./run.sh --agent bravebot --agent-bin ~/bravebot/target/release/bravebot
 ./run.sh --model opus
 
+./run.sh 1 --agent bravebot --comparison-run   # do the story twice and critique the first
+
 ./run.sh --status     # what is running in this directory
 ```
 
@@ -86,6 +88,10 @@ make view-schedules              # show the current schedule
 
 Several runs can share one bot directory — set `bot.maxConcurrentRuns` and see
 [Concurrent runs](docs/concurrent-runs.md). It is off by default.
+
+`--comparison-run` redoes each story with a second tool in a throwaway worktree
+and files issues for what the first tool did worse. Also off by default, and it
+triples the cost of an iteration: see [Comparison runs](docs/comparison-runs.md).
 
 A run titles its terminal tab `#<issue> PR #<pr> <story title>`, so tabs are
 told apart by the numbers you search GitHub by; the PR number joins the title
@@ -109,6 +115,7 @@ claude
 | [Configuration](docs/configuration.md) | `config.json` keys, PRD format, run state |
 | [Concurrent runs](docs/concurrent-runs.md) | Run slots, claims, `--status`, clearing a killed run |
 | [Project profiles](projects/README.md) | Per-project validations, test targets, docs |
+| [Comparison runs](docs/comparison-runs.md) | `--comparison-run`: redo a story with another tool and critique the first |
 | [Skills](docs/skills.md) | The slash commands this repo provides |
 | [Development](docs/development.md) | Working on the loop itself: tests, lint, the security scan |
 | [Bot identity](docs/bot-identity.md) | Signing, SSH keys, `gh` isolation, hooks |

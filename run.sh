@@ -1,7 +1,9 @@
 #!/bin/bash
 # Long-running AI agent loop
 # Usage: ./run.sh [max_iterations] [tui] [--agent claude|codex|cursor|bravebot] [--model model]
-#                 [--agent-bin path] [extra_prompt_info...]
+#                 [--agent-bin path] [--comparison-run [--comparison-agent name]
+#                 [--comparison-agent-bin path] [--comparison-model name]
+#                 [--comparison-branch name]] [extra_prompt_info...]
 #        ./run.sh --status     # what is running in this bot directory
 #
 # Several runs can share one bot directory when bot.maxConcurrentRuns is above
@@ -23,6 +25,14 @@
 #   --agent-bin <path> runs the selected agent from that path instead of the configured
 #   one. bravebot has no config key of its own, so this is how a locally built binary is
 #   used: ./run.sh --agent bravebot --agent-bin target/release/bravebot
+#
+# Comparison runs (off unless asked for):
+#   --comparison-run works every story a second time with another tool, in a worktree of
+#   its own, then has a third run critique the first against it and file issues for the
+#   gaps. It never pushes, opens a PR, or comments anywhere. The comparison and evaluator
+#   runs default to claude; --comparison-agent / --comparison-agent-bin /
+#   --comparison-model override that, and --comparison-branch names the branch the
+#   comparison works in. See docs/comparison-runs.md.
 
 set -e
 
@@ -43,14 +53,43 @@ PAST_TUI=false
 CLI_AGENT=""
 CLI_MODEL=""
 CLI_AGENT_BIN=""
+COMPARISON_RUN=false
+CLI_COMPARISON_AGENT=""
+CLI_COMPARISON_AGENT_BIN=""
+CLI_COMPARISON_MODEL=""
+CLI_COMPARISON_BRANCH=""
 EXPECT_AGENT_VALUE=false
 EXPECT_MODEL_VALUE=false
 EXPECT_AGENT_BIN_VALUE=false
+EXPECT_COMPARISON_AGENT_VALUE=false
+EXPECT_COMPARISON_AGENT_BIN_VALUE=false
+EXPECT_COMPARISON_MODEL_VALUE=false
+EXPECT_COMPARISON_BRANCH_VALUE=false
 
 for arg in "$@"; do
   if [ "$EXPECT_AGENT_VALUE" = true ]; then
     CLI_AGENT="$arg"
     EXPECT_AGENT_VALUE=false
+    continue
+  fi
+  if [ "$EXPECT_COMPARISON_AGENT_VALUE" = true ]; then
+    CLI_COMPARISON_AGENT="$arg"
+    EXPECT_COMPARISON_AGENT_VALUE=false
+    continue
+  fi
+  if [ "$EXPECT_COMPARISON_AGENT_BIN_VALUE" = true ]; then
+    CLI_COMPARISON_AGENT_BIN="$arg"
+    EXPECT_COMPARISON_AGENT_BIN_VALUE=false
+    continue
+  fi
+  if [ "$EXPECT_COMPARISON_MODEL_VALUE" = true ]; then
+    CLI_COMPARISON_MODEL="$arg"
+    EXPECT_COMPARISON_MODEL_VALUE=false
+    continue
+  fi
+  if [ "$EXPECT_COMPARISON_BRANCH_VALUE" = true ]; then
+    CLI_COMPARISON_BRANCH="$arg"
+    EXPECT_COMPARISON_BRANCH_VALUE=false
     continue
   fi
   if [ "$EXPECT_MODEL_VALUE" = true ]; then
@@ -82,6 +121,33 @@ for arg in "$@"; do
   elif [[ "$arg" == --model=* ]]; then
     CLI_MODEL="${arg#--model=}"
     continue
+  elif [[ "$arg" == "--comparison-run" ]]; then
+    COMPARISON_RUN=true
+    continue
+  elif [[ "$arg" == "--comparison-agent" ]]; then
+    EXPECT_COMPARISON_AGENT_VALUE=true
+    continue
+  elif [[ "$arg" == --comparison-agent=* ]]; then
+    CLI_COMPARISON_AGENT="${arg#--comparison-agent=}"
+    continue
+  elif [[ "$arg" == "--comparison-agent-bin" ]]; then
+    EXPECT_COMPARISON_AGENT_BIN_VALUE=true
+    continue
+  elif [[ "$arg" == --comparison-agent-bin=* ]]; then
+    CLI_COMPARISON_AGENT_BIN="${arg#--comparison-agent-bin=}"
+    continue
+  elif [[ "$arg" == "--comparison-model" ]]; then
+    EXPECT_COMPARISON_MODEL_VALUE=true
+    continue
+  elif [[ "$arg" == --comparison-model=* ]]; then
+    CLI_COMPARISON_MODEL="${arg#--comparison-model=}"
+    continue
+  elif [[ "$arg" == "--comparison-branch" ]]; then
+    EXPECT_COMPARISON_BRANCH_VALUE=true
+    continue
+  elif [[ "$arg" == --comparison-branch=* ]]; then
+    CLI_COMPARISON_BRANCH="${arg#--comparison-branch=}"
+    continue
   fi
   if [ "$PAST_TUI" = true ]; then
     # Everything else after 'tui' is extra prompt info
@@ -108,6 +174,30 @@ if [ "$EXPECT_MODEL_VALUE" = true ]; then
 fi
 if [ "$EXPECT_AGENT_BIN_VALUE" = true ]; then
   echo "Error: --agent-bin requires a value" >&2
+  exit 1
+fi
+if [ "$EXPECT_COMPARISON_AGENT_VALUE" = true ]; then
+  echo "Error: --comparison-agent requires a value (expected: claude | codex | cursor | bravebot)" >&2
+  exit 1
+fi
+if [ "$EXPECT_COMPARISON_AGENT_BIN_VALUE" = true ]; then
+  echo "Error: --comparison-agent-bin requires a value" >&2
+  exit 1
+fi
+if [ "$EXPECT_COMPARISON_MODEL_VALUE" = true ]; then
+  echo "Error: --comparison-model requires a value" >&2
+  exit 1
+fi
+if [ "$EXPECT_COMPARISON_BRANCH_VALUE" = true ]; then
+  echo "Error: --comparison-branch requires a value" >&2
+  exit 1
+fi
+# A comparison flag with no --comparison-run is a run that silently does not
+# compare anything, which is the one outcome nobody wants from typing them.
+if [ "$COMPARISON_RUN" != true ] &&
+   { [ -n "$CLI_COMPARISON_AGENT" ] || [ -n "$CLI_COMPARISON_AGENT_BIN" ] ||
+     [ -n "$CLI_COMPARISON_MODEL" ] || [ -n "$CLI_COMPARISON_BRANCH" ]; }; then
+  echo "Error: --comparison-* configures a comparison run, but --comparison-run was not given." >&2
   exit 1
 fi
 
@@ -191,6 +281,37 @@ if [ -n "$CLI_AGENT_BIN" ]; then
     BOT_BRAVEBOT_BIN="$CLI_AGENT_BIN"
   else
     BOT_CLAUDE_BIN="$CLI_AGENT_BIN"
+  fi
+fi
+
+# The comparison and evaluator runs default to claude whatever the base agent is:
+# the point is a second opinion from a different tool, and claude is the loop's
+# reference implementation of the workflow.
+COMPARISON_AGENT="claude"
+COMPARISON_AGENT_BIN=""
+COMPARISON_MODEL=""
+if [ "$COMPARISON_RUN" = true ]; then
+  if [ -n "$CLI_COMPARISON_AGENT" ]; then
+    COMPARISON_AGENT="$CLI_COMPARISON_AGENT"
+  fi
+  case "$COMPARISON_AGENT" in
+    claude|codex|cursor|bravebot) ;;
+    *)
+      echo "Error: unsupported comparison agent '$COMPARISON_AGENT' (expected: claude | codex | cursor | bravebot)" >&2
+      exit 1
+      ;;
+  esac
+  case "$COMPARISON_AGENT" in
+    codex)    COMPARISON_AGENT_BIN="$BOT_CODEX_BIN";    COMPARISON_MODEL="$BOT_CODEX_MODEL" ;;
+    cursor)   COMPARISON_AGENT_BIN="$BOT_CURSOR_BIN";   COMPARISON_MODEL="$BOT_CURSOR_MODEL" ;;
+    bravebot) COMPARISON_AGENT_BIN="$BOT_BRAVEBOT_BIN"; COMPARISON_MODEL="$BOT_BRAVEBOT_MODEL" ;;
+    *)        COMPARISON_AGENT_BIN="$BOT_CLAUDE_BIN";   COMPARISON_MODEL="$BOT_CLAUDE_MODEL" ;;
+  esac
+  if [ -n "$CLI_COMPARISON_AGENT_BIN" ]; then
+    COMPARISON_AGENT_BIN="$CLI_COMPARISON_AGENT_BIN"
+  fi
+  if [ -n "$CLI_COMPARISON_MODEL" ]; then
+    COMPARISON_MODEL="$CLI_COMPARISON_MODEL"
   fi
 fi
 
@@ -309,6 +430,10 @@ elif [ "$BOT_AGENT" = "bravebot" ]; then
   echo "Starting bravebot agent - Max iterations: $MAX_ITERATIONS"
 else
   echo "Starting Claude Code agent - Max iterations: $MAX_ITERATIONS"
+fi
+if [ "$COMPARISON_RUN" = true ]; then
+  echo "Comparison runs enabled: every iteration is redone by $COMPARISON_AGENT and then critiqued."
+  echo "  Findings are filed as issues in $BOT_ISSUE_REPO — see docs/comparison-runs.md"
 fi
 echo "Logs will be saved to: $LOGS_DIR"
 
@@ -555,6 +680,11 @@ Additional context: $EXTRA_PROMPT"
       '{"type":"prompt","storyId":$storyId,"status":$status,"tier":$tier,"agent":$agent,"prompt":$prompt}' >> "$ITERATION_LOG"
   fi
 
+  # The second the base run starts. Only Claude is told its session id; every
+  # other agent's session has to be found afterwards, and the search needs to
+  # know how far back to look (scripts/find-agent-session.py).
+  BASE_STARTED_AT=$(date +%s)
+
   # Run the agent from the bot directory so it picks up project instructions.
   #
   # Every stage goes through exec-clean.sh, which closes all inherited fds
@@ -659,6 +789,109 @@ Additional context: $EXTRA_PROMPT"
   # look. This is the same title, from the number the PRD just gave back.
   bot_set_terminal_title \
     "$(bot_story_title "$STORY_ISSUE" "$END_PR_NUMBER" "$STORY_ID" "$STORY_TITLE")"
+
+  # --- Comparison run: steps 2 and 3 of this same turn (--comparison-run only) ---
+  #
+  # Step 1 was the base run above. Step 2 works the same story from scratch with
+  # another tool, in a worktree of its own, and hands back its session id. Step 3
+  # reads both sessions and files an issue for each gap the base tool hit and the
+  # other one did not.
+  #
+  # Nothing in here may end the iteration. run.sh is `set -e`, and a comparison
+  # that fails is a missing second opinion, not a failed story — so every call is
+  # `|| true` with a warning. The story claim stays held throughout: this is
+  # still the same iteration, and the heartbeat says the slot is alive across
+  # what can be two more hours of agent time.
+  if [ "$COMPARISON_RUN" = true ]; then
+    bot_slot_heartbeat
+    COMPARISON_BRANCH="$CLI_COMPARISON_BRANCH"
+    if [ -z "$COMPARISON_BRANCH" ]; then
+      COMPARISON_BRANCH="comparison-$(echo "$STORY_ID" | tr '[:upper:]' '[:lower:]')-$(date +%s)"
+    fi
+    COMPARISON_LOG="$LOGS_DIR/comparison-${RUN_ID_SAFE}-slot-${BOT_RUN_SLOT}-loop-${loop_count}.log"
+    EVALUATOR_LOG="$LOGS_DIR/evaluator-${RUN_ID_SAFE}-slot-${BOT_RUN_SLOT}-loop-${loop_count}.log"
+    COMPARISON_PROMPT_FILE=$(mktemp "${TMPDIR:-/tmp}/comparison-base-prompt.XXXXXX")
+    BASE_SESSION_FILE=$(mktemp "${TMPDIR:-/tmp}/base-session.XXXXXX")
+    COMPARISON_SESSION_FILE=$(mktemp "${TMPDIR:-/tmp}/comparison-session.XXXXXX")
+    # The prompt goes by file, not argv: it carries the story JSON and the whole
+    # bot config.
+    printf '%s\n' "$AGENT_PROMPT" > "$COMPARISON_PROMPT_FILE"
+
+    # What the base run left behind, for the evaluator to read. The branch comes
+    # from the PRD (the agent may have set it this iteration) and its worktree
+    # from git, rather than being guessed from a naming convention.
+    END_BRANCH=$(jq -r --arg id "$STORY_ID" 'first(.stories[] | select(.id == $id)) | .branchName // empty' "$PRD_FILE" 2>/dev/null || echo "")
+    BASE_WORKTREE=""
+    if [ -n "$END_BRANCH" ]; then
+      BASE_WORKTREE=$(git -C "$GIT_REPO" worktree list --porcelain 2>/dev/null \
+        | awk -v b="branch refs/heads/$END_BRANCH" '/^worktree /{w=substr($0,10)} $0==b{print w; exit}')
+    fi
+    # A TUI iteration writes no log at all, so name one only when it exists:
+    # a path to a missing file reads to the evaluator like something went wrong.
+    BASE_LOG=""
+    if [ -f "$ITERATION_LOG" ]; then
+      BASE_LOG="$ITERATION_LOG"
+    fi
+    # Every launch above ran with --cd "$SCRIPT_DIR", so that is the directory
+    # the agent's session was recorded against.
+    python3 "$SCRIPT_DIR/scripts/find-agent-session.py" \
+      --agent "$BOT_AGENT" --cwd "$SCRIPT_DIR" --since "$BASE_STARTED_AT" \
+      --session-id "$SESSION_ID" > "$BASE_SESSION_FILE" 2>/dev/null || true
+    if [ ! -s "$BASE_SESSION_FILE" ]; then
+      echo '{}' > "$BASE_SESSION_FILE"
+    fi
+    TMP_BASE_SESSION=$(mktemp "${TMPDIR:-/tmp}/base-session-enriched.XXXXXX")
+    jq --arg agent "$BOT_AGENT" --arg branch "$END_BRANCH" --arg worktree "$BASE_WORKTREE" \
+       --arg log "$BASE_LOG" --arg tui "$USE_TUI" \
+       --arg startStatus "$STORY_STATUS" --arg endStatus "$END_STATUS" --arg prUrl "$END_PR_URL" \
+      '. + {agent: $agent, branch: $branch, worktree: $worktree, log: $log,
+            tui: ($tui == "true"), startStatus: $startStatus, endStatus: $endStatus, prUrl: $prUrl}' \
+      "$BASE_SESSION_FILE" > "$TMP_BASE_SESSION" 2>/dev/null \
+      && mv "$TMP_BASE_SESSION" "$BASE_SESSION_FILE"
+    rm -f "$TMP_BASE_SESSION"
+    BASE_SESSION_ID=$(jq -r '.sessionId // empty' "$BASE_SESSION_FILE" 2>/dev/null || echo "")
+
+    echo ""
+    echo "==============================================================="
+    echo "  Comparison run (step 2 of 3) — $COMPARISON_AGENT, branch $COMPARISON_BRANCH"
+    echo "  Base:      $BOT_AGENT session ${BASE_SESSION_ID:-not identified}"
+    echo "  Log:       $COMPARISON_LOG"
+    echo "==============================================================="
+    COMPARISON_RC=0
+    "$SCRIPT_DIR/scripts/comparison-run.sh" \
+      --story-id "$STORY_ID" --status "$STORY_STATUS" \
+      --branch "$COMPARISON_BRANCH" --prompt-file "$COMPARISON_PROMPT_FILE" \
+      --log "$COMPARISON_LOG" --session-out "$COMPARISON_SESSION_FILE" \
+      --agent "$COMPARISON_AGENT" --agent-bin "$COMPARISON_AGENT_BIN" \
+      --model "$COMPARISON_MODEL" \
+      --base-agent "$BOT_AGENT" --base-session-id "$BASE_SESSION_ID" || COMPARISON_RC=$?
+    bot_slot_heartbeat
+
+    if [ "$COMPARISON_RC" -ne 0 ]; then
+      echo ""
+      echo "  Comparison run failed (exit $COMPARISON_RC) — nothing to evaluate against." >&2
+      echo "  See $COMPARISON_LOG" >&2
+    else
+      echo ""
+      echo "==============================================================="
+      echo "  Evaluator run (step 3 of 3) — $COMPARISON_AGENT critiques the base run"
+      echo "  Base:       $BOT_AGENT session ${BASE_SESSION_ID:-not identified}"
+      echo "  Comparison: $COMPARISON_AGENT session $(jq -r '.sessionId // "not identified"' "$COMPARISON_SESSION_FILE" 2>/dev/null || echo "not identified")"
+      echo "  Issues to:  $BOT_ISSUE_REPO"
+      echo "  Log:        $EVALUATOR_LOG"
+      echo "==============================================================="
+      "$SCRIPT_DIR/scripts/comparison-evaluate.sh" \
+        --story-id "$STORY_ID" --status "$STORY_STATUS" --story-title "$STORY_TITLE" \
+        --base-session "$BASE_SESSION_FILE" --comparison-session "$COMPARISON_SESSION_FILE" \
+        --prompt-file "$COMPARISON_PROMPT_FILE" --log "$EVALUATOR_LOG" \
+        --agent "$COMPARISON_AGENT" --agent-bin "$COMPARISON_AGENT_BIN" \
+        --model "$COMPARISON_MODEL" \
+        --run-id "$RUN_ID" --slot "$BOT_RUN_SLOT" --loop "$loop_count" \
+        || echo "  Evaluator run failed — see $EVALUATOR_LOG" >&2
+      bot_slot_heartbeat
+    fi
+    rm -f "$COMPARISON_PROMPT_FILE" "$BASE_SESSION_FILE" "$COMPARISON_SESSION_FILE"
+  fi
 
   # Check for completion signal (print mode only — TUI mode skips this since user is watching).
   # Match ONLY the agent's own final message, never raw tool/file output: the marker is

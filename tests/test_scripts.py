@@ -2833,10 +2833,15 @@ class TestBravebotWorktrees:
     # run it, so the lines that document choosing an agent are allowed to say so.
     AGENT_SELECTION = ("bot.agent", "--agent", "BOT_AGENT")
 
+    # Docs about the agent CLIs themselves name them throughout: a comparison run
+    # exists to judge one tool against another, and reading bravebot's own session
+    # store is half of that job. Neutrality is about the project named bravebot.
+    AGENT_DOCS = ("comparison-runs.md", "comparison-evaluation.md")
+
     def test_the_pointers_stay_project_neutral(self):
         """Shared docs serve every profile; brave-core has no worktrees."""
         for name in sorted(os.listdir(DOCS_DIR)):
-            if not name.endswith(".md"):
+            if not name.endswith(".md") or name in self.AGENT_DOCS:
                 continue
             with open(os.path.join(DOCS_DIR, name)) as f:
                 text = f.read()
@@ -3356,9 +3361,20 @@ class TestAgentSelection:
             assert f"BOT_{agent.upper()}_MODEL=" in routing, agent
             assert f"BOT_{agent.upper()}_BIN=" in routing, agent
 
-    def test_the_refusal_lists_what_is_accepted(self):
+    def test_every_refusal_lists_what_is_accepted(self):
+        """A refusal that names no alternative leaves the operator guessing which
+        spelling was wrong."""
         listed = " | ".join(self._accepted())
-        assert self._body().count(f"expected: {listed}") == 2, listed
+        refusals = [
+            line
+            for line in self._body().splitlines()
+            if re.search(
+                r"unsupported (comparison )?agent|--(comparison-)?agent requires", line
+            )
+        ]
+        assert len(refusals) >= 2, refusals
+        for line in refusals:
+            assert f"expected: {listed}" in line, line
 
     @staticmethod
     def _bravebot_bin(tmp_dir, env=None):
