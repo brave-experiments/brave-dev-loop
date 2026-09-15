@@ -114,6 +114,7 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
 
    **IMPORTANT**:
    - **The `Closes` line MUST be the very first line of the PR body**, above `## The problem`. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config). Issues live in the issue repository and PRs in the PR repository, so a bare `Closes #<n>` will NOT auto-close the cross-repo issue. Put the closing keyword + issue link at the TOP, never at the bottom.
+   - **If this PR fixes only part of the issue**, open with `Part of $ISSUE_REPO#<issue-number>` instead of `Closes`, and pass `--no-closes` to `scripts/check-pr-body.py` — never add a `Closes` line to quiet the checker on work that does not close the issue. The issue stays open, so once this story merges the next `scripts/add-backlog-to-prd.py` sync re-adds it as a `Finish issue #<n>` story naming this PR. Say under `## The problem` what is left, so that story has something to go on.
    - Fill in actual test commands and results from acceptance criteria
    - If front-end files were changed, add checkboxes for the project's front-end test commands to the test plan
    - Keep the last checkbox "CI passes cleanly" unchecked

@@ -33,19 +33,28 @@ human summary on stderr and a JSON summary on stdout:
 {"added": [{"id": "US-016", "issueNumber": 52439, "title": "...", "status": "pending", "priority": 16,
             "triage": {"importance": 2, "urgency": 3, "size": 2}}],
  "retriaged": [{"id": "US-009", "issueNumber": 52001, "from": {"urgency": 4}, "to": {"urgency": 2}}],
- "checked": 15, "alreadyTracked": 8, "issueRepository": "brave/brave-browser", "dryRun": false}
+ "finishing": {}, "checked": 15, "alreadyTracked": 8,
+ "issueRepository": "brave/brave-browser", "dryRun": false}
 ```
 
-Use that JSON for the recap — don't re-fetch the issue list.
+Use that JSON for the recap — don't re-fetch the issue list. `finishing` maps each
+re-added issue to the merged work its new story cites, and is empty when every
+addition is a first pass.
 
 Flags: `--dry-run` (report only), `--prd PATH`, `--issues-file -` (read issue JSON
 from stdin instead of calling `gh`).
 
 ### What the script does:
 
-- **Dedupe**: skips issues already referenced as `issue #N` by a story in
-  `data/prd.json` or `data/prd.archived.json`, so archived (merged) work is not
-  re-added
+- **Dedupe**: skips an issue that a story in `data/prd.json` or
+  `data/prd.archived.json` is already working — pending, committed and pushed are
+  in flight, and skipped or invalid is a decision not to work it that re-adding
+  would overturn on every run
+- **Finish partial work**: an issue whose stories have all merged is still open,
+  so a `Part of` pull request landed only some of it. That one is re-added as a
+  `Finish issue #N` story whose criteria name the merged PRs — the next session
+  reads what landed instead of writing it again, and marks the story invalid if
+  the issue turns out to have been left open with nothing in it
 - **Detect issue type**: issues titled `Disabled test:` (or labeled
   `disabled-brave-test`) become re-enable stories; `Test failure:` (or
   `bot/type/test`) become test-fix stories; everything else gets a generic story

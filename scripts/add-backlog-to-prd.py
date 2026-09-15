@@ -2,9 +2,12 @@
 """Add stories for open issues assigned to the bot that aren't in prd.json.
 
 Fetches every open issue assigned to `bot.username` in
-`project.issueRepository` and appends a story for each one the PRD doesn't
-already reference. The triage axes of a story still pending are brought up to
-date with its issue's labels; nothing else about an existing story is modified.
+`project.issueRepository` and appends a story for each one the PRD isn't
+already working. An issue whose stories have all merged is still open, so a
+`Part of` pull request landed part of it: that one is re-added, and the new
+story names the merged work so the next session doesn't write it twice. The
+triage axes of a story still pending are brought up to date with its issue's
+labels; nothing else about an existing story is modified.
 
 This is the whole /add-backlog-to-prd sync — no LLM involved. The skill and
 `make backlog` both call this script so there is one implementation.
@@ -332,8 +335,12 @@ def build_generic_story(story_id, priority, issue):
     }
 
 
-def build_story(story_id, priority, issue):
-    """Dispatch to the story builder that matches the issue type."""
+def build_story(story_id, priority, issue, landed=()):
+    """Dispatch to the story builder that matches the issue type.
+
+    ``landed`` is the merged stories that already worked this issue, when there
+    are any: the story is then a second pass over work that is partly done.
+    """
     if is_disabled_test_issue(issue):
         story = build_disabled_test_story(story_id, priority, issue)
     elif is_test_issue(issue):
@@ -341,10 +348,52 @@ def build_story(story_id, priority, issue):
     else:
         story = build_generic_story(story_id, priority, issue)
 
+    if landed:
+        note_landed_work(story, issue, landed)
+
     axes = read_triage(issue)
     if axes:
         story["triage"] = axes
     return story
+
+
+def name_landed_work(stories):
+    """Name merged stories by the PR that carried them: 'PR #307 (US-066)'."""
+    return ", ".join(
+        f"PR #{s['prNumber']} ({s['id']})" if s.get("prNumber") else s["id"]
+        for s in stories
+    )
+
+
+def note_landed_work(story, issue, landed):
+    """Point a re-added story at the fix that already merged against its issue.
+
+    The issue is still open, so its body still describes the whole original
+    complaint — a session that reads only that re-implements what is already in
+    the default branch. The story leads with what landed, and with the one
+    outcome here that is not a code change: the issue was left open with
+    nothing left in it, and the story is invalid.
+    """
+    named = name_landed_work(landed)
+    number = issue["number"]
+    story["description"] = (
+        f"Finish issue #{number}: {issue['title']}. "
+        f"{named} merged against it already and left it open."
+    )
+    # After the research steps, which every builder puts first because they
+    # carry the rules that govern reading the issue at all.
+    at = len(_research)
+    criteria = story["acceptanceCriteria"]
+    story["acceptanceCriteria"] = [
+        *criteria[:at],
+        f"Read {named} — merged against issue #{number} already, so some of what "
+        f"the issue asks for is written and must not be written a second time",
+        f"Read every comment on issue #{number} and settle what it still asks "
+        f"for that {named} did not do",
+        "If nothing is left to do, mark this story invalid and comment on the "
+        "issue naming what fixed it, rather than looking for a change to make",
+        *criteria[at:],
+    ]
 
 
 def refresh_triage(stories, issues):
@@ -459,16 +508,33 @@ def story_issue_number(story):
     return int(match.group(1)) if match else None
 
 
-def tracked_issue_numbers(*prds):
-    """Collect every issue number already referenced by a story in any PRD."""
-    numbers = set()
+def stories_by_issue(*prds):
+    """Group every story that references an issue by that issue's number."""
+    by_issue = {}
     for prd in prds:
         if not prd:
             continue
         for story in prd.get("stories", []):
-            for match in re.findall(r"issue #(\d+)", story.get("description") or ""):
-                numbers.add(int(match))
-    return numbers
+            number = story_issue_number(story)
+            if number is not None:
+                by_issue.setdefault(number, []).append(story)
+    return by_issue
+
+
+def only_partly_landed(stories):
+    """True when every story for an issue merged, leaving the issue open.
+
+    GitHub is only asked for open issues, so an issue that reaches here is one
+    no merge closed. A story that reached "merged" against it landed a `Part of`
+    pull request — a deliberate partial fix — and the rest of the issue is work
+    nobody is holding. Any other status means it is not ours to re-add: pending,
+    committed and pushed are in flight, and skipped and invalid are a judgment
+    that this issue is not to be worked, which re-adding would overturn every
+    time the loop starts.
+    """
+    return bool(stories) and all(
+        story.get("status", "pending") == "merged" for story in stories
+    )
 
 
 def empty_prd():
@@ -525,7 +591,7 @@ def main():
         if prd is None:
             prd = empty_prd()
         archived = load_json(args.archived_prd)
-        known = tracked_issue_numbers(prd, archived)
+        by_issue = stories_by_issue(prd, archived)
 
         stories = prd.setdefault("stories", [])
         original_stories = copy.deepcopy(stories)
@@ -542,12 +608,18 @@ def main():
             max_priority = max(max_priority, story.get("priority") or 0)
 
         new_stories = []
+        tracked = []
+        finishing = {}
         for issue in issues:
-            if issue["number"] in known:
+            worked = by_issue.get(issue["number"], ())
+            if worked and not only_partly_landed(worked):
+                tracked.append(issue["number"])
                 continue
+            if worked:
+                finishing[issue["number"]] = name_landed_work(worked)
             max_id += 1
             max_priority += 1
-            new_stories.append(build_story(max_id, max_priority, issue))
+            new_stories.append(build_story(max_id, max_priority, issue, worked))
 
         retriaged = refresh_triage(stories, issues)
 
@@ -567,13 +639,15 @@ def main():
     verb = "Would add" if args.dry_run else "Added"
     print(
         f"{verb} {len(new_stories)} new issue(s) to the PRD "
-        f"({len(issues)} assigned issue(s) checked, {len(known)} already tracked)",
+        f"({len(issues)} assigned issue(s) checked, {len(tracked)} already tracked)",
         file=sys.stderr,
     )
     for story in new_stories:
         issue_num = story_issue_number(story) or "unknown"
         label = story.get("testFilter", story["title"])
-        print(f"  {story['id']}: {label} (#{issue_num})", file=sys.stderr)
+        landed = finishing.get(issue_num)
+        finishes = f" — finishing what {landed} left open" if landed else ""
+        print(f"  {story['id']}: {label} (#{issue_num}){finishes}", file=sys.stderr)
 
     if retriaged:
         verb = "Would re-triage" if args.dry_run else "Re-triaged"
@@ -601,8 +675,9 @@ def main():
                     for s in new_stories
                 ],
                 "retriaged": retriaged,
+                "finishing": finishing,
                 "checked": len(issues),
-                "alreadyTracked": len(known),
+                "alreadyTracked": len(tracked),
                 "issueRepository": _issue_repo,
                 "dryRun": args.dry_run,
             }

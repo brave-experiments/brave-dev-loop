@@ -1726,19 +1726,44 @@ class TestAddBacklogTestNameExtraction:
 
 class TestAddBacklogTracking:
     def test_description_issue_reference_is_tracked(self, add_backlog):
-        prd = {"stories": [make_story(description="Resolve issue #52439: x")]}
-        assert 52439 in add_backlog.tracked_issue_numbers(prd)
+        story = make_story(description="Resolve issue #52439: x")
+        assert add_backlog.stories_by_issue({"stories": [story]}) == {52439: [story]}
 
     def test_archived_prd_counts_as_tracked(self, add_backlog):
         archived = {"stories": [make_story(description="Resolve issue #111: x")]}
-        assert 111 in add_backlog.tracked_issue_numbers({"stories": []}, archived)
+        assert 111 in add_backlog.stories_by_issue({"stories": []}, archived)
 
     def test_missing_archived_prd_is_tolerated(self, add_backlog):
-        assert add_backlog.tracked_issue_numbers({"stories": []}, None) == set()
+        assert add_backlog.stories_by_issue({"stories": []}, None) == {}
 
     def test_unrelated_hash_is_not_tracked(self, add_backlog):
         prd = {"stories": [make_story(description="Land PR #52439 in repo")]}
-        assert add_backlog.tracked_issue_numbers(prd) == set()
+        assert add_backlog.stories_by_issue(prd) == {}
+
+
+class TestAddBacklogOnlyPartlyLanded:
+    """An open issue whose every story merged was left open by a `Part of` pull
+    request, and the rest of it is work nobody is holding."""
+
+    def test_every_story_merged(self, add_backlog):
+        assert add_backlog.only_partly_landed([make_story(status="merged")]) is True
+
+    def test_no_story_at_all(self, add_backlog):
+        assert add_backlog.only_partly_landed([]) is False
+
+    @pytest.mark.parametrize("status", ["pending", "committed", "pushed"])
+    def test_work_in_flight(self, add_backlog, status):
+        stories = [make_story(status="merged"), make_story(status=status)]
+        assert add_backlog.only_partly_landed(stories) is False
+
+    @pytest.mark.parametrize("status", ["skipped", "invalid"])
+    def test_a_judgment_not_to_work_it(self, add_backlog, status):
+        assert add_backlog.only_partly_landed([make_story(status=status)]) is False
+
+    def test_absent_status_reads_as_pending(self, add_backlog):
+        story = make_story()
+        del story["status"]
+        assert add_backlog.only_partly_landed([story]) is False
 
 
 class TestAddBacklogEndToEnd:
@@ -1779,7 +1804,7 @@ class TestAddBacklogEndToEnd:
             "prd.archived.json",
             {
                 "stories": [
-                    make_story(status="merged", description="Resolve issue #903: x")
+                    make_story(status="skipped", description="Resolve issue #903: x")
                 ]
             },
         )
@@ -1807,6 +1832,114 @@ class TestAddBacklogEndToEnd:
         prd = read_json(prd_path)
         assert prd["projectName"].endswith("Backlog")
         assert len(prd["stories"]) == 1
+
+    def test_a_first_pass_is_not_described_as_finishing_one(
+        self, write_json, read_json
+    ):
+        prd_path = write_json("prd.json", {"stories": []})
+        result = run_add_backlog(prd_path, [make_issue(number=906, title="Fix thing")])
+        story = read_json(prd_path)["stories"][0]
+        assert story["description"] == "Resolve issue #906: Fix thing"
+        assert json.loads(result.stdout)["finishing"] == {}
+
+
+class TestAddBacklogFinishesPartialWork:
+    """A `Part of` pull request merges and leaves its issue open. The issue is
+    still assigned and still has work in it, so it comes back — carrying what
+    landed, which its own body does not mention."""
+
+    def merged(self, number=902, id="US-007", pr=307):
+        return make_story(
+            id=id,
+            status="merged",
+            prNumber=pr,
+            description=f"Resolve issue #{number}: Fix thing",
+        )
+
+    def test_issue_left_open_by_a_merge_comes_back(self, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": [self.merged()]})
+        result = run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        assert result.returncode == 0
+        stories = read_json(prd_path)["stories"]
+        assert len(stories) == 2
+        assert stories[1]["status"] == "pending"
+        assert stories[1]["description"] == (
+            "Finish issue #902: Fix thing. "
+            "PR #307 (US-007) merged against it already and left it open."
+        )
+        assert json.loads(result.stdout)["finishing"] == {"902": "PR #307 (US-007)"}
+
+    def test_it_says_what_not_to_write_twice(self, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": [self.merged()]})
+        run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        criteria = read_json(prd_path)["stories"][1]["acceptanceCriteria"]
+        assert any(
+            "PR #307 (US-007)" in c and "must not be written a second time" in c
+            for c in criteria
+        )
+        assert any("mark this story invalid" in c for c in criteria)
+
+    def test_every_merged_story_is_named(self, write_json, read_json):
+        prd_path = write_json(
+            "prd.json",
+            {
+                "stories": [
+                    self.merged(id="US-007", pr=307),
+                    self.merged(id="US-008", pr=311),
+                ]
+            },
+        )
+        run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        story = read_json(prd_path)["stories"][2]
+        assert "PR #307 (US-007), PR #311 (US-008)" in story["description"]
+
+    def test_a_merged_story_without_a_pr_is_named_by_its_id(
+        self, write_json, read_json
+    ):
+        merged = self.merged()
+        merged["prNumber"] = None
+        prd_path = write_json("prd.json", {"stories": [merged]})
+        run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        story = read_json(prd_path)["stories"][1]
+        assert "US-007 merged against it already" in story["description"]
+
+    def test_an_archived_merged_story_still_brings_it_back(self, write_json, read_json):
+        prd_path = write_json("prd.json", {"stories": []})
+        archived_path = write_json("prd.archived.json", {"stories": [self.merged()]})
+        run_add_backlog(
+            prd_path,
+            [make_issue(number=902, title="Fix thing")],
+            archived_path=archived_path,
+        )
+        stories = read_json(prd_path)["stories"]
+        assert len(stories) == 1
+        assert stories[0]["description"].startswith("Finish issue #902")
+
+    @pytest.mark.parametrize("status", ["pending", "committed", "pushed"])
+    def test_work_in_flight_is_left_alone(self, write_json, read_json, status):
+        story = self.merged()
+        story["status"] = status
+        prd_path = write_json("prd.json", {"stories": [story]})
+        result = run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        assert read_json(prd_path)["stories"] == [story]
+        assert json.loads(result.stdout)["alreadyTracked"] == 1
+
+    @pytest.mark.parametrize("status", ["skipped", "invalid"])
+    def test_a_decision_not_to_work_it_is_not_overturned(
+        self, write_json, read_json, status
+    ):
+        story = self.merged()
+        story["status"] = status
+        prd_path = write_json("prd.json", {"stories": [story]})
+        run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        assert read_json(prd_path)["stories"] == [story]
+
+    def test_one_merged_story_does_not_carry_a_skipped_one(self, write_json, read_json):
+        skipped = self.merged(id="US-008", pr=311)
+        skipped["status"] = "skipped"
+        prd_path = write_json("prd.json", {"stories": [self.merged(), skipped]})
+        run_add_backlog(prd_path, [make_issue(number=902, title="Fix thing")])
+        assert len(read_json(prd_path)["stories"]) == 2
 
 
 class TestAddBacklogTriage:
