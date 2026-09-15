@@ -35,6 +35,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# A comparison run's notes are not the story's record: the base run owns that
+# log, and an entry from a run nobody pushed reads as work that happened.
+if [ -n "${BOT_COMPARISON_RUN:-}" ]; then
+  echo "This is a comparison run: the progress log is not yours to append to." >&2
+  echo "  Finish with a summary on stdout instead (see docs/comparison-runs.md)." >&2
+  exit 1
+fi
+
 mkdir -p "$(dirname "$PROGRESS_FILE")"
 
 LOCKFILE="$BOT_DIR/data/.progress.lock"

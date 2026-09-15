@@ -123,7 +123,9 @@ case "${1:-}" in
   build) build ;;
   reset) sync_scripts; reset ;;
   sync) sync_scripts; echo "scripts synced into $SIM" ;;
-  clean) kill_runs; rm -rf "$SIM" "$TARGET"; echo "sim removed" ;;
+  # A --comparison-run leaves its worktree beside the target on purpose, so a
+  # simulated one has to be swept up here or /tmp fills with them.
+  clean) kill_runs; rm -rf "$SIM" "$TARGET" "$TARGET"-*; echo "sim removed" ;;
   status) (cd "$SIM" && ./run.sh --status) ;;
   run)
     runs="${2:-2}"; iters="${3:-2}"

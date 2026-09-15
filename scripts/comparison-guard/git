@@ -1,0 +1,17 @@
+#!/bin/bash
+# `git` for a comparison run: everything local passes through, `push` is refused.
+# See guard.sh for why this exists.
+#
+# Committing is allowed and expected — the commit in the comparison worktree is
+# what the evaluator reads. Only publishing it is not.
+
+source "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+
+PAIR="$(guard_command_pair "$@")"
+COMMAND="${PAIR% *}"
+
+if [ "$COMMAND" = "push" ]; then
+  guard_refuse "git push"
+fi
+
+guard_exec git "$@"
