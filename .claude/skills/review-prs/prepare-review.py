@@ -144,6 +144,17 @@ def prune_stale_work_dirs():
 # Serializes concurrent git fetches to the same repo (git locks packed-refs).
 _git_fetch_lock = threading.Lock()
 
+# A worktree add checks out the whole target repo — 63k files and over a GB for
+# brave-core — and five run at once, so the wall time is disk throughput, not a
+# fixed cost. At 60s this expired on a loaded machine and took 28 of 37 PRs out
+# of one run: in auto mode a PR without a worktree is dropped, not reviewed.
+# Treat this as a guard against a wedged git, not as a time budget.
+WORKTREE_ADD_TIMEOUT_S = 900
+
+# Fetching one PR head is a few MB against a warm repo, but the fetches are
+# serialized, so a slow remote makes every later PR wait behind this one.
+PR_HEAD_FETCH_TIMEOUT_S = 180
+
 
 @functools.lru_cache(maxsize=1)
 def pr_remote():
@@ -181,47 +192,94 @@ def fetch_and_create_worktree(pr_number, head_sha, worktree_path):
     """
     # Serialize fetches — git fetch takes a pack-refs lock.
     with _git_fetch_lock:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                TARGET_REPO_PATH,
-                "fetch",
-                pr_remote(),
-                f"pull/{pr_number}/head",
-                "--no-tags",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    TARGET_REPO_PATH,
+                    "fetch",
+                    pr_remote(),
+                    f"pull/{pr_number}/head",
+                    "--no-tags",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=PR_HEAD_FETCH_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            log(
+                f"  WARNING: fetch for PR #{pr_number} timed out after "
+                f"{PR_HEAD_FETCH_TIMEOUT_S}s"
+            )
+            return None
         if result.returncode != 0:
             log(f"  WARNING: fetch for PR #{pr_number} failed: {result.stderr.strip()}")
             return None
 
     # Worktree creation doesn't need the lock.
-    result = subprocess.run(
-        [
-            "git",
-            "-C",
-            TARGET_REPO_PATH,
-            "worktree",
-            "add",
-            worktree_path,
-            "--detach",
-            head_sha,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                TARGET_REPO_PATH,
+                "worktree",
+                "add",
+                worktree_path,
+                "--detach",
+                head_sha,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=WORKTREE_ADD_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        log(
+            f"  WARNING: worktree add for PR #{pr_number} timed out after "
+            f"{WORKTREE_ADD_TIMEOUT_S}s"
+        )
+        discard_partial_worktree(worktree_path)
+        return None
     if result.returncode != 0:
         log(
             f"  WARNING: worktree add for PR #{pr_number} failed: {result.stderr.strip()}"
         )
+        discard_partial_worktree(worktree_path)
         return None
 
     return worktree_path
+
+
+def discard_partial_worktree(worktree_path):
+    """Drop a worktree whose creation was killed or failed partway.
+
+    An interrupted `git worktree add` leaves both a directory of checked-out
+    files and a registration under .git/worktrees. Nothing inside the run
+    removes either — the work-dir collector only reaches it 24h later — so each
+    failure leaks a partial checkout for the rest of the day.
+
+    `worktree prune` is deliberately not called here: other threads are adding
+    worktrees at the same time and prune walks every registration.
+    """
+    try:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                TARGET_REPO_PATH,
+                "worktree",
+                "remove",
+                "--force",
+                worktree_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        log(f"  WARNING: could not unregister worktree {worktree_path}")
+    shutil.rmtree(worktree_path, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
