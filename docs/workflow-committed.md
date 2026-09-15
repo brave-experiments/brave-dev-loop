@@ -15,7 +15,7 @@
 3. Push the branch: `git push -u origin <branch-name>`
 
    The branch must already sit on current upstream, with the presubmit sequence passed
-   there ([workflow-pending.md](./workflow-pending.md) step 11). Where upstream moved while
+   there ([workflow-pending.md](./workflow-pending.md) step 9). Where upstream moved while
    those checks ran, rebase and re-run them before pushing: a rebase before the first push
    is free, and one afterwards costs a force push.
 

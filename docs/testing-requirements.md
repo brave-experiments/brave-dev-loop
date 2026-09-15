@@ -8,9 +8,8 @@
 
 - **NEVER skip tests** because they "take too long" - this is NOT acceptable
 - If tests take hours, that's expected - run them anyway
-- Use `run_in_background: true` for long-running commands (builds, test suites)
-- Use high timeout values: `timeout: 3600000` (1 hour) or `timeout: 7200000` (2 hours)
-- Monitor background tasks with TaskOutput tool
+- Wait for a long check with `./scripts/wait-gate.sh`, never with `sleep N; grep logfile`
+  (see [Waiting for a long check](#waiting-for-a-long-check))
 - If ANY test fails, the story does NOT complete - DO NOT update status to "committed"
 - DO NOT commit code unless ALL acceptance criteria tests pass
 - DO NOT rationalize skipping tests for any reason
@@ -74,32 +73,38 @@ If a test cannot be run, you must:
 
 Only update status to "committed" when you have ACTUAL PROOF the test ran and passed.
 
-## Example of Running Long Tests in Background
+## Waiting for a long check
 
-```javascript
-// Start build in background
-Bash({
-  command: "<the project's build command>",
-  run_in_background: true,
-  timeout: 7200000,  // 2 hours
-  description: "Build the project (may take a long time)"
-})
+An iteration cannot end its turn to wait — ending the turn ends the iteration — so
+a check that outlasts a single tool call has to be waited on from inside one.
+`./scripts/wait-gate.sh` is how:
 
-// Later, check on the build with TaskOutput
-TaskOutput({
-  task_id: "task-xxx",  // Use the task ID returned from the background command
-  block: true,
-  timeout: 7200000
-})
+```bash
+# The simple case: run the gates and block until they answer.
+./scripts/wait-gate.sh run --dir <worktree> "<build command>" "<test command>"
 
-// Run tests in background
-Bash({
-  command: "<the project's test command>",
-  run_in_background: true,
-  timeout: 7200000,
-  description: "Run the test suite (may take a long time)"
-})
+# The overlapping case: start them, do something else, then collect.
+LOGS=$(./scripts/wait-gate.sh start --dir <worktree> "<test command>")
+#   ... self-review the diff while the tests run ...
+./scripts/wait-gate.sh wait "$LOGS"
 ```
+
+It polls the gates every couple of seconds and returns when they return, reading
+each verdict from the gate's own `EXIT=` line. Exit 0 all passed, 1 one failed,
+2 the timeout expired with a gate still running — call `wait` again; the gates
+are still going and nothing needs restarting.
+
+**Never `sleep N; grep logfile`.** It was 13% of all the time the loop has ever
+spent: the sleep costs whatever is left of it once the gate is done, a guess that
+was short costs another turn, and averaged four minutes a poll to learn something
+the gate knew already.
+
+**Never read a check's result from the status of a pipeline.** The session shell
+is zsh, which has no `pipefail`, so `make check 2>&1 | tail -40` reports *tail's*
+exit code and a failing check looks green. A backgrounded
+`make check > log 2>&1; echo "EXIT=$?"` hides it a second way — the notification
+reports the echo's status. `wait-gate.sh` puts the echo inside the redirect for
+this reason; where you must do it by hand, so should you.
 
 ## Front-End Testing Requirements
 
@@ -151,7 +156,9 @@ Project-specific. See the project profile's `docs/testing.md` for the presubmit 
   failed under load and passes when re-run on its own has passed; re-run it rather
   than abandoning the iteration, and name it in the PR body. See step 11 of
   [workflow-pending.md](./workflow-pending.md)
-- **Presubmit must pass** before creating a PR - run it after every commit
+- **Presubmit must pass** before creating a PR - run it once, on the rebased tree,
+  and commit that tree unchanged (workflow-pending.md step 9). Running it again on
+  the tree it already passed on buys nothing
 - Do NOT commit broken code
 - Do NOT skip tests for any reason
 - Keep changes focused and minimal

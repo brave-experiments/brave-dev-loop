@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from argparse import Namespace
 from datetime import datetime, timedelta, timezone
 
@@ -3400,3 +3401,136 @@ class TestAgentSelection:
         way to pin a binary for a scheduled run rather than a typed one."""
         chosen = os.path.join(tmp_dir, "target", "release", "bravebot")
         assert self._bravebot_bin(tmp_dir, {"BOT_BRAVEBOT_BIN": chosen}) == chosen
+
+
+# ── scripts/wait-gate.sh ─────────────────────────────────────────────────────
+
+WAIT_GATE = os.path.join(SCRIPT_DIR, "wait-gate.sh")
+
+
+def run_wait_gate(*args, cwd=None):
+    # /bin/bash, not PATH bash: production runs macOS's bash 3.2.
+    return subprocess.run(
+        ["/bin/bash", WAIT_GATE, *args],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+
+
+class TestWaitGateVerdicts:
+    def test_reports_the_gates_own_exit_code(self, tmp_dir):
+        """The gate's status has to come out of its log. Read from the pipeline
+        that printed it instead, and a failing gate reports as passing -- the
+        false-pass this script exists to prevent."""
+        out = run_wait_gate(
+            "run", "--timeout", "20", "--log-dir", tmp_dir, "echo boom; exit 2"
+        )
+        assert out.returncode == 1
+        assert "FAIL exit=2" in out.stdout
+
+    def test_prints_the_failing_lines_with_the_verdict(self, tmp_dir):
+        """So reading the verdict does not cost a second turn to grep the log."""
+        out = run_wait_gate(
+            "run",
+            "--timeout",
+            "20",
+            "--log-dir",
+            tmp_dir,
+            "echo 'error: mismatched types'; exit 101",
+        )
+        assert "error: mismatched types" in out.stdout
+
+    def test_a_signalled_gate_is_not_a_pass(self, tmp_dir):
+        """A gate killed before it wrote a status wrote no status. Treating the
+        missing line as zero is how a killed check gets reported as evidence."""
+        started = run_wait_gate("start", "--log-dir", tmp_dir, "sleep 30")
+        log_dir = started.stdout.strip()
+        with open(os.path.join(log_dir, "1.pid")) as f:
+            os.kill(int(f.read().strip()), 9)
+        out = run_wait_gate("wait", "--timeout", "10", log_dir)
+        assert out.returncode == 1
+        assert "KILLED" in out.stdout
+
+    def test_runs_the_gate_in_the_given_directory(self, tmp_dir):
+        """Gates run in the story's worktree, never where the session stands."""
+        work = os.path.join(tmp_dir, "work")
+        os.makedirs(work)
+        logs = os.path.join(tmp_dir, "logs")
+        out = run_wait_gate(
+            "run", "--dir", work, "--timeout", "20", "--log-dir", logs, "pwd"
+        )
+        assert out.returncode == 0
+        with open(os.path.join(logs, "1.log")) as f:
+            assert os.path.realpath(f.readline().strip()) == os.path.realpath(work)
+
+    def test_rejects_a_timeout_that_is_not_seconds(self):
+        assert run_wait_gate("run", "--timeout", "5m", "true").returncode == 1
+
+
+class TestWaitGateStart:
+    def test_start_returns_before_the_gate_finishes(self, tmp_dir):
+        """`start` exists so a review can run while the gate does. Bash keeps a
+        command substitution open until every writer of the inherited stdout is
+        gone, so a gate holding that descriptor makes `start` block for the full
+        gate -- which reads as working, just never overlapping anything."""
+        out = run_wait_gate("start", "--log-dir", tmp_dir, "sleep 6")
+        assert out.returncode == 0
+        assert out.stdout.strip() == tmp_dir
+        # The gate stamps .end when it finishes; absent means still running.
+        assert not os.path.exists(os.path.join(tmp_dir, "1.end"))
+
+    def test_gates_in_one_invocation_overlap(self, tmp_dir):
+        """Two gates given together run at once, so the wait costs the slowest
+        rather than the sum. Asserted on the gates' own clocks: a wall-time
+        bound flakes on a machine already running fifteen slots."""
+        marker = os.path.join(tmp_dir, "second-began")
+        run_wait_gate(
+            "run",
+            "--timeout",
+            "30",
+            "--log-dir",
+            tmp_dir,
+            "sleep 3; date +%s > " + os.path.join(tmp_dir, "first-ended"),
+            "date +%s > " + marker,
+        )
+        with open(marker) as f:
+            second_began = int(f.read().strip())
+        with open(os.path.join(tmp_dir, "first-ended")) as f:
+            first_ended = int(f.read().strip())
+        assert second_began <= first_ended
+
+    def test_wait_reports_a_gate_another_process_started(self, tmp_dir):
+        """The overlap is two tool calls, so the verdict has to survive the
+        process that launched the gate exiting."""
+        log_dir = run_wait_gate("start", "--log-dir", tmp_dir, "sleep 1").stdout.strip()
+        out = run_wait_gate("wait", "--timeout", "20", log_dir)
+        assert out.returncode == 0
+        assert "PASS" in out.stdout
+
+    def test_a_finished_gate_reports_its_own_duration(self, tmp_dir):
+        """Not the time until something got round to asking, which is what a
+        gate waited on after the fact would otherwise report."""
+        log_dir = run_wait_gate("start", "--log-dir", tmp_dir, "true").stdout.strip()
+        time.sleep(3)
+        out = run_wait_gate("wait", "--timeout", "10", log_dir)
+        assert "0m00s" in out.stdout
+
+
+class TestWaitGateTimeout:
+    def test_timeout_is_distinct_from_failure_and_leaves_the_gate_running(
+        self, tmp_dir
+    ):
+        """Exit 2, not 1: a gate that has not answered yet has not failed, and
+        killing it would throw away a build that is minutes from done."""
+        out = run_wait_gate("run", "--timeout", "1", "--log-dir", tmp_dir, "sleep 20")
+        assert out.returncode == 2
+        assert "RUNNING" in out.stdout
+        assert "wait-gate.sh wait" in out.stdout
+        with open(os.path.join(tmp_dir, "1.pid")) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)  # raises if the timeout took the gate with it
+        os.kill(pid, 9)
+
+    def test_rejects_a_directory_it_did_not_write(self, tmp_dir):
+        assert run_wait_gate("wait", tmp_dir).returncode == 1

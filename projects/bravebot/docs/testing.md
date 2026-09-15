@@ -37,6 +37,38 @@ make check-linux     # the same fmt/clippy/tests on Linux stable (Docker)
 
 `make check` is the inner loop. Run the rest before pushing.
 
+### Waiting for them
+
+Drive them through `./scripts/wait-gate.sh` rather than sleeping on a log — it
+returns when the gate returns, and reads the verdict from the gate's own `EXIT=`
+line. Start the local gates, self-review the diff while they run, then collect:
+
+```sh
+LOGS=$($BOT_DIR/scripts/wait-gate.sh start --dir "$PWD" \
+  "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check" "make check-spec" "make check-npm")
+#   ... run the self-review here: it reads the same tree and writes nothing ...
+$BOT_DIR/scripts/wait-gate.sh wait "$LOGS"
+```
+
+Each gate is a shell command, so the build's environment goes in the string:
+worktrees have no `.envrc`, and without `BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1` the
+build refuses to start.
+
+**Give the Docker gates an invocation to themselves.** `check-msrv` and
+`check-linux` start by copying the whole worktree into the container, which takes
+long enough to matter and fails outright if something writes into the tree while
+it reads. `make check` writing `target/` is exactly that, so run the two Docker
+gates together and never alongside a local one:
+
+```sh
+$BOT_DIR/scripts/wait-gate.sh run --dir "$PWD" \
+  "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-msrv" \
+  "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-linux"
+```
+
+Exit 2 means the timeout expired with a gate still running; the container is still
+going, so `wait` on the log directory again rather than starting it over.
+
 - **check-reviewdog** drives the same opengrep and npm-audit runners the
   organization workflow drives, so a finding here is a comment the bot would
   post on the PR. `check-reviewdog-full` scans the whole tree and reports plenty

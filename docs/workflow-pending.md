@@ -235,9 +235,19 @@
 
    **SCOPE CHANGES TO YOUR PR ONLY**: All code changes must be confined to the current story's feature branch and PR. Do not make changes to other branches, other PRs, or unrelated code outside the scope of the current task, unless presubmit or format requires the changes.
 
-6. **CRITICAL**: Run **ALL** acceptance criteria tests - **YOU MUST NOT SKIP ANY**
+6. **While the code is still moving, run only the tests the change reaches**
 
-   **Exception: Filter-file-only changes** — If the ONLY changed files are test filter files (`test/filters/*.filter`), skip this step entirely. Do not run tests or build. Proceed to step 9 (self-review).
+   The test you added, the file it lives in, the crate or target around it. That
+   is the loop that finds your own bugs, and it costs seconds where the full
+   suite costs tens of minutes.
+
+   **This is not permission to skip anything.** **ALL** acceptance criteria tests
+   still run in full before a PR exists — step 9 runs every one of them, and a
+   story whose suite has not passed does not reach `committed`. What changed is
+   *when*: once, on the tree that gets pushed, instead of once here and again
+   after the rebase in step 9 has thrown this result away.
+
+   **Exception: Filter-file-only changes** — If the ONLY changed files are test filter files (`test/filters/*.filter`), skip this step entirely. Do not run tests or build. Proceed to step 9.
 
    See [testing-requirements.md](./testing-requirements.md) for complete test execution requirements.
 
@@ -245,7 +255,53 @@
 
    Project-specific. See the project profile's `docs/testing.md` (path given in the prompt). Projects without an upstream to inherit tests from can skip this step.
 
-9. **REQUIRED: Self-review your changes before committing:**
+9. **REQUIRED: the verification pass — rebase, gate, and self-review, on one tree**
+
+   Everything that decides whether this story ships happens here, once, on the
+   tree that will be pushed.
+
+   **The rule: the tree you gate is the tree you push.** A gate result belongs to
+   the exact tree it ran on. Rebase after gating and the result is void. Edit a
+   file after gating and the result is void. So rebase first, gate once, and
+   commit that tree without touching it again.
+
+   ### 9a. Put the branch on current upstream — before the gates, not after
+
+   ```bash
+   git fetch upstream            # through ./scripts/git-repo-lock.sh where runs share this directory
+   git rebase upstream/master    # the upstream default branch
+   ```
+
+   CI builds the merge of the branch with the upstream default branch, not the
+   commit that was pushed, so a suite that passed on a stale base can still fail
+   there. Rebasing before the first push is free. Rebasing *before* the gates
+   rather than after is what stops the suite from running twice: a rebase on top
+   of a green suite has thrown that suite away, and re-running it is the single
+   most expensive thing an iteration does.
+
+   If the rebased tree fails on code this diff does not touch, check whether
+   upstream is already red before changing anything — see
+   [git-repository.md](./git-repository.md#ci-tests-the-merge-not-your-branch-tip).
+
+   ### 9b. Start the gates, then self-review while they run
+
+   The presubmit suite and the self-review read the same tree and neither writes
+   to it, so they overlap. Run them in series and the review's quarter-hour is
+   added to the suite's; start the gates first and it costs nothing.
+
+   ```bash
+   # Which gates, and in what order, is project-specific: see the profile's docs/testing.md.
+   ./scripts/wait-gate.sh start --dir <worktree> "make check" "make check-spec"
+   # prints a log directory -- keep it for 9c
+   ```
+
+   `wait-gate.sh` blocks on the gates rather than sleeping a guessed interval,
+   and reads each verdict from the gate's own `EXIT=` line. **Never wait on a
+   check with `sleep N; grep logfile`.** The sleep costs whatever is left of it
+   once the gate is done, a guess that was short costs another turn, and the
+   guess is wrong in one direction or the other every time.
+
+   Then, while they run, review the diff.
 
    **CRITICAL: Do NOT read best practices docs in the main context — they are 1000+ lines each and will fill the context window, causing compaction. A review skill handles this via chunked parallel subagents.**
 
@@ -291,38 +347,65 @@
 
    ### What to do with results
 
-   - **If no violations after validation:** Proceed to commit
-   - **If violations found:** Fix them, re-run only the affected chunks to confirm the fix
+   - **If no violations after validation:** Proceed to 9c
+   - **If violations found:** Fix them, re-run only the affected chunks to confirm the fix, and mind 9d — a fix lands on a tree the gates are already running against
    - This step is mandatory — it catches issues that are easy to miss when focused on implementation. Do NOT skip it.
+
+   ### 9c. Collect the gates
+
+   ```bash
+   ./scripts/wait-gate.sh wait <log-dir>
+   ```
+
+   Exit 0 every gate passed, 1 one of them failed, 2 the timeout expired with a
+   gate still running — the gates are still going, so call `wait` again rather
+   than starting anything over.
+
+   Run every gate the profile's `docs/testing.md` lists, and **ALL** acceptance
+   criteria tests, on this tree. This is the pass that decides the story: there is
+   no later one.
+
+   ### 9d. A fix voids the gates it can reach
+
+   Fixing a review finding or a gate failure changes the tree, and the gates that
+   already ran no longer describe it. Re-run the gates the change can reach — a
+   docs-only fix re-runs the docs check, a code fix re-runs the checks that
+   compile code — and not the whole suite. Then come back to 9c.
+
+   ### 9e. A gate can fail on a test the diff cannot reach
+
+   Fifteen runs share this machine, so a suite that stands up real servers or
+   waits on a clock fails a different test on each attempt. Settle that with the
+   flake rules in step 11 — re-run the named test by itself — rather than by
+   re-running the suite.
 
 10. **If ALL tests pass:**
    - Commit ALL changes (must be in `[targetRepoPath from bot config]`)
+   - **Then prove the committed tree is the tree the gates passed on:**
+     ```bash
+     git status --porcelain   # must print nothing
+     ```
+     Anything listed is a difference the gate result does not cover — an untracked
+     new test file is a gate that passed on code the commit does not contain. Add
+     it, amend, and re-check.
    - **IMPORTANT**: If fixing security-sensitive issues (XSS, CSRF, buffer overflows, sanitizer issues, etc.), use discretion in commit messages - see [SECURITY.md](../SECURITY.md#public-security-messaging) for guidance
    - **For upstream test disables**: see the project profile's `docs/testing.md` for the required commit-message fields.
-11. **CRITICAL: Run presubmit verification AFTER commit, BEFORE creating PR:**
+11. **CRITICAL: BEFORE creating the PR, the gate result must still describe HEAD:**
 
-   **First, put the branch on current upstream.** CI builds the merge of the branch with
-   the upstream default branch, not the commit that was pushed, so a gate that passes here
-   can still fail there:
+   Step 9 already ran the full presubmit sequence, on the rebased tree, with the
+   review overlapping it. **Do not run it again here.** Re-running a suite that
+   passed on the tree HEAD already holds is the most expensive thing an iteration
+   can do and it learns nothing. Confirm instead that nothing since has voided it:
 
-   ```bash
-   git fetch upstream            # through ./scripts/git-repo-lock.sh where runs share this directory
-   git rebase upstream/master    # the upstream default branch
-   ```
+   - **No rebase since the gates ran.** If upstream moved and the branch needs
+     rebasing again, the gate result is void — go back to 9a.
+   - **No edit and no `--amend` since the gates ran.** If either happened, re-run
+     the gates the change could reach (9d).
+   - `git status --porcelain` prints nothing.
 
-   Do this before the first push, where a rebase is free, and run the presubmit sequence on
-   the rebased tip: that is the tree CI will build. If the rebased tree fails on code this
-   diff does not touch, check whether upstream is already red before changing anything —
-   see [git-repository.md](./git-repository.md#ci-tests-the-merge-not-your-branch-tip).
-
-   After committing, you MUST run the full verification cycle to ensure the commit is valid:
-   ```bash
-   Run the project's presubmit sequence. The exact commands and their order are
-   project-specific — see the project profile's `docs/testing.md` (path given in
-   the prompt). Filter-file-only changes may skip build and test steps.
-   6. ALL acceptance criteria tests (skip for filter-file-only changes)
-
-   This ensures the final committed state is fully verified. Do NOT create a PR until all checks pass on the final committed state.
+   Do NOT create a PR until the full suite has passed on the exact tree HEAD points
+   at. Only where a *flake* was settled below does a gate count as passed without a
+   clean run — never anywhere else.
 
    **A gate that failed under load is not a failed gate. Re-run the test it named,
    by itself.** "Run them all" means run them all, not pass them all regardless of
