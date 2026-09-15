@@ -168,7 +168,9 @@ def linked_issue_number(pr):
     """Issue number in the issue repository that this PR closes, if any.
 
     Recorded as "issue #N" in the story description so add-backlog-to-prd, which
-    dedupes on that exact phrase, never adds a second story for the same issue.
+    dedupes on that exact phrase, adds no second story for the issue while this
+    one is in flight. Only a closing keyword counts: a `Part of` pull request
+    leaves the issue open on merge, and intake is meant to come back to it.
     """
     issue_owner = _issue_repo.lower()
     for match in _CLOSING_KEYWORD_RE.finditer(pr.get("body") or ""):
