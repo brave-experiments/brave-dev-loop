@@ -2,10 +2,11 @@
 
 The reviewer is a busy human who has not seen this code, did not read the
 issue, and is deciding in about thirty seconds whether to read the diff. The
-description exists to answer two questions in that time:
+description exists to answer three questions in that time:
 
-1. **How do I see the problem myself?**
-2. **What exactly was wrong?**
+1. **Can anybody using the product tell this landed?**
+2. **How do I see the problem myself?**
+3. **What exactly was wrong?**
 
 Everything else is optional. The diff is right there — the description is not
 the place to re-narrate it.
@@ -17,6 +18,8 @@ the place to re-narrate it.
 
 ```markdown
 Closes <owner>/<repo>#<issue>
+
+User impact: <what a person using the product can now see, or "none" and why not>
 
 ## The problem
 <2-4 sentences. What goes wrong, who hits it, what they see.>
@@ -36,6 +39,29 @@ expected. The test you added goes last, on one line.>
 Four required sections, in that order. `Closes` first, above everything, or the
 cross-repo issue does not close on merge. Anything else you want to say goes
 after the test plan or inside `<details>`.
+
+## The user-impact line
+
+One line, not a section: above the problem and below `Closes`. It answers the
+question nobody should have to open the Files Changed tab to answer: can a
+person using the product tell that this landed?
+
+- **Good:** `User impact: a reply that takes 75 seconds now arrives instead of failing as a timeout.`
+- **Good:** `User impact: none -- a spec document, no code changes.`
+- **Bad:** `User impact: improves reliability.` Nobody can see reliability. Name
+  what is on the screen.
+- **Bad:** `User impact: none.` None because of what?
+
+**A change nobody can see is the case this line exists for.** A spec, a
+refactor, a doc, a CI fix and a test all read like a bug fix from the four
+sections, because the four sections are the same shape either way: a problem, a
+reproduction, a fix. A reviewer who cannot tell them apart spends the attention a
+behaviour change deserves on a document, or skims a document that was published
+to be argued with. One line at the top settles it, so say which — `none -- spec
+only`, `none -- a refactor, same output`, `none -- tests only`.
+
+The line is not a summary and not a second problem statement. If it runs past
+one line, the extra belongs in *The fix*.
 
 ## The problem
 
@@ -229,6 +255,8 @@ Real body, shortened to its shape:
 Accurate, and it opens with two type names and a field name. What a reviewer
 needs first:
 
+> User impact: a slow model answers at all now, instead of never.
+>
 > ## The problem
 > A model that takes more than 60 seconds to start answering never answers at
 > all. The request fails as a timeout, retries, and each retry dies at the same

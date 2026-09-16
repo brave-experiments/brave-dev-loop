@@ -161,8 +161,9 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
 
 **The body shape is not freeform.** It is defined in
 [pr-descriptions.md](./pr-descriptions.md), and `scripts/check-pr-body.py` enforces
-it. Four sections, in this order, with the reproduction and the problem statement
-before any mechanism. A bug a user can see needs the steps a user takes — a test
+it. One line saying what a person using the product can now see, then four
+sections, in this order, with the reproduction and the problem statement before
+any mechanism. A bug a user can see needs the steps a user takes — a test
 command is the evidence under them, not the reproduction:
 
 **Example:**
@@ -178,6 +179,8 @@ where `/tmp/pr-body.md` holds:
 
 ```markdown
 Closes $ISSUE_REPO#<issue-number>
+
+User impact: <what a person using the product can now see, or "none" and why not>
 
 ## The problem
 <2-4 sentences: the symptom a person observes, in plain language>
