@@ -38,6 +38,14 @@ Blocks the configured bot account from modifying dependency files (package.json,
 **Target repo pre-push** (`hooks/pre-push`):
 Refuses a push whose new commits are authored or committed by anybody other than the `user.name` and `user.email` set above. Commits already on a remote-tracking ref are not its subject, so a branch rebased onto upstream work is not blamed for who wrote that work.
 
+It refuses an unsigned commit on the same terms, where `commit.gpgsign` is true — the state setup leaves the repo in. Signing fails at commit time rather than at setup, because a key the agent has to hold is one a given shell may not reach, and the way past that failure is `--no-gpg-sign` on one commit at a time. Nothing downstream reports the result: GitHub marks the commit Unverified on a page nobody opens, and no check fails, so a branch has gone out and been approved that way. The refusal names the base to re-sign onto, which is the parent of the oldest commit the push would create rather than of `HEAD`:
+
+```bash
+git rebase -f --gpg-sign <base>
+```
+
+That rewrites no file and no message. A repo where `commit.gpgsign` is unset has no signature to be missing and is not held to one.
+
 It also checks which account would open the pull request, because `gh pr create` reads no git config at all: a branch every commit of which is correctly authored and signed can still be followed by a pull request opened by the machine owner, and a pull request's author cannot be reassigned afterwards, only closed and opened again. Where `GH_TOKEN` is already exported, as `run.sh` does, the hook trusts it and says nothing. Otherwise, if `gh`'s active account is not the bot and a stored token for the bot exists, it refuses the push and names the one-line fix:
 
 ```bash
