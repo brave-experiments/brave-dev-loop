@@ -3622,6 +3622,14 @@ class TestProjectSchedules:
         assert job.startswith("0 1 * * * ")
         assert "./run.sh 20 " in job
 
+    def test_bravebot_run_dies_before_the_next_one_starts(self, tmp_dir):
+        """Only one run may hold the slot. A run still alive at 01:00 would make
+        tomorrow's job exit on a busy slot, and the night after that one too."""
+        (job,) = self._jobs(self._render(tmp_dir, "bravebot"))
+        m = re.search(r"timeout-tree\.sh (\d+) \./run\.sh", job)
+        assert m, job
+        assert int(m.group(1)) < 24 * 60 * 60
+
     def test_bravebot_does_not_share_an_hour_with_brave_core(self, tmp_dir):
         """Both projects can be deployed on one machine, and each run.sh drives
         its own agent session for hours."""
