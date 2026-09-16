@@ -15,7 +15,15 @@ What it will not touch:
   - a worktree git has locked
   - anything holding work no remote has: uncommitted changes, or commits that
     exist on no remote-tracking branch
-  - with --max-age-hours, anything added more recently than that
+  - with --max-age-hours, anything used more recently than that
+
+--all drops the third and fourth of those, for the operator emptying a directory
+rather than a run collecting after itself: every worktree goes, however recently
+it was used and whatever it holds. Uncommitted changes are the only thing that
+can be lost even then — a worktree's branch belongs to the repository, not to the
+worktree, so commits no remote has survive its removal and the branch is still
+there to check out. A live run's worktree and a locked one are kept regardless,
+because deleting the directory out from under a running session breaks it.
 
 Removal renames the directory, prunes the administrative entries under the
 repository lock, and deletes the contents afterwards. Deleting 4 GB takes long
@@ -23,7 +31,8 @@ enough that doing it under the lock would stall every other run's fetch.
 
 Usage:
   scripts/clean-worktrees.py                      # every worktree nothing is using
-  scripts/clean-worktrees.py --max-age-hours 24   # only ones added over a day ago
+  scripts/clean-worktrees.py --max-age-hours 24   # only ones idle over a day
+  scripts/clean-worktrees.py --all                # every one, work and all
   scripts/clean-worktrees.py --dry-run            # report only, delete nothing
 
 Exit codes:
@@ -96,17 +105,59 @@ def list_worktrees(repo):
     return [t for t in trees if os.path.realpath(t["path"]) != main]
 
 
-def age_hours(path):
-    """Hours since the worktree was added, or None when it cannot be told.
+def admin_dir(path):
+    """The repository's administrative directory for this worktree, or None.
 
-    The `.git` file inside a worktree is written by `git worktree add` and never
-    touched again, so its mtime is the moment the worktree appeared. The
-    directory's own mtime is not: every build writes into it.
+    A worktree's `.git` is a file holding `gitdir: <path>`, which points at the
+    `.git/worktrees/<name>` directory the repository keeps for it.
     """
     try:
-        return (time.time() - os.path.getmtime(os.path.join(path, ".git"))) / 3600.0
+        with open(os.path.join(path, ".git")) as f:
+            content = f.read()
     except OSError:
         return None
+    for line in content.splitlines():
+        if line.startswith("gitdir:"):
+            return line[len("gitdir:") :].strip()
+    return None
+
+
+def idle_hours(path):
+    """Hours since git last did anything in this worktree, or None if unknowable.
+
+    Work in a worktree writes files into that worktree's administrative
+    directory — the index on a commit, HEAD on a checkout, FETCH_HEAD on a fetch
+    — so the newest mtime among them is when it was last worked in. The `.git`
+    file is written once by `git worktree add`, and covers one nothing has run
+    git in yet. The worktree directory's own mtime is neither: a build writes
+    deep inside it without touching the top level.
+
+    Add time alone is not enough. A long-lived story's worktree is days old and
+    still in use, and between two iterations of it there is a moment — pushed,
+    nothing uncommitted, no claim held — when every other check would let it go.
+
+    Only files count, never the administrative directory itself. Every git
+    command creates a lock file in there and deletes it again, which bumps the
+    directory's mtime, so counting it would have this script's own reads make
+    each worktree look busy and nothing would ever be collected again.
+    """
+    marker = os.path.join(path, ".git")
+    try:
+        newest = os.path.getmtime(marker)
+    except OSError:
+        return None
+    admin = admin_dir(path)
+    try:
+        entries = list(os.scandir(admin)) if admin else []
+    except OSError:
+        entries = []
+    for entry in entries:
+        try:
+            if entry.is_file():
+                newest = max(newest, entry.stat().st_mtime)
+        except OSError:
+            continue
+    return (time.time() - newest) / 3600.0
 
 
 def local_work_reason(path):
@@ -119,8 +170,12 @@ def local_work_reason(path):
 
     A reason is also returned when git cannot answer, so a worktree in a state
     this does not understand stays where it is.
+
+    --no-optional-locks keeps the question from changing the answer: a plain
+    `git status` refreshes the index when a build has touched the tree, and that
+    write is indistinguishable from work when idle_hours() next reads it.
     """
-    status = run_git(["-C", path, "status", "--porcelain"])
+    status = run_git(["--no-optional-locks", "-C", path, "status", "--porcelain"])
     if status is None:
         return "git could not read its status"
     if status.strip():
@@ -207,11 +262,16 @@ def prune(repo):
     return True
 
 
-def select(repo, bot_dir, prd_path, max_age_hours):
-    """Split the worktrees into the ones to remove and why the rest are kept."""
+def select(repo, bot_dir, prd_path, max_age_hours, all_worktrees=False):
+    """Split the worktrees into the ones to remove and why the rest are kept.
+
+    Returns (remove, kept, prunable, lost) — `lost` naming the worktrees that
+    hold work `--all` is about to take, so the operator sees what went.
+    """
     branches, paths = claimed_worktrees(repo, bot_dir, prd_path)
     remove = []
     kept = []
+    lost = []
     prunable = False
     for tree in list_worktrees(repo):
         path = tree["path"]
@@ -227,17 +287,19 @@ def select(repo, bot_dir, prd_path, max_age_hours):
         if tree["branch"] and tree["branch"] in branches:
             kept.append({"path": path, "reason": "a live run holds its story"})
             continue
-        if max_age_hours is not None:
-            age = age_hours(path)
-            if age is None or age < max_age_hours:
-                kept.append({"path": path, "reason": "it was added too recently"})
+        if max_age_hours is not None and not all_worktrees:
+            idle = idle_hours(path)
+            if idle is None or idle < max_age_hours:
+                kept.append({"path": path, "reason": "it was used too recently"})
                 continue
         reason = local_work_reason(path)
         if reason:
-            kept.append({"path": path, "reason": reason})
-            continue
+            if not all_worktrees:
+                kept.append({"path": path, "reason": reason})
+                continue
+            lost.append({"path": path, "reason": reason, "branch": tree["branch"]})
         remove.append(path)
-    return remove, kept, prunable
+    return remove, kept, prunable, lost
 
 
 def remove_worktrees(paths, dry_run):
@@ -270,7 +332,13 @@ def main():
     parser.add_argument(
         "--max-age-hours",
         type=float,
-        help="Only remove worktrees added more than this many hours ago",
+        help="Only remove worktrees not used for more than this many hours",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove every worktree, however recently used and whatever it holds "
+        "(uncommitted changes are lost; branches and their commits are not)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Report what would go, delete nothing"
@@ -283,8 +351,12 @@ def main():
         return 2
 
     swept = [] if args.dry_run else sweep_leftovers(repo)
-    remove, kept, prunable = select(
-        repo, bot_dir_for(args.prd, _bot_dir), args.prd, args.max_age_hours
+    remove, kept, prunable, lost = select(
+        repo,
+        bot_dir_for(args.prd, _bot_dir),
+        args.prd,
+        args.max_age_hours,
+        all_worktrees=args.all,
     )
     renamed = remove_worktrees(remove, args.dry_run)
 
@@ -296,16 +368,28 @@ def main():
 
     verb = "Would remove" if args.dry_run else "Removed"
     print(f"{verb} {len(renamed)} worktree(s), kept {len(kept)}", file=sys.stderr)
-    for path, _ in renamed:
-        print(f"  {path}: removed", file=sys.stderr)
+    gone = [path for path, _ in renamed]
+    held = {tree["path"]: tree for tree in lost}
+    for path in gone:
+        note = ""
+        if path in held:
+            branch = held[path]["branch"]
+            where = (
+                f"branch {branch} kept"
+                if branch
+                else "detached, nothing points at its commits"
+            )
+            note = f" — {held[path]['reason']} ({where})"
+        print(f"  {path}: removed{note}", file=sys.stderr)
     for tree in kept:
         print(f"  {tree['path']}: kept — {tree['reason']}", file=sys.stderr)
 
     print(
         json.dumps(
             {
-                "removed": [path for path, _ in renamed],
+                "removed": gone,
                 "kept": kept,
+                "lostWork": [tree for tree in lost if tree["path"] in gone],
                 "swept": swept,
                 "dryRun": args.dry_run,
             }

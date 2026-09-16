@@ -99,10 +99,28 @@ reach several gigabytes. `run.sh` collects them itself, so the disk does not fil
 with the build output of work that has already landed:
 
 - at the end of a session, every worktree nothing is using
-- at the start of the next one, the same but only those added over 24 hours ago,
-  since another run may be mid-iteration in one it created minutes ago
+- at the start of the next one, the same but only those idle over 24 hours, since
+  another run may be mid-iteration in one it used minutes ago
 
 `scripts/clean-worktrees.py` decides, and keeps anything that would lose work:
 uncommitted changes, a commit no remote has, a worktree a live run claims, or one
-git has locked. `--dry-run` reports without removing. A story whose worktree was
-collected re-creates it from `origin/<branch>` on its next iteration.
+git has locked. Idleness is measured from the last git command run in the
+worktree, not from when it was added — a long-lived story's worktree is days old
+and still in use. `--dry-run` reports without removing. A story whose worktree
+was collected re-creates it from `origin/<branch>` on its next iteration.
+
+To empty the directory by hand rather than wait for a run to collect:
+
+```bash
+make unmount-worktrees            # every worktree idle for over 24 hours
+make unmount-worktrees ALL=1      # every worktree, whatever it holds
+make unmount-worktrees DRY_RUN=1  # report only
+```
+
+`ALL=1` is the one that ignores the guards above, and uncommitted changes are all
+it can lose — it names each worktree holding some as it removes it. Branches
+belong to the repository rather than to the worktree checked out on them, so
+commits no remote has survive, and `git checkout <branch>` in the main checkout
+still finds them. A worktree a live run claims, or one git has locked, is kept
+either way: deleting the directory under a running session breaks it. No model is
+involved in any of the three.
