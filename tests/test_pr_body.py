@@ -6,6 +6,7 @@ comes first, the Closes line will really close the issue.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -441,6 +442,107 @@ def test_details_block_is_not_counted(checker):
     assert warnings == []
 
 
+# ── A change a person can look at shows what they would see ──────────────────
+
+SCREEN = """```
+trusting /tmp/work
+
+╭─────────────────────────────────╮
+│> Ask Brave Bot to do anything   │
+╰─────────────────────────────────╯
+  ? for shortcuts
+```
+"""
+
+TUI = ("crates/tui/src/app.rs",)
+
+
+def with_screen(body, block=SCREEN):
+    return body.replace("## The fix\n", f"## The fix\n{block}\n")
+
+
+def test_a_ui_change_with_no_screen_is_an_error(checker):
+    """The whole point: a reviewer of an interface change should not have to
+    build the branch to find out what it looks like."""
+    errors, _ = checker.check(GOOD, ui_paths_changed=TUI)
+    assert any("shows no screen" in e for e in errors), errors
+
+
+def test_the_error_names_the_files_that_asked_for_it(checker):
+    """So the answer to 'why is this being demanded of me' is in the message."""
+    errors, _ = checker.check(GOOD, ui_paths_changed=TUI)
+    assert any("crates/tui/src/app.rs" in e for e in errors), errors
+
+
+def test_a_long_list_of_files_is_summarised(checker):
+    """Naming forty paths in an error message is naming none of them."""
+    many = tuple(f"crates/tui/src/f{n}.rs" for n in range(8))
+    errors, _ = checker.check(GOOD, ui_paths_changed=many)
+    assert any("and 5 more" in e for e in errors), errors
+
+
+def test_a_ui_change_that_shows_a_screen_passes(checker):
+    errors, warnings = checker.check(with_screen(GOOD), ui_paths_changed=TUI)
+    assert errors == [], errors
+    assert warnings == [], warnings
+
+
+def test_a_change_nobody_can_look_at_asks_for_no_screen(checker):
+    """Most diffs are not interface diffs, and a rule that fires on all of them
+    would be turned off within a week."""
+    assert checker.check(GOOD, ui_paths_changed=()) == ([], [])
+
+
+def test_a_one_line_command_block_is_not_a_screen(checker):
+    """A reproduction almost always carries a fenced command, so counting any
+    fence would make this rule already satisfied on the bodies it is for."""
+    errors, _ = checker.check(
+        with_screen(GOOD, "```\ncargo test --all\n```\n"), ui_paths_changed=TUI
+    )
+    assert any("shows no screen" in e for e in errors), errors
+
+
+def test_a_screen_below_the_test_plan_does_not_count(checker):
+    """A reviewer's thirty seconds are spent above it. A screen underneath is a
+    screen they will not see."""
+    below = GOOD.replace(
+        "- [ ] CI passes cleanly\n", f"- [ ] CI passes cleanly\n\n{SCREEN}"
+    )
+    errors, _ = checker.check(below, ui_paths_changed=TUI)
+    assert any("shows no screen" in e for e in errors), errors
+
+
+def test_a_bare_pattern_claims_everything_beneath_it(checker):
+    """So a profile can write `crates/tui/` and not `crates/tui/**/*`."""
+    changed = ["crates/tui/src/app.rs", "crates/core/src/lib.rs", "README.md"]
+    assert checker.matching(changed, ["crates/tui/"]) == ["crates/tui/src/app.rs"]
+
+
+def test_a_glob_pattern_is_matched_as_a_glob(checker):
+    changed = ["ui/main.css", "ui/main.rs", "docs/ui.css"]
+    assert checker.matching(changed, ["ui/*.css"]) == ["ui/main.css"]
+
+
+def test_a_path_claimed_twice_is_reported_once(checker):
+    assert checker.matching(["ui/a.rs"], ["ui/", "ui/*.rs"]) == ["ui/a.rs"]
+
+
+def test_a_project_with_no_declared_paths_is_never_asked(checker):
+    """A project with no interface has nothing to show, and guessing which of
+    its directories counts would fire the rule on the wrong diffs."""
+    assert checker.matching(["crates/tui/src/app.rs"], []) == []
+
+
+def test_the_bravebot_profile_declares_its_interface():
+    """The rule is inert until a profile names the paths, so the one project
+    with an interface has to name it or nothing above is reachable."""
+    path = os.path.join(
+        os.path.dirname(__file__), os.pardir, "projects", "bravebot", "profile.json"
+    )
+    with open(path, encoding="utf-8") as fh:
+        assert json.load(fh)["uiPaths"] == ["crates/tui/"]
+
+
 # ── The CLI ──────────────────────────────────────────────────────────────────
 
 
@@ -465,6 +567,84 @@ def test_cli_strict_fails_on_warnings(tmp_path):
     )
     assert run_cli(tmp_path, warn_only).returncode == 0
     assert run_cli(tmp_path, warn_only, "--strict").returncode == 1
+
+
+def _repo_with_change(tmp_path, changed):
+    """A one-commit repo whose HEAD changes `changed`, and the base to diff it
+    against. The rule is decided from a real diff, so a real one is what pins
+    it -- a stubbed path list would test the wiring and not the reading."""
+    repo = tmp_path / "repo"
+    (repo / os.path.dirname(changed)).mkdir(parents=True)
+    git = ["git", "-C", str(repo)]
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(git + ["config", "user.email", "t@t"], check=True)
+    subprocess.run(git + ["config", "user.name", "t"], check=True)
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(git + ["add", "-A"], check=True)
+    subprocess.run(git + ["commit", "-qm", "base"], check=True)
+    base = subprocess.run(
+        git + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    (repo / changed).write_text("changed\n", encoding="utf-8")
+    subprocess.run(git + ["add", "-A"], check=True)
+    subprocess.run(git + ["commit", "-qm", "change"], check=True)
+    return repo, base
+
+
+def _run_in(repo, tmp_path, body, *args, profile="bravebot"):
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"project": {"name": "bravebot", "profile": profile}}),
+        encoding="utf-8",
+    )
+    body_file = tmp_path / "body.md"
+    body_file.write_text(body, encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, os.path.abspath(SCRIPT), "--body-file", str(body_file), *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "BOT_CONFIG_FILE": str(config)},
+    )
+
+
+def test_the_cli_reads_the_changed_paths_from_the_diff(tmp_path):
+    """Not from the body: there is no flag or phrasing that opts a run out."""
+    repo, base = _repo_with_change(tmp_path, "crates/tui/src/app.rs")
+    done = _run_in(repo, tmp_path, GOOD, "--diff-base", base)
+    assert done.returncode == 1
+    assert "shows no screen" in done.stdout
+
+
+def test_the_cli_says_what_it_decided(tmp_path):
+    """A rule nobody can see fire is a rule nobody trusts."""
+    repo, base = _repo_with_change(tmp_path, "crates/tui/src/app.rs")
+    done = _run_in(repo, tmp_path, with_screen(GOOD), "--diff-base", base)
+    assert done.returncode == 0, done.stdout
+    assert "has to show a screen" in done.stdout
+
+
+def test_the_cli_passes_a_change_outside_the_interface(tmp_path):
+    repo, base = _repo_with_change(tmp_path, "crates/core/src/lib.rs")
+    done = _run_in(repo, tmp_path, GOOD, "--diff-base", base)
+    assert done.returncode == 0, done.stdout
+    assert "No interface file changed" in done.stdout
+
+
+def test_the_cli_says_so_when_the_project_declares_no_interface(tmp_path):
+    repo, base = _repo_with_change(tmp_path, "crates/tui/src/app.rs")
+    done = _run_in(repo, tmp_path, GOOD, "--diff-base", base, profile="default")
+    assert done.returncode == 0, done.stdout
+    assert "no uiPaths" in done.stdout
+
+
+def test_an_unresolvable_base_stops_rather_than_passing_quietly(tmp_path):
+    """Silently skipping the rule when the ref is wrong is how it would come to
+    be skipped every time."""
+    repo, _ = _repo_with_change(tmp_path, "crates/tui/src/app.rs")
+    done = _run_in(repo, tmp_path, GOOD, "--diff-base", "no/such/ref")
+    assert done.returncode == 2
+    assert "cannot diff against" in done.stdout
 
 
 def test_cli_reads_stdin():
@@ -510,6 +690,17 @@ def test_the_shipped_template_passes_its_own_checker(checker):
     assert "1. Open the settings pane" in body, "step placeholder no longer matches"
 
 
+def test_the_template_alone_cannot_satisfy_the_screen_rule(checker):
+    """Deliberate, and the one place the template is allowed to fail its own
+    checker: the screen has to come from a real run. A fenced placeholder here
+    would let a body pass showing a screen the product never drew."""
+    doc = _doc("workflow-committed.md")
+    start = doc.index("cat > /tmp/pr-body-<story-id>.md <<'EOF'\n")
+    template = doc[start : doc.index("\nEOF", start)]
+    errors, _ = checker.check(template, ui_paths_changed=TUI)
+    assert any("shows no screen" in e for e in errors), errors
+
+
 def test_the_shipped_template_leads_with_steps_not_a_test(checker):
     """The template is what the bot copies. If its Reproduce block is a bare
     test command again, every PR it produces loses the human reproduction."""
@@ -539,3 +730,51 @@ def test_the_spec_doc_teaches_the_rules_the_checker_errors_on(checker):
 def test_the_spec_doc_is_pointed_at_from_the_pr_creating_workflow():
     assert "pr-descriptions.md" in _doc("workflow-committed.md")
     assert "check-pr-body.py" in _doc("workflow-committed.md")
+
+
+def test_the_spec_doc_says_how_to_capture_a_terminal_screen():
+    """The error message sends the author to this heading. A rule with nowhere
+    to read the recipe is a rule that gets satisfied by a made-up screen."""
+    doc = _doc("pr-descriptions.md")
+    assert "## Showing a terminal screen" in doc.replace("###", "##")
+    assert "terminal-screenshot.py" in doc
+    assert "--cols" in doc, "the doc never says the size has to match the capture"
+
+
+def test_the_error_message_names_a_heading_the_doc_has():
+    """Written out separately because a heading rename is exactly the change
+    that would leave the error pointing at nothing."""
+    named = "Showing a terminal screen"
+    mod = _load()
+    errors, _ = mod.check(GOOD, ui_paths_changed=TUI)
+    assert any(named in e for e in errors), errors
+    assert f"### {named}" in _doc("pr-descriptions.md")
+
+
+def test_the_workflow_tells_the_agent_to_pass_the_diff_base():
+    """Without the flag the checker cannot see the diff and every body passes,
+    so the template omitting it would turn the rule off everywhere."""
+    assert "--diff-base" in _doc("workflow-committed.md")
+    assert "--diff-base" in _doc("git-repository.md")
+
+
+def test_both_shipped_templates_hold_a_slot_for_the_screen():
+    """The bot fills a template rather than reading the doc, so a slot missing
+    from either copy is a body with no screen and an error the agent then has
+    to work out how to fix."""
+    for name in ("workflow-committed.md", "git-repository.md"):
+        assert "terminal-screenshot.py" in _doc(name), name
+
+
+def test_the_capture_recipe_is_in_the_projects_own_doc():
+    """`terminal-screenshot.py` replays a capture; it cannot make one. What
+    drives the interface is the project's, and the profile doc is where the
+    workflow says to look for it."""
+    path = os.path.join(
+        DOCS_DIR, os.pardir, "projects", "bravebot", "docs", "testing.md"
+    )
+    with open(path, encoding="utf-8") as fh:
+        doc = fh.read()
+    assert "drive_tui.py" in doc
+    assert "--raw" in doc, "the recipe must take the untouched capture"
+    assert "terminal-screenshot.py" in doc

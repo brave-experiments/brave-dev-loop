@@ -21,6 +21,7 @@ projects/<name>/
 | `testSteps` | Templates for `testFix`, `disabledTest`, and `generic` stories. `{testBinary}` and `{testFilter}` are substituted. |
 | `labels` | Project labels: `pr` (applied to bot PRs), `disabledTest` (marks an issue as a disabled test), and `axes` (the label prefix that spells each triage axis, so the backlog can be ordered by them — see [Backlog order](../docs/workflow-state-machine.md#backlog-order-the-three-triage-axes)). `labels.disabledTestLabel` in `config.json` is honoured as a fallback. |
 | `testTargets` | Maps a suite (`unit`, `browser`) and a location to a test binary. `local` is a test defined in the target repo, `upstream` one inherited from the surrounding checkout. |
+| `uiPaths` | Repo-relative paths whose changes a person can look at. A change under one of them has to show the screen it produces, and `check-pr-body.py --diff-base` errors when the body shows none — see [Showing a terminal screen](../docs/pr-descriptions.md#showing-a-terminal-screen). A path with no `*`, `?` or `[` matches everything beneath it. Omit the key for a project with no interface, and no screen is asked for. |
 
 **`schedules.sh`** holds this project's cron jobs — see [Schedules](#schedules).
 

@@ -188,6 +188,13 @@ This is a follow-up task from PR #[original-pr-number] which fixed [original-sto
 
 [If applicable: Why this follow-up is necessary]
 
+[If the follow-up concerns anything a person can look at, paste the screen as it
+renders today in a fenced block, from a real run — for a full-screen terminal
+program capture the raw bytes and replay them with
+$BOT_DIR/scripts/terminal-screenshot.py, since its output is not its screen. The
+person who picks this up has not seen what you saw, and a screen tells them in
+one glance what a paragraph tells them badly.]
+
 ## Acceptance Criteria
 - [ ] [Specific requirement 1]
 - [ ] [Specific requirement 2]

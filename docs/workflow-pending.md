@@ -589,12 +589,31 @@ Only update CLAUDE.md if you have **genuinely reusable knowledge** that would he
 
 See **[docs/learnable-patterns.md](./learnable-patterns.md)** for the complete guide on identifying and capturing reusable patterns, including how to use `progress.txt` for lightweight patterns and when to create documentation PRs.
 
-## Browser Testing (If Available)
+## Looking at what you changed
 
-For any story that changes UI, verify it works in the browser if you have browser testing tools configured (e.g., via MCP):
+For any story that changes the interface, run the product and look at it. Then
+keep what you looked at: the PR body has to show the screen, and a screen
+captured now is one you do not have to go back and reproduce later (see
+[pr-descriptions.md](./pr-descriptions.md#showing-a-terminal-screen)).
 
-1. Navigate to the relevant page
-2. Verify the UI changes work as expected
-3. Take a screenshot if helpful for the progress log
+**A terminal interface.** Its output is not its screen — it draws by moving the
+cursor, so redirecting its bytes to a file and stripping the escape sequences
+gives run-together nonsense. Drive it, capture the raw bytes, and replay them:
 
-If no browser tools are available, note in your progress report that manual browser verification is needed.
+```bash
+python3 $BOT_DIR/scripts/terminal-screenshot.py /tmp/capture.txt --cols 100 --rows 30 --strict
+```
+
+`--cols` and `--rows` must match the terminal the capture was taken at. Whatever
+drives the interface is the project's own; the profile's `docs/testing.md` gives
+the recipe. Capture one screen per state a person would have to be told about —
+before and after where the difference is the point, and each step where the
+change is a sequence.
+
+**A browser interface.** Navigate to the page, check the change works, and
+screenshot it if you have browser tools configured (e.g. via MCP). Note in the
+progress report when you do not, because then a person has to look for you.
+
+Never reconstruct a screen from the code. A plausible-looking screen that the
+product does not actually draw is worse than no screen, because a reviewer will
+believe it.

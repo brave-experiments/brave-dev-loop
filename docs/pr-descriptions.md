@@ -146,6 +146,49 @@ The second one is shorter, is checkable against the diff, and answers questions
 the prose did not think to answer. The same applies to a new key on a prompt:
 show the row of keys as it now renders, not a sentence claiming a key was added.
 
+### Showing a terminal screen
+
+A full-screen program is the hard case, because its output is not its screen. It
+draws by moving the cursor and overwriting cells, so the bytes it wrote hold
+every value a cell ever had. Redirecting them to a file and stripping the escape
+sequences gives a wall of run-together words — `Filesherewillbereadastrusted` —
+which is worse than no screenshot, because it looks like evidence.
+
+Replay them instead. `scripts/terminal-screenshot.py` feeds a raw capture to a
+grid and prints the screen that grid ended up holding:
+
+```sh
+<whatever drives the interface> --raw /tmp/capture.txt   # the untouched bytes
+python3 scripts/terminal-screenshot.py /tmp/capture.txt --cols 100 --rows 30 --strict
+```
+
+`--cols` and `--rows` have to match the terminal the capture was taken at, since
+the program laid every frame out against that size; wrong ones give a screen
+that is wrong in a way that still looks plausible. `--strict` fails rather than
+print a screen holding a sequence the replay does not model. Use it: a screen
+nobody can trust costs a reviewer more than an honest paragraph. Whatever drives
+the interface is the project's own — the profile's `docs/testing.md` names it.
+
+Then paste the output in a fenced block above the test plan. No image: text goes
+in a body with no hosting, survives copy-and-paste, and can be searched, diffed
+and quoted, which is most of what a reviewer wants to do with it.
+
+**One screen per thing a person would have to be told.** A body showing the
+after and describing the before has described the half that matters. Where the
+change is a sequence — a prompt, the answer, what the answer led to — show each
+step; three fenced blocks cost nothing against any budget here and replace the
+paragraph that was going to try to narrate them. Trim each block to the rows
+that carry the difference.
+
+The checker decides this from the diff, not from the body: when a change touches
+a path the profile lists under `uiPaths`, a body with no screen above the test
+plan is an error, and nothing written in the body opts out of it. Pass
+`--diff-base <ref>` from the project worktree:
+
+```sh
+python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md --diff-base upstream/main
+```
+
 ### Never cite shorthand a reviewer cannot resolve
 
 `RUN-19`, `SEC-4`, `US-088`, `ADR-11` — a bare id names a document the reviewer
@@ -266,12 +309,18 @@ follow, and the cause before any identifier appears.
 ```sh
 python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md
 python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md --test-only-change
+python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md --diff-base upstream/main
 python3 scripts/check-pr-body.py --pr 214 --repo <owner>/<repo>   # after the fact
 ```
 
 `--test-only-change` is for a diff that touches only tests: it drops the
 warning about reproducing by test invocation alone. Passing it for a change a
 user can see defeats the point of the section.
+
+`--diff-base` runs in the project worktree and reads the changed paths itself,
+which is how the screen rule is decided — see [Showing a terminal
+screen](#showing-a-terminal-screen). Pass it on every run: without it the
+checker cannot see the diff, and a body that shows nothing passes.
 
 Errors exit non-zero and must be fixed before the PR is created. Warnings are
 printed and do not fail — read them, they are the slop and reproduction

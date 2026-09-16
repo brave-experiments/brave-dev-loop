@@ -167,7 +167,8 @@ command is the evidence under them, not the reproduction:
 
 **Example:**
 ```bash
-python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body.md   # must pass first
+python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body.md \
+  --diff-base <the ref this worktree was branched from>   # must pass first, from the worktree
 
 gh pr create --draft --title "the pr title" \
   --label "<each label the profile's rules give you>" \
@@ -188,6 +189,12 @@ and what you expected; the test you added last, on one line>
 
 ## The fix
 <2-5 sentences: what the code now does differently, and why that fixes the symptom>
+
+<the thing itself in a fenced block, from a real run: the screen as it now renders,
+the file the product now writes, the output that is now different — one block per
+thing a person would otherwise have to be told. Required when the diff touches a
+path the profile lists under uiPaths. For a full-screen terminal program, capture a
+raw run and replay it with $BOT_DIR/scripts/terminal-screenshot.py>
 
 ## Test plan
 <checkboxes, one per command actually run; "- [ ] CI passes cleanly" last and unchecked>
