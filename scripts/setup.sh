@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-commit"
 PUSH_HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-push"
+CHECKOUT_HOOK_SOURCE="$PROJECT_ROOT/hooks/post-checkout"
 CONFIG_FILE="$PROJECT_ROOT/config.json"
 
 source "$SCRIPT_DIR/lib/git-identity.sh"
@@ -734,6 +735,9 @@ if [ "$SKIP_GIT" = false ]; then
     fi
     if repo_install_hook "$GIT_REPO" "$PUSH_HOOK_SOURCE" pre-push "$GIT_USER"; then
       echo "  ✓ Pre-push hook installed (blocks a push whose commits are not $GIT_USER's)"
+    fi
+    if repo_install_hook "$GIT_REPO" "$CHECKOUT_HOOK_SOURCE" post-checkout "$GIT_USER"; then
+      echo "  ✓ Post-checkout hook installed (gives a new worktree the main checkout's .envrc)"
     fi
   fi
   echo ""

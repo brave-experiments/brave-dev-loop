@@ -84,8 +84,10 @@ broken tool.
 | Comparison branch | local only — never pushed |
 
 `logs/` is gitignored. The worktree and its branch are **left in place on
-purpose**: inspecting the gold-standard attempt is most of the value. Remove one
-when you are done with it:
+purpose**: inspecting the gold-standard attempt is most of the value. The
+worktree collection `run.sh` does leaves it alone for the same reason it leaves
+any unpushed work alone — a comparison branch is never pushed, so no remote has
+its commits. Remove one when you are done with it:
 
 ```bash
 git -C <target repo> worktree remove <path>

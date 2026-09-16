@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bring data/prd.json up to date with GitHub. Both syncs are plain Python
+# Bring data/prd.json up to date with GitHub. Every step here is plain Python
 # against the API — no agent is started, so this costs no tokens.
 #
 # The backlog sync appends stories for newly assigned issues and never touches
@@ -34,4 +34,11 @@ python3 "$SCRIPT_DIR/add-backlog-to-prd.py" || echo "WARNING: issue sync failed 
 if [ "$BOT_PRD_MODE" = "auto" ]; then
   python3 "$SCRIPT_DIR/sync-bot-prs-to-prd.py" || echo "WARNING: PR sync failed — continuing with the cached PRD." >&2
   python3 "$SCRIPT_DIR/sync-merged-prs-to-prd.py" || echo "WARNING: merged-PR sync failed — continuing with the cached PRD." >&2
+  # Last, so the stories the merged sync just retired go too. A cached PRD is
+  # rebuilt from GitHub every run, so a finished story left in it is only
+  # something for the selector to filter and a reader to scroll past; the two
+  # syncs above read prd.archived.json as well, and will not re-add work that
+  # moved there. A curated PRD is the operator's list and is archived on the
+  # operator's say-so — `make archive-prd`.
+  python3 "$SCRIPT_DIR/archive-prd.py" "$PRD_FILE" || echo "WARNING: archiving finished stories failed — continuing with the cached PRD." >&2
 fi

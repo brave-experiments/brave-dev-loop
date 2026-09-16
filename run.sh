@@ -375,6 +375,15 @@ story_next_step() {
 
 cleanup_run() {
   stop_title_watch
+
+  # Hand back the worktrees this session finished with, before the claim goes:
+  # a run interrupted mid-iteration still holds one, and that claim is what
+  # keeps clean-worktrees.py out of the worktree the agent was working in. No
+  # age limit here — a session that has ended is done with all of them.
+  if [ "$BOT_PROFILE_WORKTREES" = true ]; then
+    python3 "$SCRIPT_DIR/scripts/clean-worktrees.py" >/dev/null || true
+  fi
+
   release_claim
   bot_slot_meta_clear
   bot_release_lock
@@ -460,6 +469,18 @@ echo "Resetting run state for fresh start..."
 # the second simply skips a refresh the first has just done.
 if [ "$BOT_PRD_MODE" = "auto" ]; then
   "$SCRIPT_DIR/scripts/with-lock.sh" prd-sync --timeout 900 -- "$SCRIPT_DIR/scripts/sync-prd.sh"
+fi
+
+# Collect the worktrees of finished work before starting any. Each one carries a
+# build directory of several gigabytes, and a run that is killed leaves its
+# worktree behind, so they accumulate until the disk fills. A day is the age
+# limit here: another run may be mid-iteration in a worktree it created minutes
+# ago, and while clean-worktrees.py checks that too — a live run's claim, or
+# work no remote has — the age bound means a fresh worktree is never a
+# candidate in the first place. Python and git only; nothing here costs tokens.
+if [ "$BOT_PROFILE_WORKTREES" = true ]; then
+  python3 "$SCRIPT_DIR/scripts/clean-worktrees.py" --max-age-hours 24 >/dev/null \
+    || echo "WARNING: worktree cleanup failed — continuing." >&2
 fi
 
 # Track both loop count (for max iterations) and work iterations (actual state changes)
