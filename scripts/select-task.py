@@ -28,6 +28,11 @@ from lib import slots, triage
 from lib.load_config import build_research, load_config, load_profile
 from lib.prd_store import bot_dir_for, load_prd, prd_lock, save_prd
 
+# Nothing is ever selected in these: the story is finished with. "merged" is one
+# of them because a merged PR is done — the loop does not revisit it, and
+# archive-prd.py moves it out of the PRD entirely.
+TERMINAL_STATUSES = ("merged", "skipped", "invalid")
+
 TIER_URGENT = 1  # pushed + lastActivityBy == "reviewer"
 TIER_HIGH = 2  # committed
 # 2.5 (float) is used only as an *effective* sort tier to reserve the first
@@ -37,8 +42,7 @@ TIER_PENDING_RESERVED = 2.5
 TIER_STALE = 3  # pushed + lastActivityBy != "reviewer" + not checked in >1 day
 TIER_NORMAL = 4  # pending
 TIER_MEDIUM = 5  # pushed + lastActivityBy != "reviewer" + checked within last day
-TIER_LOW = 6  # merged (needs recheck)
-TIER_QUARANTINE = 7  # pending that has been retried >= MAX_PENDING_ATTEMPTS times
+TIER_QUARANTINE = 6  # pending that has been retried >= MAX_PENDING_ATTEMPTS times
 
 TIER_NAMES = {
     TIER_URGENT: "URGENT",
@@ -46,7 +50,6 @@ TIER_NAMES = {
     TIER_STALE: "STALE",
     TIER_NORMAL: "NORMAL",
     TIER_MEDIUM: "MEDIUM",
-    TIER_LOW: "LOW",
     TIER_QUARANTINE: "QUARANTINE",
 }
 
@@ -131,8 +134,6 @@ def assign_tier(story, now=None):
         if pending_attempts(story) >= MAX_PENDING_ATTEMPTS:
             return TIER_QUARANTINE
         return TIER_NORMAL
-    elif status == "merged":
-        return TIER_LOW
     # Shouldn't reach here after filtering, but default to NORMAL
     return TIER_NORMAL
 
@@ -144,18 +145,17 @@ def sort_key(story, now=None, promote_pending=False):
     five are numeric so stories are never compared across incompatible types.
 
     - Pushed stories (tiers 1, 3, 5): sort by lastProcessedDate asc, then priority
-    - Merged stories (tier 6): sort by nextMergedCheck asc, then priority
     - Pending stories: sort by the story's triage axes (see scripts/lib/triage.py),
       then by attempt count asc (fresh work before what keeps getting retried),
       then priority
     - Other stories: sort by priority only
 
-    Only pending work ranks on the axes. Pushed and merged maintenance keeps its
-    round-robin by date: those queues exist so that every open PR is looked at
-    in turn, and ordering them by importance would leave the least important PR
-    waiting for review forever. Both slots hold the neutral value there, which
-    is also what a pending story with no axes at all gets, so a backlog nobody
-    has labelled sorts exactly as it did before the axes existed.
+    Only pending work ranks on the axes. Pushed maintenance keeps its round-robin
+    by date: that queue exists so that every open PR is looked at in turn, and
+    ordering it by importance would leave the least important PR waiting for
+    review forever. Both slots hold the neutral value there, which is also what a
+    pending story with no axes at all gets, so a backlog nobody has labelled
+    sorts exactly as it did before the axes existed.
 
     When ``promote_pending`` is True, un-quarantined pending work is lifted just
     above STALE/MEDIUM pushed-maintenance (but still below URGENT reviewer
@@ -179,8 +179,6 @@ def sort_key(story, now=None, promote_pending=False):
 
     if status == "pushed":
         secondary = parse_iso(story.get("lastProcessedDate")).timestamp()
-    elif status == "merged":
-        secondary = parse_iso(story.get("nextMergedCheck")).timestamp()
     elif status == "pending":
         secondary = float(pending_attempts(story))
     else:
@@ -198,9 +196,6 @@ def filter_stories(stories, run_state, claimed=None):
     checked = set(run_state.get("storiesCheckedThisRun", []))
     claimed = set(claimed or ())
     skip_pushed = run_state.get("skipPushedTasks", False)
-    enable_merge_backoff = run_state.get("enableMergeBackoff", True)
-    merge_backoff_ids = run_state.get("mergeBackoffStoryIds")
-    now = datetime.now(timezone.utc)
 
     candidates = []
     for story in stories:
@@ -208,24 +203,10 @@ def filter_stories(stories, run_state, claimed=None):
         status = story.get("status", "pending")
 
         # Filter 2.1: Terminal status exclusion
-        if status in ("skipped", "invalid"):
-            continue
-        if status == "merged" and story.get("mergedCheckFinalState") is True:
+        if status in TERMINAL_STATUSES:
             continue
 
-        # Filter 2.2: Merged story backoff filtering
-        if status == "merged":
-            if not enable_merge_backoff:
-                continue
-            if merge_backoff_ids and sid not in merge_backoff_ids:
-                continue
-            next_check = story.get("nextMergedCheck")
-            if next_check:
-                next_check_dt = parse_iso(next_check)
-                if next_check_dt > now:
-                    continue
-
-        # Filter 2.3: Run state filtering
+        # Filter 2.2: Run state filtering
         if sid in checked:
             continue
         if sid in claimed:
@@ -435,11 +416,8 @@ def _select_locked(args, prd_path, run_state_path, bot_dir):
         all_active = [
             s
             for s in stories
-            if s.get("status") not in ("skipped", "invalid")
+            if s.get("status") not in TERMINAL_STATUSES
             and s.get("id") not in claimed_elsewhere
-            and not (
-                s.get("status") == "merged" and s.get("mergedCheckFinalState") is True
-            )
         ]
         llm_choice = llm_select(
             all_active, args.extra_prompt, claude_bin=args.claude_bin

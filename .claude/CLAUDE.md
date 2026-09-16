@@ -26,8 +26,9 @@ This documentation is split into focused files for better performance. Read only
 - **[docs/workflow-pending.md](../docs/workflow-pending.md)** - Status: "pending" (development and implementation)
 - **[docs/workflow-committed.md](../docs/workflow-committed.md)** - Status: "committed" (push branch and create PR)
 - **[docs/workflow-pushed.md](../docs/workflow-pushed.md)** - Status: "pushed" (handle reviews, merge, 24hr reminders)
-- **[docs/workflow-merged.md](../docs/workflow-merged.md)** - Status: "merged" (post-merge monitoring)
 - **[docs/workflow-skipped-invalid.md](../docs/workflow-skipped-invalid.md)** - Status: "skipped" and "invalid"
+
+`merged` is terminal — no workflow, and no story in it is ever selected.
 
 ### Project-Specific Rules
 - **projects/<profile>/docs/** - Rules that apply to this project only (build commands, test targets, upstream test handling). The profile is `project.profile` in the bot config; the prompt gives the path. Where a workflow doc says a step is project-specific, read the named file there.

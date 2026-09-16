@@ -116,28 +116,6 @@ difference between finishing a story and starting it again.
 ## [Date/Time] - [Story ID] - Status: pushed → merged
 - PR #[pr-number] merged successfully
 - Final approvals: [list of approvers]
-- Post-merge monitoring initialized: First check in 1 day
-- **Resume command:** `claude -r <session-id>`
----
-```
-
-## For status: "merged" (post-merge check)
-
-```
-## [Date/Time] - [Story ID] - Status: merged (post-merge check #[N])
-- Checked PR #[pr-number] for post-merge follow-up comments
-- Comments found since merge: [count]
-- New comments from org members: [list usernames or "none"]
-- Follow-up work needed: [Yes/No]
-- [If yes: Created follow-up work:
-  - Story US-XXX: "[title]" (GitHub issue #YYYY - [issue URL])
-    - Replied to @[username] on PR with issue link
-  - Story US-ZZZ: "[title]" (GitHub issue #WWWW - [issue URL])
-    - Replied to @[username] on PR with issue link
-]
-- [If no: No follow-up action required]
-- Next check scheduled: [timestamp] ([interval] from now)
-- [Or if final: "Post-merge monitoring complete - reached final state"]
 - **Resume command:** `claude -r <session-id>`
 ---
 ```

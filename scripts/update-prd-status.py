@@ -20,13 +20,13 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.load_config import load_config, require_config
 from lib.prd_store import prd_lock
 
-TERMINAL_STATUSES = {"skipped", "invalid"}
+TERMINAL_STATUSES = {"merged", "skipped", "invalid"}
 
 # Subcommands that represent a state change (for run-state.json tracking)
 STATUS_CHANGE_SUBCOMMANDS = {"committed", "pushed", "merged", "skipped", "invalid"}
@@ -44,7 +44,6 @@ VALID_CURRENT_STATUSES = {
     "set-ping": {"pushed"},
     "set-escalation": {"pushed"},
     "set-branch": {"pending", "committed"},
-    "merged-check": {"merged"},
     "fix-status": None,  # any -> valid status
 }
 
@@ -111,13 +110,6 @@ def validate_transition(subcommand, story):
             f"expected one of {sorted(allowed)}"
         )
 
-    if subcommand == "merged-check":
-        if story.get("mergedCheckFinalState") is True:
-            return (
-                f"Cannot run merged-check on {story_id}: "
-                f"mergedCheckFinalState is already true"
-            )
-
     return None
 
 
@@ -174,19 +166,11 @@ def handle_pushed(story, args):
 
 def handle_merged(story, args):
     now = now_iso()
-    now_dt = datetime.now(timezone.utc)
-    next_check = (now_dt + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     changes = {}
     story["status"] = "merged"
     changes["status"] = "merged"
     story["mergedAt"] = now
     changes["mergedAt"] = now
-    story["nextMergedCheck"] = next_check
-    changes["nextMergedCheck"] = next_check
-    story["mergedCheckCount"] = 0
-    changes["mergedCheckCount"] = 0
-    story["mergedCheckFinalState"] = False
-    changes["mergedCheckFinalState"] = False
     return changes
 
 
@@ -244,39 +228,6 @@ def handle_set_branch(story, args):
     return changes
 
 
-def handle_merged_check(story, args):
-    """Increment mergedCheckCount and recalculate nextMergedCheck.
-
-    Backoff schedule (based on current count before increment):
-      count 0 -> next in 2 days
-      count 1 -> next in 4 days
-      count 2 -> next in 8 days
-      count >= 3 -> final state (no more checks)
-    """
-    count = story.get("mergedCheckCount", 0)
-    now_dt = datetime.now(timezone.utc)
-    changes = {}
-
-    intervals = {0: 2, 1: 4, 2: 8}
-
-    if count >= 3:
-        story["mergedCheckFinalState"] = True
-        changes["mergedCheckFinalState"] = True
-        story["nextMergedCheck"] = None
-        changes["nextMergedCheck"] = None
-    else:
-        days = intervals[count]
-        next_check = (now_dt + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        story["nextMergedCheck"] = next_check
-        changes["nextMergedCheck"] = next_check
-
-    new_count = count + 1
-    story["mergedCheckCount"] = new_count
-    changes["mergedCheckCount"] = new_count
-
-    return changes
-
-
 def handle_fix_status(story, args):
     old_status = story.get("status", "unknown")
     if old_status in VALID_STATUSES:
@@ -303,7 +254,6 @@ HANDLER_MAP = {
     "set-ping": handle_set_ping,
     "set-escalation": handle_set_escalation,
     "set-branch": handle_set_branch,
-    "merged-check": handle_merged_check,
     "fix-status": handle_fix_status,
 }
 
@@ -366,9 +316,6 @@ def main():
     p = sub.add_parser("set-branch", help="Set branchName")
     p.add_argument("story_id")
     p.add_argument("--branch", required=True)
-
-    p = sub.add_parser("merged-check", help="Post-merge check update")
-    p.add_argument("story_id")
 
     p = sub.add_parser("fix-status", help="Fix invalid status to a valid one")
     p.add_argument("story_id")

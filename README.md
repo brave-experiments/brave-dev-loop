@@ -19,7 +19,7 @@ Each iteration picks a single story and acts on its status:
 | `pending` | implement, test, commit | `committed` |
 | `committed` | push branch, open PR | `pushed` |
 | `pushed` | merge if ready, otherwise address review feedback | `merged` / `pushed` |
-| `merged` | watch for CI breakage and flakes | terminal |
+| `merged` | nothing — terminal | terminal |
 
 Stories are chosen reviewer-first, so a PR with a waiting reviewer is always
 handled before new development starts. Every `pushed` PR is re-checked for

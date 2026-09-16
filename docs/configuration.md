@@ -70,8 +70,6 @@ Agent instructions defining workflow, testing requirements, git operations, secu
 | `runId` | Timestamp when this run started (auto-set) |
 | `storiesCheckedThisRun` | Story IDs already processed in this run |
 | `skipPushedTasks` | Skip all "pushed" PRs, only work on new development |
-| `enableMergeBackoff` | Enable post-merge monitoring (default: true) |
-| `mergeBackoffStoryIds` | Array of specific merged story IDs to check, or null for all |
 | `lastIterationHadStateChange` | Tracks if work was done last iteration |
 
 ## Archiving
