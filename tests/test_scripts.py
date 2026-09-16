@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 from argparse import Namespace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
@@ -97,14 +97,14 @@ class TestUpdatePrdValidation:
         )
 
     def test_skipped_allowed_from_any_active(self, update_prd_status):
-        for status in ("pending", "committed", "pushed", "merged"):
+        for status in ("pending", "committed", "pushed"):
             assert (
                 update_prd_status.validate_transition("skipped", make_story(status))
                 is None
             )
 
     def test_skipped_rejected_from_terminal(self, update_prd_status):
-        for status in ("skipped", "invalid"):
+        for status in ("merged", "skipped", "invalid"):
             assert (
                 update_prd_status.validate_transition("skipped", make_story(status))
                 is not None
@@ -140,9 +140,12 @@ class TestUpdatePrdValidation:
             is not None
         )
 
-    def test_merged_check_rejects_final_state(self, update_prd_status):
-        story = make_story("merged", mergedCheckFinalState=True)
-        assert update_prd_status.validate_transition("merged-check", story) is not None
+    def test_merged_is_terminal(self, update_prd_status):
+        """A merged story is finished with: nothing may move it anywhere."""
+        story = make_story("merged")
+        assert update_prd_status.validate_transition("skipped", story) is not None
+        assert update_prd_status.validate_transition("invalid", story) is not None
+        assert update_prd_status.validate_transition("merged", story) is not None
 
 
 class TestUpdatePrdHandlers:
@@ -166,9 +169,7 @@ class TestUpdatePrdHandlers:
         update_prd_status.handle_merged(story, Namespace())
         assert story["status"] == "merged"
         assert story["mergedAt"] is not None
-        assert story["nextMergedCheck"] is not None
-        assert story["mergedCheckCount"] == 0
-        assert story["mergedCheckFinalState"] is False
+        assert "nextMergedCheck" not in story
 
     def test_skipped(self, update_prd_status):
         story = make_story("pending")
@@ -197,22 +198,6 @@ class TestUpdatePrdHandlers:
         update_prd_status.handle_set_branch(story, Namespace(branch="fix-new"))
         assert story["branchName"] == "fix-new"
 
-    def test_merged_check_full_backoff(self, update_prd_status):
-        """Verify backoff: count 0->1->2->3->4(final)."""
-        story = make_story("merged", mergedCheckCount=0, mergedCheckFinalState=False)
-        args = Namespace()
-
-        for expected_count in (1, 2, 3):
-            update_prd_status.handle_merged_check(story, args)
-            assert story["mergedCheckCount"] == expected_count
-            assert story["mergedCheckFinalState"] is False
-            assert story["nextMergedCheck"] is not None
-
-        update_prd_status.handle_merged_check(story, args)
-        assert story["mergedCheckCount"] == 4
-        assert story["mergedCheckFinalState"] is True
-        assert story["nextMergedCheck"] is None
-
 
 class TestUpdatePrdStateChange:
     def test_status_transitions_are_state_changes(self, update_prd_status):
@@ -232,7 +217,7 @@ class TestUpdatePrdStateChange:
         )
 
     def test_non_status_commands_not_state_changes(self, update_prd_status):
-        for cmd in ("set-ping", "set-branch", "merged-check"):
+        for cmd in ("set-ping", "set-branch"):
             assert update_prd_status.is_state_change(cmd, Namespace()) is False
 
 
@@ -381,27 +366,17 @@ class TestSelectTaskTiers:
     def test_pending_is_normal(self, select_task):
         assert select_task.assign_tier(make_story("pending")) == select_task.TIER_NORMAL
 
-    def test_merged_is_low(self, select_task):
-        assert select_task.assign_tier(make_story("merged")) == select_task.TIER_LOW
-
 
 class TestSelectTaskFilter:
-    def test_excludes_skipped_and_invalid(self, select_task):
+    def test_excludes_terminal_statuses(self, select_task):
         stories = [
             make_story("skipped", id="US-001"),
             make_story("invalid", id="US-002"),
-            make_story("pending", id="US-003"),
+            make_story("merged", id="US-003"),
+            make_story("pending", id="US-004"),
         ]
         result = select_task.filter_stories(stories, empty_run_state())
-        assert [s["id"] for s in result] == ["US-003"]
-
-    def test_excludes_merged_final_state(self, select_task):
-        stories = [
-            make_story("merged", id="US-001", mergedCheckFinalState=True),
-            make_story("pending", id="US-002"),
-        ]
-        result = select_task.filter_stories(stories, empty_run_state())
-        assert [s["id"] for s in result] == ["US-002"]
+        assert [s["id"] for s in result] == ["US-004"]
 
     def test_excludes_already_checked(self, select_task):
         stories = [
@@ -422,39 +397,6 @@ class TestSelectTaskFilter:
             stories, empty_run_state(skipPushedTasks=True)
         )
         assert [s["id"] for s in result] == ["US-002"]
-
-    def test_merged_excluded_when_backoff_disabled(self, select_task):
-        stories = [
-            make_story("merged", id="US-001", mergedCheckFinalState=False),
-            make_story("pending", id="US-002"),
-        ]
-        result = select_task.filter_stories(
-            stories, empty_run_state(enableMergeBackoff=False)
-        )
-        assert [s["id"] for s in result] == ["US-002"]
-
-    def test_merged_backoff_not_due(self, select_task):
-        future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
-        stories = [
-            make_story(
-                "merged",
-                id="US-001",
-                mergedCheckFinalState=False,
-                nextMergedCheck=future,
-            )
-        ]
-        assert select_task.filter_stories(stories, empty_run_state()) == []
-
-    def test_merged_backoff_due(self, select_task):
-        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        stories = [
-            make_story(
-                "merged", id="US-001", mergedCheckFinalState=False, nextMergedCheck=past
-            )
-        ]
-        assert [
-            s["id"] for s in select_task.filter_stories(stories, empty_run_state())
-        ] == ["US-001"]
 
 
 class TestSelectTaskSortKey:
@@ -1408,7 +1350,7 @@ class TestSyncMergedRetire:
         self, sync_merged_prs, update_prd_status
     ):
         # A story retired here has to be indistinguishable from one an agent
-        # retired, or the post-merge workflow reads a half-populated story.
+        # retired, or the archive reads a half-populated story.
         by_script = make_story(status="pushed", prNumber=11)
         sync_merged_prs.retire(by_script, "2026-09-11T15:10:11Z")
         by_agent = make_story(status="pushed", prNumber=11)
@@ -1426,18 +1368,6 @@ class TestSyncMergedRetire:
         sync_merged_prs.retire(story, None)
         assert story["status"] == "merged"
         assert story["mergedAt"]
-
-    def test_monitoring_starts_a_day_from_discovery_not_from_the_merge(
-        self, sync_merged_prs
-    ):
-        # A PR merged last week has not been watched for a week; dating the
-        # first check from the merge would leave it permanently overdue.
-        story = make_story(status="pushed")
-        sync_merged_prs.retire(story, "2026-09-01T00:00:00Z")
-        due = datetime.strptime(story["nextMergedCheck"], "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
-        assert due > datetime.now(timezone.utc)
 
 
 class TestSyncMergedWorktreeLookup:

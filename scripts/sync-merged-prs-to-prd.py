@@ -26,7 +26,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
@@ -108,19 +108,10 @@ def retire(story, merged_at):
 
     The fields match `update-prd-status.py merged` so a story retired here is
     indistinguishable from one an iteration retired. ``mergedAt`` is the real
-    merge time rather than now, because it is a fact about the PR — but the
-    first post-merge check is scheduled a day from *discovery*, since a PR
-    merged last week has not been watched for a week and starting its
-    monitoring in the past would just make it immediately overdue.
+    merge time rather than now, because it is a fact about the PR.
     """
-    next_check = (datetime.now(timezone.utc) + timedelta(days=1)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
     story["status"] = "merged"
     story["mergedAt"] = merged_at or now_iso()
-    story["nextMergedCheck"] = next_check
-    story["mergedCheckCount"] = 0
-    story["mergedCheckFinalState"] = False
 
 
 def story_worktrees(repo, branches):

@@ -218,7 +218,7 @@ A maintainer merged the PR. Do the post-merge bookkeeping:
 
 4. **Clean up the story's worktree**, where the project profile's `docs/repo.md` uses one — this is the point at which it is no longer needed. Follow the removal steps in that doc; do not force past uncommitted changes.
 
-- **DONE** - Story complete (will be rechecked on post-merge schedule)
+- **DONE** - Story complete. `merged` is terminal: nothing looks at this PR again.
 
 ## Step 2: If NOT Ready to Merge, Check for Review Comments
 

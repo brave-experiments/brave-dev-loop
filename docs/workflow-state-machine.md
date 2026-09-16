@@ -97,12 +97,14 @@ Execute the workflow based on the story's current status:
    - **"pending"**: See [workflow-pending.md](./workflow-pending.md)
    - **"committed"**: See [workflow-committed.md](./workflow-committed.md)
    - **"pushed"**: See [workflow-pushed.md](./workflow-pushed.md)
-   - **"merged"**: See [workflow-merged.md](./workflow-merged.md)
    - **"skipped"** or **"invalid"**: See [workflow-skipped-invalid.md](./workflow-skipped-invalid.md)
+
+`merged` has no workflow. A merged PR is finished with: the story is never
+selected again, and `make archive-prd` moves it to `data/prd.archived.json`.
 
 ## Task Selection (Handled by Script)
 
-Task selection is handled deterministically by `scripts/select-task.py` — the selected story is provided in the prompt. See [run-state-management.md](./run-state-management.md) for configuration options (skip pushed tasks, merge backoff, etc.).
+Task selection is handled deterministically by `scripts/select-task.py` — the selected story is provided in the prompt. See [run-state-management.md](./run-state-management.md) for configuration options (skip pushed tasks, etc.).
 
 ## Backlog Order: the Three Triage Axes
 

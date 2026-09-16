@@ -23,7 +23,7 @@ To manually start a fresh run (useful when you want to re-check all pushed PRs o
 $BOT_DIR/scripts/reset-run-state.sh
 ```
 
-This resets the iteration state (`runId` and `storiesCheckedThisRun`) while **preserving** configuration settings (`skipPushedTasks`, `enableMergeBackoff`, `mergeBackoffStoryIds`). This allows all stories to be checked again without losing your configuration preferences.
+This resets the iteration state (`runId` and `storiesCheckedThisRun`) while **preserving** the configuration setting (`skipPushedTasks`). This allows all stories to be checked again without losing your configuration preferences.
 
 ## Prioritize Specific Tasks
 
@@ -53,56 +53,3 @@ jq '.skipPushedTasks = true' data/run-state.json > tmp.$$.json && mv tmp.$$.json
 # Resume checking pushed tasks (normal mode)
 jq '.skipPushedTasks = false' data/run-state.json > tmp.$$.json && mv tmp.$$.json data/run-state.json
 ```
-
-## Post-Merge Checking Configuration
-
-Control whether the bot performs post-merge monitoring with exponential backoff using configuration in `run-state.json`:
-
-**Configuration Fields (PRESERVED across run resets):**
-
-```json
-{
-  "runId": "...",
-  "storiesCheckedThisRun": [...],
-  "skipPushedTasks": false,
-  "enableMergeBackoff": true,
-  "mergeBackoffStoryIds": null
-}
-```
-
-**Fields:**
-- `enableMergeBackoff` (boolean): Enable/disable post-merge monitoring for all merged stories
-  - `true` (default): Bot will check merged PRs on exponential backoff schedule
-  - `false`: Skip all post-merge checking, treat merged stories as final immediately
-- `mergeBackoffStoryIds` (array of strings or null): Restrict post-merge checking to specific stories
-  - `null` (default): Check all merged stories that need rechecking
-  - `["US-012"]`: Only check this specific story, skip all other merged stories
-  - `["US-012", "US-013"]`: Only check these specific stories, skip all others
-
-**Important:** These configuration values are NOT reset when `runId` becomes `null` or when `storiesCheckedThisRun` is cleared. They persist across runs as configuration preferences.
-
-**Usage Examples:**
-
-```bash
-# Disable all post-merge checking temporarily
-jq '.enableMergeBackoff = false' data/run-state.json > tmp.$$.json && mv tmp.$$.json data/run-state.json
-
-# Re-enable post-merge checking
-jq '.enableMergeBackoff = true' data/run-state.json > tmp.$$.json && mv tmp.$$.json data/run-state.json
-
-# Only check specific merged stories (useful for debugging)
-jq '.mergeBackoffStoryIds = ["US-012"]' data/run-state.json > tmp.$$.json && mv tmp.$$.json data/run-state.json
-jq '.mergeBackoffStoryIds = ["US-012", "US-013"]' data/run-state.json > tmp.$$.json && mv tmp.$$.json data/run-state.json
-
-# Resume checking all merged stories
-jq '.mergeBackoffStoryIds = null' data/run-state.json > tmp.$$.json && mv tmp.$$.json data/run-state.json
-```
-
-**During Task Selection:**
-
-When selecting merged stories for post-merge checking, apply these filters:
-1. If `enableMergeBackoff` is `false`, skip all post-merge checking entirely
-2. If `mergeBackoffStoryIds` is an array (not `null`), only check stories whose IDs are in that array
-3. Otherwise (if `mergeBackoffStoryIds` is `null`), check all merged stories that have `nextMergedCheck` in the past
-
-This allows fine-grained control over post-merge monitoring without affecting the main workflow.

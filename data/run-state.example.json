@@ -2,15 +2,11 @@
   "runId": null,
   "storiesCheckedThisRun": [],
   "skipPushedTasks": false,
-  "enableMergeBackoff": true,
-  "mergeBackoffStoryIds": null,
   "notes": [
     "This file tracks iteration state within a single run",
     "runId: Timestamp when this run started (null = needs initialization)",
     "storiesCheckedThisRun: Story IDs that have been processed in this run",
-    "skipPushedTasks: Set to true to skip all 'pushed' status tasks and only work on new development",
-    "enableMergeBackoff: Set to false to disable all post-merge monitoring (default: true)",
-    "mergeBackoffStoryIds: Array of story IDs to check (e.g., ['US-012', 'US-013']), or null to check all merged stories"
+    "skipPushedTasks: Set to true to skip all 'pushed' status tasks and only work on new development"
   ],
   "lastIterationHadStateChange": false,
   "currentIterationLogPath": null

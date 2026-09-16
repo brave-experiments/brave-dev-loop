@@ -9,10 +9,10 @@
 #   ./scripts/reset-run-state.sh --slot 2 --config-from data/run-state.json
 #
 # Iteration state (runId, storiesCheckedThisRun, ...) is per run slot, so each
-# slot gets its own file. The operator settings (skipPushedTasks,
-# enableMergeBackoff, mergeBackoffStoryIds) are not per-slot: they are read
-# from --config-from, which defaults to the file being reset, so a fresh slot
-# file inherits what data/run-state.json says instead of silently defaulting.
+# slot gets its own file. The operator setting skipPushedTasks is not per-slot:
+# it is read from --config-from, which defaults to the file being reset, so a
+# fresh slot file inherits what data/run-state.json says instead of silently
+# defaulting.
 
 set -e
 
@@ -51,7 +51,7 @@ mkdir -p "$(dirname "$RUN_STATE_FILE")"
 # settings from, so this runs under a lock and writes by rename. Truncating in
 # place let a slot starting at the same moment read an empty file — and `jq`
 # on an empty file exits 0 printing nothing, so the fallbacks below did not
-# fire and the reset wrote `"enableMergeBackoff": ,` — invalid JSON that broke
+# fire and the reset wrote `"skipPushedTasks": ,` — invalid JSON that broke
 # the run that read it next.
 STATE_LOCK="$(dirname "$RUN_STATE_FILE")/.run-state.lock"
 if ! bot_acquire_lock_wait "$STATE_LOCK" 60; then
@@ -64,27 +64,19 @@ trap bot_release_lock EXIT INT TERM HUP
 # rather than writing a broken file.
 # `//` yields its right side when the left is null *or false*, so reading a
 # boolean with it turns an explicit `false` back into the default — which is
-# how `enableMergeBackoff: false` used to un-set itself on the next run.
+# how a `false` setting used to un-set itself on the next run.
 SKIP_PUSHED=$(jq -r 'if .skipPushedTasks == null then false else .skipPushedTasks end' "$CONFIG_FROM" 2>/dev/null || echo "")
-ENABLE_MERGE_BACKOFF=$(jq -r 'if .enableMergeBackoff == null then true else .enableMergeBackoff end' "$CONFIG_FROM" 2>/dev/null || echo "")
-MERGE_BACKOFF_STORY_IDS=$(jq -c '.mergeBackoffStoryIds // null' "$CONFIG_FROM" 2>/dev/null || echo "")
 SKIP_PUSHED="${SKIP_PUSHED:-false}"
-ENABLE_MERGE_BACKOFF="${ENABLE_MERGE_BACKOFF:-true}"
-MERGE_BACKOFF_STORY_IDS="${MERGE_BACKOFF_STORY_IDS:-null}"
 
 # Build with jq so a bad value fails here instead of producing a file that
 # only breaks later, and install by rename so no reader sees a partial file.
 TMP_STATE=$(mktemp "$(dirname "$RUN_STATE_FILE")/.run-state.XXXXXX")
 if ! jq -n \
   --argjson skipPushed "$SKIP_PUSHED" \
-  --argjson enableMergeBackoff "$ENABLE_MERGE_BACKOFF" \
-  --argjson mergeBackoffStoryIds "$MERGE_BACKOFF_STORY_IDS" \
   '{
     runId: null,
     storiesCheckedThisRun: [],
     skipPushedTasks: $skipPushed,
-    enableMergeBackoff: $enableMergeBackoff,
-    mergeBackoffStoryIds: $mergeBackoffStoryIds,
     notes: [
       "This file tracks iteration state within a single run",
       "runId: Timestamp when this run started (null = needs initialization)",
@@ -104,7 +96,5 @@ say "✓ Run state reset successfully"
 say "  - runId: null (will be initialized on next iteration)"
 say "  - storiesCheckedThisRun: [] (empty)"
 say "  - skipPushedTasks: $SKIP_PUSHED (from $(basename "$CONFIG_FROM"))"
-say "  - enableMergeBackoff: $ENABLE_MERGE_BACKOFF (from $(basename "$CONFIG_FROM"))"
-say "  - mergeBackoffStoryIds: $MERGE_BACKOFF_STORY_IDS (from $(basename "$CONFIG_FROM"))"
 say ""
 say "Next iteration will start a fresh run and can check all stories again."

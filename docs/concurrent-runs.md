@@ -40,10 +40,9 @@ run you started by hand now coexist instead of one of them exiting.
 
 Slot 1 deliberately keeps the paths it always had.
 
-Operator settings — `skipPushedTasks`, `enableMergeBackoff`,
-`mergeBackoffStoryIds` — are **not** per slot. They are read from
+The operator setting `skipPushedTasks` is **not** per slot. It is read from
 `data/run-state.json` and copied into each slot's file at run start, so
-setting them in one place still configures every slot.
+setting it in one place still configures every slot.
 
 ## Knowing what is running
 

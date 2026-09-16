@@ -366,7 +366,7 @@ story_next_step() {
     pending)   printf '%s' "implement and test the fix, then commit" ;;
     committed) printf '%s' "push the branch and open the PR" ;;
     pushed)    printf '%s' "check CI and reviews, address feedback, wait for the maintainer to merge" ;;
-    merged)    printf '%s' "post-merge check for follow-up requests" ;;
+    merged)    printf '%s' "nothing — the PR landed and the story is done" ;;
     skipped)   printf '%s' "nothing — intentionally skipped" ;;
     invalid)   printf '%s' "nothing — closed as invalid" ;;
     *)         printf '%s' "follow docs/workflow-$1.md" ;;
