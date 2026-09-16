@@ -421,7 +421,10 @@ def test_a_published_standard_is_not_shorthand(checker, text):
 
 def test_an_id_in_the_test_plan_is_left_alone(checker):
     """A test name or a job id in the plan is a thing to run, not a citation."""
-    body = GOOD.replace("- [ ] CI passes cleanly", "- [x] `ctest -R SPEC-19` - passed\n- [ ] CI passes cleanly")
+    body = GOOD.replace(
+        "- [ ] CI passes cleanly",
+        "- [x] `ctest -R SPEC-19` - passed\n- [ ] CI passes cleanly",
+    )
     errors, _ = checker.check(body)
     assert errors == []
 

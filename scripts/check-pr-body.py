@@ -201,9 +201,7 @@ def bare_ids(text):
     as a link. Link text is dropped first, so a linked id does not count."""
     prose = strip_fences(MD_LINK.sub("", text))
     found = [
-        m.group(0)
-        for m in BARE_ID.finditer(prose)
-        if m.group(1) not in PUBLISHED_IDS
+        m.group(0) for m in BARE_ID.finditer(prose) if m.group(1) not in PUBLISHED_IDS
     ]
     return sorted(set(found))
 
