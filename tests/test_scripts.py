@@ -3619,7 +3619,7 @@ class TestProjectSchedules:
 
     def test_bravebot_runs_twenty_iterations_daily(self, tmp_dir):
         (job,) = self._jobs(self._render(tmp_dir, "bravebot"))
-        assert job.startswith("30 9 * * * ")
+        assert job.startswith("0 1 * * * ")
         assert "./run.sh 20 " in job
 
     def test_bravebot_does_not_share_an_hour_with_brave_core(self, tmp_dir):

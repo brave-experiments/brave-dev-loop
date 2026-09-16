@@ -10,6 +10,6 @@
 echo ""
 echo "# Main agent run — skip if no actionable stories"
 echo "# Gate check runs before git sync to avoid wasted fetches"
-echo "# Daily: one run of 20 iterations"
-bot_cron_job "30 9 * * *" "./scripts/check-has-work.sh" \
+echo "# Daily: one run of 20 iterations, overnight"
+bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
   "./scripts/sync-target-repo.sh && ./run.sh 20" "run-cron.log"

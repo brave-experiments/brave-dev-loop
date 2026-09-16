@@ -59,7 +59,7 @@ Each file prints crontab lines, built with the helpers in
 `scripts/lib/cron-jobs.sh`:
 
 ```sh
-bot_cron_job "30 9 * * *" "./scripts/check-has-work.sh" \
+bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
   "./scripts/sync-target-repo.sh && ./run.sh 20" "run-cron.log"
 ```
 
