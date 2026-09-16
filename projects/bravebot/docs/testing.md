@@ -127,6 +127,53 @@ Two Docker specifics worth knowing before you spend twelve minutes:
   mount source is your own worktree and not another slot's, then recover the result
   with `docker logs -f <name>` and `docker wait <name>` instead of starting over.
 
+## Screenshotting the interface
+
+The interface is `crates/tui`, which the profile lists under `uiPaths`: a change
+there has to show the screen it produces, or `check-pr-body.py --diff-base
+upstream/main` fails. See
+[pr-descriptions.md](../../../docs/pr-descriptions.md#showing-a-terminal-screen)
+for what the body needs.
+
+`contrib/drive_tui.py` in the target repo runs a scripted session against a real
+pty. Its `--raw` capture is the untouched bytes, which is what to replay — its
+own default output has the escape sequences stripped, and that is not a screen.
+
+A script is one step per line: a timeout in seconds, a space, then the keys.
+
+```sh
+WORK=$(pwd)          # the story worktree: ../bravebot-<issue-number>
+cargo build
+
+mkdir -p /tmp/shot/work /tmp/shot/home
+printf '%s\n' '8 y' '10 !ls -1\r' > /tmp/shot/session.txt
+
+cd /tmp/shot/work    # or wherever the change is visible
+HOME=/tmp/shot/home python3 "$WORK/contrib/drive_tui.py" \
+  /tmp/shot/session.txt --raw /tmp/shot/raw.txt --cols 100 --rows 30 \
+  -- "$WORK/target/debug/bravebot" > /dev/null
+
+python3 "$BOT_DIR/scripts/terminal-screenshot.py" /tmp/shot/raw.txt \
+  --cols 100 --rows 30 --strict
+```
+
+The `--cols`/`--rows` given to the two commands have to match, since the
+interface measures the terminal once at startup and lays every frame out against
+that size. 100x30 fits a PR body without wrapping.
+
+`HOME` is redirected because a scripted session is a real one: without it the run
+writes to `~/.bravebot/sessions` and picks up whatever is configured there, so
+the screen would be yours rather than a reader's. Nothing else is needed for a
+screen the model is not part of — a trust prompt, a `!` shell command, a slash
+command, an error. A screen that needs a reply needs a backend:
+`BRAVE_AI_CHAT_ENDPOINT` pointed at a local
+[aichat](https://github.com/brave/aichat). `contrib/README.md` has the rest.
+
+`--strict` exits non-zero rather than print a screen holding a sequence the
+replay does not model. Keep it: the interface emits nothing it cannot account
+for, so a failure means the capture is unusual and the screen should not be
+trusted.
+
 ## Upstream tests
 
 There is no upstream to inherit tests from. Every test in the repo is ours, so

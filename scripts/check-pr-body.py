@@ -7,6 +7,7 @@ a reproduction a person can follow rather than only a test to run, a closing
 line that will actually close the issue, and no machine-generated filler.
 
     python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md
+    python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md --diff-base upstream/main
     python3 scripts/check-pr-body.py --pr 214 --repo brave/bravebot
     gh pr view 214 --json body -q .body | python3 scripts/check-pr-body.py
 
@@ -16,9 +17,14 @@ reproduces, whether the problem statement is true -- is still the author's.
 """
 
 import argparse
+import fnmatch
+import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.load_config import load_config, load_profile
 
 # The four required sections, in order. Matched case-insensitively, and the
 # older headings each one replaced are accepted as aliases so a body written
@@ -152,6 +158,13 @@ SYMBOL_BUDGET = 3
 # "none" is one word and answers nothing. Three is enough for "none, spec only".
 IMPACT_REASON_WORDS = 3
 
+# How many non-blank lines a fenced block needs before it counts as a screen
+# rather than a command. A reproduction nearly always carries a one-line command,
+# so counting any fence at all would let a body that shows nothing satisfy the
+# rule -- and a rule already satisfied is a rule nobody obeys. Three lines is the
+# least that can carry the shape of a screen rather than a line of output.
+MIN_SCREEN_LINES = 3
+
 
 def strip_fences(text):
     """Drop fenced code blocks, keeping line count stable is not needed here."""
@@ -284,8 +297,13 @@ def words(text):
     return len(re.findall(r"\b[\w'-]+\b", text))
 
 
-def check(body, require_closes=True, test_only_change=False):
-    """Return (errors, warnings) as lists of strings."""
+def check(body, require_closes=True, test_only_change=False, ui_paths_changed=()):
+    """Return (errors, warnings) as lists of strings.
+
+    `ui_paths_changed` is the changed files this project calls user interface,
+    which main() works out from the diff rather than from anything the body
+    says. When it is non-empty the body has to show a screen.
+    """
     errors, warnings = [], []
     body = body.replace("\r\n", "\n")
     if not body.strip():
@@ -480,6 +498,26 @@ def check(body, require_closes=True, test_only_change=False):
             "of the screen, file or output that this change makes different, not all of it"
         )
 
+    # ── A change a person can look at shows what they would see ─────────────
+    if ui_paths_changed:
+        screens = [
+            block
+            for block in fenced_blocks(before_test_plan(visible))
+            if len([ln for ln in block if ln.strip()]) >= MIN_SCREEN_LINES
+        ]
+        if not screens:
+            named = ", ".join(sorted(ui_paths_changed)[:3])
+            more = len(ui_paths_changed) - 3
+            errors.append(
+                f"this diff changes the interface ({named}"
+                + (f" and {more} more" if more > 0 else "")
+                + ") but the body shows no screen. Paste the screen as it renders, "
+                "in a fenced block, above the test plan -- the before, the after, or "
+                "both where the difference is the point. Capture it from a real run "
+                "rather than reconstructing it: see docs/pr-descriptions.md, "
+                "'Showing a terminal screen'"
+            )
+
     # ── Shorthand a reviewer cannot resolve ─────────────────────────────────
     cited = bare_ids(before_test_plan(visible))
     if cited:
@@ -496,6 +534,46 @@ def check(body, require_closes=True, test_only_change=False):
         )
 
     return errors, warnings
+
+
+def profile_ui_paths():
+    """The path patterns this project calls user interface, from its profile.
+
+    Declared per project because only the project knows: `crates/tui/` for
+    bravebot, and nothing at all for a project with no interface to show. An
+    empty list means the screen rule cannot fire, which is the right answer
+    there rather than a guess that fires on the wrong directories.
+    """
+    return load_profile(load_config()).get("uiPaths", [])
+
+
+def changed_since(base):
+    """The files this branch changes against `base`, or None if git cannot say."""
+    done = subprocess.run(
+        ["git", "diff", "--name-only", f"{base}...HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode != 0:
+        sys.stderr.write(done.stderr)
+        return None
+    return [line.strip() for line in done.stdout.splitlines() if line.strip()]
+
+
+def matching(paths, patterns):
+    """The paths a pattern claims. A pattern with no glob character matches any
+    path beneath it, so `crates/tui/` need not be written `crates/tui/*`."""
+    hit = []
+    for path in paths:
+        for pattern in patterns:
+            if any(char in pattern for char in "*?["):
+                claimed = fnmatch.fnmatch(path, pattern)
+            else:
+                claimed = path.startswith(pattern)
+            if claimed:
+                hit.append(path)
+                break
+    return hit
 
 
 def fetch_body(pr, repo):
@@ -529,7 +607,34 @@ def main():
         help="the diff touches only tests, so the test invocation is the whole "
         "reproduction; do not ask for user-facing steps",
     )
+    ap.add_argument(
+        "--diff-base",
+        help="the ref this branch is measured against, e.g. upstream/main. Run "
+        "from the project worktree: when the diff touches the interface, the "
+        "body has to show the screen. Nothing in the body can opt out of that",
+    )
     args = ap.parse_args()
+
+    ui_paths_changed = ()
+    if args.diff_base:
+        changed = changed_since(args.diff_base)
+        if changed is None:
+            print(
+                f"error: cannot diff against {args.diff_base}. Run this from the "
+                "project worktree, or fetch the ref first."
+            )
+            return 2
+        patterns = profile_ui_paths()
+        ui_paths_changed = matching(changed, patterns)
+        if not patterns:
+            print("This project declares no uiPaths, so no screen is asked for.")
+        elif ui_paths_changed:
+            print(
+                f"{len(ui_paths_changed)} interface file(s) changed, "
+                "so this body has to show a screen."
+            )
+        else:
+            print("No interface file changed, so no screen is asked for.")
 
     if args.pr:
         body = fetch_body(args.pr, args.repo)
@@ -543,6 +648,7 @@ def main():
         body,
         require_closes=not args.no_closes,
         test_only_change=args.test_only_change,
+        ui_paths_changed=ui_paths_changed,
     )
 
     for w in warnings:

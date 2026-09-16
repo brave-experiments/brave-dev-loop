@@ -97,8 +97,16 @@ clause, story or ticket id: say the rule in English, or link the id to the claus
 [Then show it, if there is anything to look at: the screen as it now renders, the
 file the product now writes, the output that is now different — pasted from a real
 run into a fenced block, trimmed to the part that changed. Code blocks count
-against no budget, so this is free and a paragraph describing it is not. Delete
-this slot only when the change is invisible.]
+against no budget, so this is free and a paragraph describing it is not. Use one
+block per thing a person would otherwise have to be told: the before and the after
+where the difference is the point, and each step where the change is a sequence.
+Delete this slot only when the change is invisible.
+
+For a full-screen terminal program its output is not its screen, so capture a raw
+run and replay it with $BOT_DIR/scripts/terminal-screenshot.py rather than pasting
+redirected output — the profile's docs/testing.md gives the recipe. When the diff
+touches a path the profile lists under uiPaths the checker requires a screen here,
+and nothing written in the body opts out of it.]
 
 [If the project inherits tests from an upstream: see the project profile's `docs/testing.md` for the extra PR-body fields it requires here.]
 
@@ -107,10 +115,12 @@ this slot only when the change is invisible.]
 - [ ] CI passes cleanly
 EOF
 
-python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
+python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md \
+  --diff-base <the ref this worktree was branched from; the profile's docs/repo.md names it>
 ````
 
-   **The checker must pass before you create the PR.** Errors are structural —
+   **The checker must pass before you create the PR.** Run it from the story
+   worktree, so `--diff-base` can see the diff. Errors are structural —
    fix them. Warnings are the filler and reproduction heuristics; read each one
    and fix it unless you can say why it is wrong. Anything that genuinely needs
    depth (a table, a benchmark, a long root-cause chain, an upstream citation)

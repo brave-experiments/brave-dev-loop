@@ -139,4 +139,10 @@ When reviewing closed or merged PRs and a violation is found:
    ```bash
    gh issue create --repo $PR_REPO --title "Fix: <brief description>" --body "Found during post-merge review of PR #<NUMBER>. <description>"
    ```
+   Where the finding is something a person can look at, show it rather than
+   describe it: paste the screen as it renders today in a fenced block. For a
+   full-screen terminal program its output is not its screen, so capture a raw
+   run and replay it with `scripts/terminal-screenshot.py` — see
+   [pr-descriptions.md](../../../docs/pr-descriptions.md#showing-a-terminal-screen).
+   Whoever fixes this has not seen the screen you found it on.
 4. **Reference the new issue** back in the PR comment.
