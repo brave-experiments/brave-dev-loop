@@ -1,4 +1,4 @@
-.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree
+.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree unmount-worktrees
 
 # Prefer .venv when it exists so no target needs an activated shell. PEP 668
 # interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
@@ -111,6 +111,27 @@ worktree:
 	@dir=$$(python3 scripts/worktree-for-pr.py $(if $(PR),"$(PR)")) || exit $$?; \
 	 echo "--> $$dir" >&2; \
 	 cd "$$dir" && { $(or $(USER_SHELL),/bin/sh) -i || true; }
+
+# Remove the target repository's story worktrees and the directories they live
+# in -- the `../<repo>-<issue>` checkouts a worktree profile leaves behind, each
+# one carrying a build directory of a few gigabytes:
+#
+#   make unmount-worktrees          # every one idle for over 24 hours
+#   make unmount-worktrees ALL=1    # every one, whatever it holds
+#   make unmount-worktrees DRY_RUN=1
+#
+# The default is the pass run.sh makes at the start of a run, so it keeps what
+# that keeps: anything used in the last day, and anything holding work no remote
+# has. ALL=1 drops both -- for emptying the directory rather than collecting
+# after a run. Uncommitted changes are what that loses and it names each one as
+# it goes; the branches are the repository's, not the worktrees', so unpushed
+# commits survive and `git checkout <branch>` still finds them.
+#
+# Either way a worktree a live run claims, or one git has locked, stays: pulling
+# the directory out from under a running session breaks it. No model is involved.
+unmount-worktrees:
+	@python3 scripts/clean-worktrees.py \
+	  $(if $(ALL),--all,--max-age-hours 24) $(if $(DRY_RUN),--dry-run) >/dev/null
 
 # Clean up generated/temporary files
 clean:

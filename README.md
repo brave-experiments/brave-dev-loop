@@ -82,9 +82,17 @@ pointed at a local build, since it has no config keys of its own.
 tail -f data/progress.txt        # watch progress
 make schedules                   # install/update this project's cron jobs
 make view-schedules              # show the current schedule
+make unmount-worktrees           # remove idle story worktrees (ALL=1 for all)
 ./scripts/reset-run-state.sh     # reset run state between runs
 ./scripts/reset-run.sh --stale   # clear slots left behind by a killed run
 ```
+
+Story worktrees are collected by every run, so `make unmount-worktrees` is for
+reclaiming the disk now — the `../<repo>-<issue>` checkouts and their build
+directories, a few gigabytes each. It removes the ones idle for over 24 hours;
+`ALL=1` removes every one whatever it holds, and `DRY_RUN=1` only reports. See
+[Worktrees between runs](docs/configuration.md#worktrees-between-runs) for what
+that can lose (uncommitted changes, and nothing else) and what is kept regardless.
 
 To look at what a pull request actually did, open a shell in the worktree that
 holds its branch:

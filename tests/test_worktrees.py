@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -104,6 +105,18 @@ def add_worktree(repo, name, branch=None):
         args += ["--detach"]
     git(*args, cwd=repo)
     return path
+
+
+def backdate(repo, worktree, hours):
+    """Make a worktree look untouched for `hours`.
+
+    Both halves of what idleness is read from: the `.git` file `worktree add`
+    wrote, and the administrative directory every later git command writes into.
+    """
+    when = time.time() - hours * 3600
+    admin = repo / ".git" / "worktrees" / worktree.name
+    for path in [worktree / ".git", admin, *admin.iterdir()]:
+        os.utime(path, (when, when))
 
 
 def install_post_checkout(repo, user=BOT_USER):
@@ -310,21 +323,142 @@ def test_max_age_hours_keeps_a_worktree_added_just_now(repo, bot_dir):
 
     assert report["removed"] == []
     assert worktree.exists()
-    assert report["kept"][0]["reason"] == "it was added too recently"
+    assert report["kept"][0]["reason"] == "it was used too recently"
 
 
 def test_max_age_hours_collects_one_that_is_old_enough(repo, bot_dir):
     worktree = add_worktree(repo, "repo-133", branch="fix-133")
     git("push", "-q", "origin", "fix-133", cwd=worktree)
     git("fetch", "-q", "origin", cwd=repo)
-    marker = worktree / ".git"
-    two_days_ago = os.path.getmtime(marker) - 2 * 24 * 3600
-    os.utime(marker, (two_days_ago, two_days_ago))
+    backdate(repo, worktree, hours=48)
 
     report = clean(repo, bot_dir, "--max-age-hours", "24")
 
     assert report["removed"] == [str(worktree)]
     assert not worktree.exists()
+
+
+def test_max_age_hours_keeps_an_old_worktree_git_just_ran_in(repo, bot_dir):
+    """A long-lived story's worktree, between two of its iterations.
+
+    Days old, pushed, nothing uncommitted and no claim held: every other check
+    would let it go, and the run that is still working in it would lose the tree
+    it built. Age is measured from the last git command, not from `worktree add`.
+    """
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    git("push", "-q", "origin", "fix-133", cwd=worktree)
+    git("fetch", "-q", "origin", cwd=repo)
+    backdate(repo, worktree, hours=48)
+    git("status", "--porcelain", cwd=worktree)
+
+    report = clean(repo, bot_dir, "--max-age-hours", "24")
+
+    assert report["removed"] == []
+    assert worktree.exists()
+
+
+def test_looking_at_a_worktree_does_not_count_as_using_it(repo, bot_dir):
+    """The pass at the start of every run must not make the next one a no-op.
+
+    Deciding whether a worktree holds work means running git in it, and git
+    leaves a lock file behind in the worktree's administrative directory as it
+    goes. Count that and one run of this script marks every worktree as busy for
+    the next day, so the 24-hour pass would never collect anything again.
+    """
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    git("push", "-q", "origin", "fix-133", cwd=worktree)
+    git("fetch", "-q", "origin", cwd=repo)
+    backdate(repo, worktree, hours=48)
+
+    first = clean(repo, bot_dir, "--max-age-hours", "24", "--dry-run")
+    second = clean(repo, bot_dir, "--max-age-hours", "24", "--dry-run")
+
+    assert first["removed"] == [str(worktree)]
+    assert second["removed"] == [str(worktree)]
+
+
+def test_all_takes_a_worktree_holding_uncommitted_changes(repo, bot_dir):
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    git("push", "-q", "origin", "fix-133", cwd=worktree)
+    git("fetch", "-q", "origin", cwd=repo)
+    (worktree / "scratch.txt").write_text("half a fix\n")
+
+    report = clean(repo, bot_dir, "--all")
+
+    assert report["removed"] == [str(worktree)]
+    assert not worktree.exists()
+    assert "uncommitted changes" in report["lostWork"][0]["reason"]
+    assert report["lostWork"][0]["branch"] == "fix-133"
+
+
+def test_all_takes_a_recently_used_worktree(repo, bot_dir):
+    """--all is for emptying the directory, so the age floor does not apply."""
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    git("push", "-q", "origin", "fix-133", cwd=worktree)
+    git("fetch", "-q", "origin", cwd=repo)
+
+    report = clean(repo, bot_dir, "--all", "--max-age-hours", "24")
+
+    assert report["removed"] == [str(worktree)]
+    assert not worktree.exists()
+
+
+def test_all_keeps_the_unpushed_commits_it_removes_the_worktree_for(repo, bot_dir):
+    """What --all can lose is uncommitted changes, and only those.
+
+    A branch belongs to the repository rather than to the worktree checked out
+    on it, so commits no remote has are still there afterwards.
+    """
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    (worktree / "fix.txt").write_text("the fix\n")
+    git("add", "fix.txt", cwd=worktree)
+    git("commit", "-qm", "the fix", cwd=worktree)
+    head = git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+
+    report = clean(repo, bot_dir, "--all")
+
+    assert report["removed"] == [str(worktree)]
+    assert not worktree.exists()
+    assert git("rev-parse", "fix-133", cwd=repo).stdout.strip() == head
+
+
+def test_all_still_keeps_a_worktree_a_live_run_claims(repo, bot_dir, live_run):
+    """Deleting the directory under a running session breaks it, all or not."""
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    git("push", "-q", "origin", "fix-133", cwd=worktree)
+    git("fetch", "-q", "origin", cwd=repo)
+    prd = bot_dir / "data" / "prd.json"
+    prd.write_text(
+        json.dumps(
+            {
+                "stories": [
+                    {
+                        "id": "US-001",
+                        "description": "Resolve issue #133",
+                        "status": "pending",
+                    }
+                ]
+            }
+        )
+    )
+    slot, pid = live_run
+    assert claims_lib.claim(str(bot_dir), "US-001", slot=slot, pid=pid)
+
+    report = clean(repo, bot_dir, "--all")
+
+    assert report["removed"] == []
+    assert worktree.exists()
+
+
+def test_all_still_keeps_a_worktree_git_has_locked(repo, bot_dir):
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    git("worktree", "lock", str(worktree), cwd=repo)
+
+    report = clean(repo, bot_dir, "--all")
+
+    assert report["removed"] == []
+    assert worktree.exists()
+    assert report["kept"][0]["reason"] == "git has it locked"
 
 
 def test_dry_run_reports_without_removing(repo, bot_dir):

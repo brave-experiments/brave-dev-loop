@@ -121,7 +121,9 @@ claims. A story whose worktree it removed reuses its branch from
 So leave the directory where it is. Do not remove one to tidy up, and do not
 `--force` past a `worktree remove` that refuses because the tree is dirty: those
 changes are the reason it refused. A stale directory is cheap and something else
-collects it; a lost branch is not.
+collects it; a lost branch is not. `make unmount-worktrees` empties the whole
+directory and belongs to whoever is watching the disk, not to a story: every
+other story's worktree is in its scope too.
 
 ## Package managers
 
