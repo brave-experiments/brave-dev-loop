@@ -1,18 +1,26 @@
 .PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run
 
+# Prefer .venv when it exists so no target needs an activated shell. PEP 668
+# interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
+# a venv is the usual outcome of `make setup` -- but a system pytest/ruff still
+# works, hence the fallback rather than a hard dependency.
+VENV := $(CURDIR)/.venv
+PYTHON := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python3)
+RUFF := $(if $(wildcard $(VENV)/bin/ruff),$(VENV)/bin/ruff,ruff)
+
 # Run the test suite
 test:
-	python3 -m pytest tests/ -v
+	$(PYTHON) -m pytest tests/ -v
 
 # Lint Python files (check only)
 lint:
-	ruff check .
-	ruff format --check .
+	$(RUFF) check .
+	$(RUFF) format --check .
 
 # Lint and auto-fix Python files
 format:
-	ruff check --fix .
-	ruff format .
+	$(RUFF) check --fix .
+	$(RUFF) format .
 
 # The whole local pass, in one target. The security scan is the only one of the
 # three that anything runs for us -- there are no workflows in this repository,
