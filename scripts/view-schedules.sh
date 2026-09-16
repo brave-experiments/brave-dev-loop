@@ -1,16 +1,18 @@
 #!/bin/bash
-# Display a human-readable summary of brave-dev-loop scheduled tasks
-# Parses sync-schedules.sh to show what runs when
+# Display a human-readable summary of this project's scheduled tasks.
+#
+# Reads the block sync-schedules.sh would install rather than the script that
+# installs it: the jobs live in projects/<profile>/schedules.sh, and rendering
+# them is the only way to know which file this deployment uses and what the
+# lines in it come out as.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCHEDULE_FILE="$SCRIPT_DIR/sync-schedules.sh"
+source "$SCRIPT_DIR/lib/load-config.sh"
 
-if [ ! -f "$SCHEDULE_FILE" ]; then
-  echo "Error: sync-schedules.sh not found at $SCHEDULE_FILE" >&2
-  exit 1
-fi
+BLOCK=$("$SCRIPT_DIR/sync-schedules.sh" --print)
+SCHEDULE_FILE=$(sed -n 's/^# Jobs: //p' <<< "$BLOCK")
 
 # Colors (disable if not a terminal)
 if [ -t 1 ]; then
@@ -64,29 +66,18 @@ cron_to_human() {
   echo "${freq_part}${time_part:+ $time_part}"
 }
 
-echo -e "${BOLD}Brave Dev Loop Scheduled Tasks${RESET}"
-echo -e "${DIM}Source: scripts/sync-schedules.sh${RESET}"
+echo -e "${BOLD}Scheduled Tasks — $BOT_PROJECT_NAME${RESET}"
+echo -e "${DIM}Source: ${SCHEDULE_FILE:-projects/default/schedules.sh}${RESET}"
 echo ""
 
-in_cron=false
 comment=""
 gate=""
 
 while IFS= read -r line; do
-  # Detect start/end of cron block
-  if [[ "$line" == *'CRON_JOBS=$(cat <<EOF'* ]]; then
-    in_cron=true
-    continue
-  fi
-  if [[ "$line" == "EOF" ]] && $in_cron; then
-    break
-  fi
-  if ! $in_cron; then
-    continue
-  fi
-
-  # Skip boilerplate lines
-  if [[ "$line" =~ ^(SHELL|PATH)= ]] || [[ "$line" == *"do not edit"* ]] || [[ "$line" == *"=== brave-dev-loop"* ]] || [[ "$line" == *"=== end brave-dev-loop"* ]]; then
+  # Skip the block's own header: markers, the managed-by note, the jobs file,
+  # and the environment the jobs run under.
+  if [[ "$line" =~ ^(SHELL|PATH)= ]] || [[ "$line" == "# === "* ]] ||
+     [[ "$line" == *"do not edit"* ]] || [[ "$line" == "# Jobs: "* ]]; then
     continue
   fi
 
@@ -159,17 +150,18 @@ while IFS= read -r line; do
 
   comment=""
   gate=""
-done < "$SCHEDULE_FILE"
+done <<< "$BLOCK"
 
 # Show currently running jobs
 # Detect via two methods:
 # 1. Lock files (with-lock.sh jobs) — try flock; if we can't acquire, it's held
 # 2. Process scan (run.sh) — run.sh releases its lock before children finish,
 #    so we look for timeout-tree.sh processes spawned from the bot directory
-BOT_DIR="$SCRIPT_DIR/.."
-BOT_DIR_ABS="$(cd "$BOT_DIR" && pwd)"
+BOT_DIR_ABS="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOCK_DIR="$BOT_DIR_ABS/.ignore"
-LOCK_NAMES=("add-backlog" "review-prs" "learnable-pattern-search" "check-signal" "update-best-practices")
+# The locks this project's jobs actually take, read off the block itself — a
+# project that does not run a job has no lock for it to report on.
+mapfile -t LOCK_NAMES < <(grep -o 'with-lock\.sh [a-z-]*' <<< "$BLOCK" | awk '{print $2}' | sort -u)
 
 has_running=false
 

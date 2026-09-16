@@ -80,11 +80,16 @@ pointed at a local build, since it has no config keys of its own.
 
 ```bash
 tail -f data/progress.txt        # watch progress
-make schedules                   # install/update cron jobs
+make schedules                   # install/update this project's cron jobs
 make view-schedules              # show the current schedule
 ./scripts/reset-run-state.sh     # reset run state between runs
 ./scripts/reset-run.sh --stale   # clear slots left behind by a killed run
 ```
+
+Scheduled jobs are per-project: `make schedules` installs one crontab block for
+the project in `config.json` and leaves any other deployment's block alone, and
+what goes in it comes from `projects/<profile>/schedules.sh` — see
+[Project profiles](projects/README.md#schedules).
 
 Several runs can share one bot directory — set `bot.maxConcurrentRuns` and see
 [Concurrent runs](docs/concurrent-runs.md). It is off by default.

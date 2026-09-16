@@ -2957,11 +2957,20 @@ class TestPrdMode:
             assert "claude -p" not in body, name
 
     def test_cron_backlog_job_starts_no_agent(self):
-        """This job used to spend a whole agent session on a deterministic sync."""
-        with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
-            body = f.read()
-        assert "add-backlog -- ./scripts/sync-prd.sh" in body
-        assert "/add-backlog-to-prd'" not in body
+        """This job used to spend a whole agent session on a deterministic sync.
+        The schedules are per-project now, so no project may reintroduce it."""
+        scheduled = []
+        for name in sorted(os.listdir(PROJECTS_DIR)):
+            path = os.path.join(PROJECTS_DIR, name, "schedules.sh")
+            if not os.path.isfile(path):
+                continue
+            with open(path) as f:
+                body = f.read()
+            assert "/add-backlog-to-prd'" not in body, name
+            if "sync-prd.sh" in body:
+                assert "add-backlog -- ./scripts/sync-prd.sh" in body, name
+                scheduled.append(name)
+        assert scheduled, "no project schedules the PRD sync at all"
 
 
 class TestCronBlocks:
@@ -3550,3 +3559,138 @@ class TestWaitGateTimeout:
 
     def test_rejects_a_directory_it_did_not_write(self, tmp_dir):
         assert run_wait_gate("wait", tmp_dir).returncode == 1
+
+
+class TestProjectSchedules:
+    """The crontab block is built by sync-schedules.sh, but the jobs in it come
+    from projects/<profile>/schedules.sh — one file per project, so a machine
+    running two of them installs two independent sets of jobs."""
+
+    GOLDEN = os.path.join(os.path.dirname(__file__), "golden", "brave-core-cron.txt")
+
+    @staticmethod
+    def _bot_dir(tmp_dir, profile, name=None):
+        """A bot directory holding the real scripts and profiles, configured
+        for one project. sync-schedules.sh reads the config beside it, so the
+        suite must not render against whatever this machine has installed."""
+        import shutil
+
+        bot = os.path.join(tmp_dir, "bot")
+        os.makedirs(bot, exist_ok=True)
+        for d in ("scripts", "projects"):
+            dest = os.path.join(bot, d)
+            if not os.path.isdir(dest):
+                shutil.copytree(
+                    os.path.join(os.path.dirname(__file__), os.pardir, d),
+                    dest,
+                    ignore=shutil.ignore_patterns("__pycache__"),
+                )
+        config = {
+            "project": {
+                "name": name or profile,
+                "org": "o",
+                "prRepository": "o/p",
+                "issueRepository": "o/p",
+                "defaultBranch": "master",
+                "profile": profile,
+            },
+            "bot": {"username": "b", "claudeBin": "/usr/bin/claude"},
+        }
+        with open(os.path.join(bot, "config.json"), "w") as f:
+            json.dump(config, f)
+        return bot
+
+    @classmethod
+    def _render(cls, tmp_dir, profile, name=None):
+        """The block sync-schedules.sh would install, with the bot directory
+        replaced by a placeholder so the text does not depend on where it ran."""
+        bot = cls._bot_dir(tmp_dir, profile, name)
+        result = subprocess.run(
+            [os.path.join(bot, "scripts", "sync-schedules.sh"), "--print"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.replace(os.path.realpath(bot), "{BOT}").replace(
+            bot, "{BOT}"
+        )
+
+    @staticmethod
+    def _jobs(block):
+        return [
+            line
+            for line in block.splitlines()
+            if re.match(r"^[0-9*]", line)  # a cron line, not a comment or SHELL=
+        ]
+
+    def test_brave_core_jobs_are_what_is_installed_today(self, tmp_dir):
+        """These jobs run unattended on a machine nobody watches. Moving them
+        into a profile is a refactor, and a refactor that changes one cron line
+        is a schedule change that no one asked for."""
+        with open(self.GOLDEN) as f:
+            assert self._render(tmp_dir, "brave-core") == f.read()
+
+    def test_bravebot_runs_one_job(self, tmp_dir):
+        assert len(self._jobs(self._render(tmp_dir, "bravebot"))) == 1
+
+    def test_bravebot_runs_twenty_iterations_daily(self, tmp_dir):
+        (job,) = self._jobs(self._render(tmp_dir, "bravebot"))
+        assert job.startswith("0 1 * * * ")
+        assert "./run.sh 20 " in job
+
+    def test_bravebot_run_dies_before_the_next_one_starts(self, tmp_dir):
+        """Only one run may hold the slot. A run still alive at 01:00 would make
+        tomorrow's job exit on a busy slot, and the night after that one too."""
+        (job,) = self._jobs(self._render(tmp_dir, "bravebot"))
+        m = re.search(r"timeout-tree\.sh (\d+) \./run\.sh", job)
+        assert m, job
+        assert int(m.group(1)) < 24 * 60 * 60
+
+    def test_bravebot_does_not_share_an_hour_with_brave_core(self, tmp_dir):
+        """Both projects can be deployed on one machine, and each run.sh drives
+        its own agent session for hours."""
+        mine = {j.split()[1] for j in self._jobs(self._render(tmp_dir, "bravebot"))}
+        theirs = {j.split()[1] for j in self._jobs(self._render(tmp_dir, "brave-core"))}
+        assert not (mine & theirs)
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
+    def test_every_job_runs_in_the_bot_dir_and_logs_there(self, tmp_dir, profile):
+        for job in self._jobs(self._render(tmp_dir, profile)):
+            assert " cd {BOT} && source .envrc" in job
+            assert job.endswith("-cron.log 2>&1")
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
+    def test_every_job_resets_the_bot_repo_first(self, tmp_dir, profile):
+        """A job that runs the checkout as it was left cannot pick up a fix."""
+        for job in self._jobs(self._render(tmp_dir, profile)):
+            assert "git reset --hard origin/master" in job
+
+    def test_a_profile_with_no_schedules_file_gets_the_default_ones(self, tmp_dir):
+        """Adding a project is still just a profile directory."""
+        bot = self._bot_dir(tmp_dir, "brave-core")
+        os.remove(os.path.join(bot, "projects", "brave-core", "schedules.sh"))
+        result = subprocess.run(
+            [os.path.join(bot, "scripts", "sync-schedules.sh"), "--print"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "# Jobs: projects/default/schedules.sh" in result.stdout
+
+    def test_the_block_says_which_file_its_jobs_came_from(self, tmp_dir):
+        """The operator's next question after reading a crontab line is where
+        to change it."""
+        block = self._render(tmp_dir, "bravebot")
+        assert "# Jobs: projects/bravebot/schedules.sh" in block
+
+    def test_the_block_is_marked_with_the_project_name(self, tmp_dir):
+        """What keeps one project's install from stripping another's jobs."""
+        block = self._render(tmp_dir, "bravebot", name="bravebot")
+        assert block.startswith("# === brave-dev-loop (bravebot) scheduled jobs ===")
+        assert block.rstrip().endswith("# === end brave-dev-loop (bravebot) ===")
+
+    def test_printing_touches_no_crontab(self):
+        """The suite runs on the machine whose schedules these are."""
+        with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
+            body = f.read()
+        assert body.index("if $PRINT_ONLY; then") < body.index("| crontab -")

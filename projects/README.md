@@ -8,6 +8,7 @@ profile here and is selected by `project.profile` in `config.json`.
 ```
 projects/<name>/
   profile.json   # validations, test steps, test targets
+  schedules.sh   # this project's cron jobs
   docs/          # prose the workflow docs point at
 ```
 
@@ -20,6 +21,8 @@ projects/<name>/
 | `testSteps` | Templates for `testFix`, `disabledTest`, and `generic` stories. `{testBinary}` and `{testFilter}` are substituted. |
 | `labels` | Project labels: `pr` (applied to bot PRs), `disabledTest` (marks an issue as a disabled test), and `axes` (the label prefix that spells each triage axis, so the backlog can be ordered by them — see [Backlog order](../docs/workflow-state-machine.md#backlog-order-the-three-triage-axes)). `labels.disabledTestLabel` in `config.json` is honoured as a fallback. |
 | `testTargets` | Maps a suite (`unit`, `browser`) and a location to a test binary. `local` is a test defined in the target repo, `upstream` one inherited from the surrounding checkout. |
+
+**`schedules.sh`** holds this project's cron jobs — see [Schedules](#schedules).
 
 **`docs/`** holds the prose. The shared workflow docs keep a one-line pointer
 wherever a step is project-specific; `run.sh` passes the resolved profile docs
@@ -44,3 +47,33 @@ complains.
 **Adding a project.** Copy `projects/default/`, fill in `profile.json`, and add
 only the docs your workflows actually need — an absent doc just means the
 pointer has nothing to add.
+
+## Schedules
+
+`make schedules` installs one crontab block for one project, and the jobs in it
+come from `projects/<profile>/schedules.sh`. A profile with no such file gets
+`projects/default/schedules.sh`, so a new project is still just a profile
+directory.
+
+Each file prints crontab lines, built with the helpers in
+`scripts/lib/cron-jobs.sh`:
+
+```sh
+bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
+  "./scripts/sync-target-repo.sh && ./run.sh 20" "run-cron.log"
+```
+
+`bot_cron_job` gives every job the same prologue — the bot directory, the bot
+identity from `.envrc`, its gate, and a hard reset of the bot repo — so a job
+line says only what is particular to it. The gate runs before the git sync: a
+job with nothing to do costs no fetches. `bot_cron_agent <lock> '<prompt>'`
+builds the command for a job that starts an agent session, held under a named
+lock.
+
+One machine can run several deployments, and the crontab block each one writes
+is marked with its `project.name`. Installing one project's schedules replaces
+that project's block and leaves every other block — another project's, or
+anything you wrote yourself — where it is.
+
+`make view-schedules` renders the block this deployment would install and says
+which file produced it.
