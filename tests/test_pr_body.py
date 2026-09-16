@@ -342,6 +342,90 @@ def test_long_problem_section_warns(checker):
     assert any("budget" in w for w in warnings)
 
 
+def test_a_details_block_below_the_test_plan_does_not_count_the_plan_twice(checker):
+    """The budget is about the prose above the test plan. Measuring it by cutting
+    the plan's text out of a string the plan is no longer in counted every line
+    of it as prose, so a body with a closing <details> was over budget for
+    having a test plan."""
+    body = GOOD + "\n<details><summary>Depth</summary>\n\nSome depth.\n\n</details>\n"
+    _, warnings = checker.check(body)
+    assert not any("words of prose" in w for w in warnings), warnings
+
+
+def test_an_example_block_costs_nothing_against_the_line_budget(checker):
+    """Pasting the screen or the file a change produces is the point of the
+    section. Charging it against the length budget is what pushes an author into
+    describing the artifact instead of showing it."""
+    screen = "\n".join(f"  line {n} of the prompt" for n in range(30))
+    body = GOOD.replace("## Test plan", f"```\n{screen}\n```\n\n## Test plan")
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert warnings == []
+
+
+def test_an_enormous_example_block_warns(checker):
+    body = GOOD.replace(
+        "## Test plan",
+        "```\n" + "\n".join(f"line {n}" for n in range(60)) + "\n```\n\n## Test plan",
+    )
+    _, warnings = checker.check(body)
+    assert any("code block" in w for w in warnings), warnings
+
+
+# ── Shorthand ────────────────────────────────────────────────────────────────
+
+
+def test_a_bare_clause_id_is_an_error(checker):
+    body = GOOD.replace(
+        "## The fix\n", "## The fix\nRUN-19 says the answer may outlive the session.\n"
+    )
+    errors, _ = checker.check(body)
+    assert any("RUN-19" in e for e in errors), errors
+
+
+def test_a_linked_clause_id_is_accepted(checker):
+    body = GOOD.replace(
+        "## The fix\n",
+        "## The fix\nThe rule it builds is "
+        "[RUN-19](https://github.com/o/r/blob/main/docs/specs/tools/run.md#RUN-19).\n",
+    )
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert warnings == []
+
+
+def test_a_bare_id_inside_details_only_warns(checker):
+    body = GOOD.replace(
+        "## Test plan",
+        "<details><summary>Depth</summary>\n\nRUN-19 governs.\n\n</details>\n\n## Test plan",
+    )
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert any("RUN-19" in w for w in warnings), warnings
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The token is UTF-8 and the digest SHA-256.",
+        "The hole is CVE-2025-1234, and RFC-7231 says what to send.",
+        "Built against MSRV-1.74 on ARM-64.",
+    ],
+)
+def test_a_published_standard_is_not_shorthand(checker, text):
+    body = GOOD.replace("## The fix\n", f"## The fix\n{text}\n")
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert not any("shorthand" in w for w in warnings), warnings
+
+
+def test_an_id_in_the_test_plan_is_left_alone(checker):
+    """A test name or a job id in the plan is a thing to run, not a citation."""
+    body = GOOD.replace("- [ ] CI passes cleanly", "- [x] `ctest -R SPEC-19` - passed\n- [ ] CI passes cleanly")
+    errors, _ = checker.check(body)
+    assert errors == []
+
+
 def test_details_block_is_not_counted(checker):
     buried = GOOD.replace(
         "## Test plan",
@@ -439,6 +523,14 @@ def test_the_spec_doc_names_the_sections_the_checker_requires(checker):
     doc = _doc("pr-descriptions.md")
     for canonical, _ in checker.REQUIRED_SECTIONS:
         assert f"## {canonical}" in doc, f"spec doc never shows '## {canonical}'"
+
+
+def test_the_spec_doc_teaches_the_rules_the_checker_errors_on(checker):
+    """A body rejected for shorthand sends its author to this doc. If the rule is
+    not in it, the author has an error and nowhere to read what to do instead."""
+    doc = _doc("pr-descriptions.md")
+    assert "shorthand" in doc, "the doc never states the bare-id rule"
+    assert "Show it" in doc, "the doc never asks for the artifact"
 
 
 def test_the_spec_doc_is_pointed_at_from_the_pr_creating_workflow():
