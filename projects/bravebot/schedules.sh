@@ -21,3 +21,10 @@ echo "# Daily: one run of 20 iterations, overnight, killed at 23h59m"
 bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
   "./scripts/sync-target-repo.sh && ./scripts/timeout-tree.sh 86340 ./run.sh 20" \
   "run-cron.log"
+
+echo ""
+echo "# Second agent run — skip if no actionable stories"
+echo "# Daily: one run of 10 iterations, afternoon, killed at 11h13m"
+bot_cron_job "45 13 * * *" "./scripts/check-has-work.sh" \
+  "./scripts/sync-target-repo.sh && ./scripts/timeout-tree.sh 40380 ./run.sh 10" \
+  "run-cron.log"
