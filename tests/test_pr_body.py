@@ -31,6 +31,8 @@ def checker():
 
 GOOD = """Closes brave/bravebot#158
 
+User impact: a reply that takes 75 seconds now arrives instead of failing.
+
 ## The problem
 A model that takes more than 60 seconds to start answering never answers at
 all. The request fails as a timeout and each retry dies at the same 60
@@ -276,6 +278,69 @@ def test_no_closes_flag_silences_the_warning(checker):
     errors, warnings = checker.check(body, require_closes=False)
     assert errors == []
     assert warnings == []
+
+
+# ── What a user sees ─────────────────────────────────────────────────────────
+
+IMPACT = "User impact: a reply that takes 75 seconds now arrives instead of failing."
+
+
+def test_the_impact_line_is_required(checker):
+    errors, _ = checker.check(GOOD.replace(IMPACT + "\n\n", ""))
+    assert any("User impact" in e for e in errors)
+
+
+def test_an_impact_line_under_a_heading_is_an_error(checker):
+    """Below the problem it is not the first thing read, which is its whole job."""
+    body = GOOD.replace(IMPACT + "\n\n", "").replace(
+        "## The problem\n", f"## The problem\n{IMPACT}\n"
+    )
+    errors, _ = checker.check(body)
+    assert any("under a heading" in e for e in errors), errors
+
+
+def test_an_empty_impact_line_is_an_error(checker):
+    errors, _ = checker.check(GOOD.replace(IMPACT, "User impact:"))
+    assert any("says nothing after the colon" in e for e in errors), errors
+
+
+def test_a_bare_none_warns(checker):
+    """A bare "none" does not say whether this is a spec, a refactor or a test."""
+    errors, warnings = checker.check(GOOD.replace(IMPACT, "User impact: none."))
+    assert errors == []
+    assert any("why nothing changes" in w for w in warnings), warnings
+
+
+def test_none_with_a_reason_passes(checker):
+    body = GOOD.replace(
+        IMPACT, "User impact: none -- a spec document, no code changes."
+    )
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert warnings == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "**User impact:** the reply now arrives.",
+        "**User impact**: the reply now arrives.",
+        "user impact: the reply now arrives.",
+    ],
+)
+def test_the_label_tolerates_emphasis_and_case(checker, line):
+    errors, warnings = checker.check(GOOD.replace(IMPACT, line))
+    assert errors == []
+    assert warnings == []
+
+
+def test_an_impact_line_inside_an_example_does_not_count(checker):
+    """A body quoting the rule has not stated its own impact."""
+    body = GOOD.replace(IMPACT + "\n\n", "").replace(
+        "## The fix\n", f"## The fix\n```\n{IMPACT}\n```\n"
+    )
+    errors, _ = checker.check(body)
+    assert any("no 'User impact:' line" in e for e in errors), errors
 
 
 # ── The test plan ────────────────────────────────────────────────────────────
@@ -534,6 +599,7 @@ def test_the_spec_doc_teaches_the_rules_the_checker_errors_on(checker):
     doc = _doc("pr-descriptions.md")
     assert "shorthand" in doc, "the doc never states the bare-id rule"
     assert "Show it" in doc, "the doc never asks for the artifact"
+    assert "User impact:" in doc, "the doc never shows the user-impact line"
 
 
 def test_the_spec_doc_is_pointed_at_from_the_pr_creating_workflow():

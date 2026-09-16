@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Check a pull request body against docs/pr-descriptions.md.
 
-The reviewer is a busy human. This enforces the mechanical half of that: the
-four sections in order, a reproduction a person can follow rather than only a
-test to run, a closing line that will actually close the issue, and no
-machine-generated filler.
+The reviewer is a busy human. This enforces the mechanical half of that: a line
+saying what a person using the product can now see, the four sections in order,
+a reproduction a person can follow rather than only a test to run, a closing
+line that will actually close the issue, and no machine-generated filler.
 
     python3 scripts/check-pr-body.py --body-file /tmp/pr-body.md
     python3 scripts/check-pr-body.py --pr 214 --repo brave/bravebot
@@ -85,6 +85,14 @@ SETUP_COMMAND = re.compile(
     r"(?:npm|yarn|pnpm)\s+(?:install|ci|run\s+(?:build|init|sync)))\b"
 )
 CLOSES_LINE = re.compile(r"^\s*(?:closes|fixes|resolves)\b", re.I)
+# The line that says whether anybody outside this repository can tell the change
+# landed. Bold and italic markers are tolerated on either side of the colon,
+# because an author who writes the line at all tends to emphasise the label.
+IMPACT_LINE = re.compile(r"^\s*[*_]{0,2}\s*user impact\s*[*_]{0,2}\s*:\s*(.*)$", re.I)
+# An impact line claiming nothing changes. On its own it does not say why -- a
+# spec, a refactor, a test-only diff -- and which of those it is decides how the
+# reviewer reads everything below it.
+NO_IMPACT = re.compile(r"^(?:none|no|nothing|n/?a)\b", re.I)
 QUALIFIED_CLOSES = re.compile(
     r"^\s*(?:closes|fixes|resolves)\s+[\w.-]+/[\w.-]+#\d+\s*$", re.I
 )
@@ -141,6 +149,8 @@ VISIBLE_PROSE_BUDGET = 400
 VISIBLE_LINE_BUDGET = 60
 EXAMPLE_LINE_BUDGET = 40
 SYMBOL_BUDGET = 3
+# "none" is one word and answers nothing. Three is enough for "none, spec only".
+IMPACT_REASON_WORDS = 3
 
 
 def strip_fences(text):
@@ -194,6 +204,20 @@ def before_test_plan(text):
                 break
         out.append(line)
     return "\n".join(out)
+
+
+def split_at_first_heading(text):
+    """(the lines above the first heading, the lines from it on). Fence-aware, so
+    a heading inside a pasted example does not end the preamble."""
+    lines = text.splitlines()
+    in_fence = False
+    for i, line in enumerate(lines):
+        if FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence and HEADING.match(line):
+            return lines[:i], lines[i:]
+    return lines, []
 
 
 def bare_ids(text):
@@ -291,6 +315,38 @@ def check(body, require_closes=True, test_only_change=False):
         warnings.append(
             "no Closes line: if this PR resolves an issue, "
             "'Closes <owner>/<repo>#<number>' must be the first line"
+        )
+
+    # ── What a person using the product can see ─────────────────────────────
+    preamble, rest = split_at_first_heading(stripped)
+    stated = next(filter(None, (IMPACT_LINE.match(ln) for ln in preamble)), None)
+    if stated:
+        impact = stated.group(1).strip().strip("*_").strip()
+        if not impact:
+            errors.append(
+                "the 'User impact:' line says nothing after the colon: name what a "
+                "person using the product can now see, or 'none' and why not"
+            )
+        elif NO_IMPACT.match(impact) and words(impact) < IMPACT_REASON_WORDS:
+            warnings.append(
+                f"'User impact: {impact}' does not say why nothing changes: a "
+                "reviewer cannot tell a spec, a refactor and a test-only diff "
+                "apart from the four sections, e.g. 'none -- a spec document, "
+                "no code changes'"
+            )
+    elif any(
+        IMPACT_LINE.match(ln) for ln in strip_fences("\n".join(rest)).splitlines()
+    ):
+        errors.append(
+            "the 'User impact:' line is under a heading: it belongs on its own line "
+            "above '## The problem', where a reviewer reads it before anything else"
+        )
+    else:
+        errors.append(
+            "no 'User impact:' line above '## The problem': say what a person using "
+            "the product can now see, or 'none' and why not -- a spec, a refactor, a "
+            "test, a doc. Without it a reviewer has to open the diff to learn whether "
+            "the change is visible at all"
         )
 
     # ── Sections, and their order ───────────────────────────────────────────

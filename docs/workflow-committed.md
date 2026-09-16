@@ -49,11 +49,14 @@
 
    The reviewer is a busy human who has not seen this code and did not read the
    issue. Read **[pr-descriptions.md](./pr-descriptions.md)** and write the body to
-   the shape it defines. The two things it must deliver first: **how to reproduce
-   the problem**, and **exactly what the problem is** — before any mechanism, and
+   the shape it defines. The three things it must deliver first: **whether a
+   person using the product can see any difference**, **how to reproduce the
+   problem**, and **exactly what the problem is** — before any mechanism, and
    before any identifier. If a user can see the bug, the reproduction is the
    steps a *user* takes in the running product; a test command on its own shows a
-   reviewer nothing they could have seen for themselves.
+   reviewer nothing they could have seen for themselves. If the diff changes no
+   behaviour at all — a spec, a refactor, a doc, tests — the `User impact:` line
+   is where you say so, and it is the first thing the reviewer reads.
 
    **SECURITY NOTE**: If this PR fixes a security-sensitive issue, use discretion in the title and description. See [SECURITY.md](../SECURITY.md#public-security-messaging) for detailed guidance on avoiding detailed vulnerability disclosure in public messages.
 
@@ -62,6 +65,11 @@
 ````bash
 cat > /tmp/pr-body-<story-id>.md <<'EOF'
 Closes $ISSUE_REPO#<issue-number>
+
+User impact: [one line. What a person using the product can now see. If nobody
+can see anything — a spec, a refactor, a doc, a CI fix, tests — write "none" and
+say which, so the reviewer reads the sections below as a document rather than as
+a change in behaviour.]
 
 ## The problem
 [2-4 sentences. What goes wrong, who hits it, what they observe. Plain language:
