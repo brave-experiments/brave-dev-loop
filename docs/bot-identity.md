@@ -30,7 +30,7 @@ gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
 
 ## Hooks
 
-Three hooks are installed by `make setup`:
+Four hooks are installed by `make setup`:
 
 **Target repo pre-commit** (`hooks/pre-commit`):
 Blocks the configured bot account from modifying dependency files (package.json, DEPS, Cargo.toml, go.mod, etc.). Prevents bots from introducing external dependencies without review.
@@ -46,10 +46,15 @@ export GH_TOKEN=$(gh auth token --user <bot-account>)
 
 That pins `gh` for one shell, leaving its active account and every other terminal alone.
 
+**Target repo post-checkout** (`hooks/post-checkout`):
+Copies the main checkout's `.envrc` and `.env` into a newly added worktree and runs `direnv allow` there. `git worktree add` copies only what git tracks, so without this a story's worktree builds against defaults instead of the configuration the main checkout has, and the difference surfaces as a test that fails only in the worktree.
+
+It is a hook rather than a step in the agent's instructions because a hook costs no tokens: it runs on the `git worktree add` itself and adds nothing to any prompt. Nothing else in a checkout triggers it — git reports the null sha as the previous HEAD only when there was none, and the main checkout and a fresh clone are told apart from a linked worktree by whether their git dir is the shared one.
+
 **Bot repo pre-commit** (`hooks/pre-commit-bot-repo`):
 Blocks committing `data/prd.json`, `data/progress.txt`, and `data/run-state.json` to ensure user-specific files don't get committed.
 
-Both target-repo hooks are inert in a checkout whose `user.name` is not the bot: each exits at its first check having done nothing, so a person's clone of the same repository behaves as if neither were there.
+All three target-repo hooks are inert in a checkout whose `user.name` is not the bot: each exits at its first check having done nothing, so a person's clone of the same repository behaves as if none were there.
 
 **Where a target repo's hook lands.** Not `<repo>/.git/hooks` unconditionally. `core.hooksPath` *replaces* that directory rather than adding to it, so in a target repo that sets it — as one with its own checked-in hooks does — a hook written to `.git/hooks` never runs and never says so. Setup resolves the configured path and installs into that.
 

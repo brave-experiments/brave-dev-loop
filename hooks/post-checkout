@@ -1,0 +1,67 @@
+#!/bin/bash
+# Post-checkout hook to give a new worktree the environment the main checkout has.
+# Note: __BOT_USERNAME__ is replaced by setup.sh during installation.
+#
+# `git worktree add` copies only what git tracks, so a story's worktree starts
+# without the gitignored `.envrc` the build reads its configuration from — API
+# hosts, which environment to talk to, the services key. A build there is
+# configured differently from the same build in the main checkout, and the
+# difference shows up as a test that only fails in the worktree.
+#
+# This is a hook rather than a step in the agent's instructions because the
+# agent is what costs money: a hook runs on the `git worktree add` itself, for
+# every worktree however it was created, and adds nothing to any prompt.
+#
+# Everything is gated on the repo already being configured as the bot, the same
+# way hooks/pre-commit is. A clone belonging to a person exits at the first
+# check having done nothing.
+
+GIT_USER=$(git config user.name)
+
+if [ "$GIT_USER" != "__BOT_USERNAME__" ]; then
+  exit 0
+fi
+
+PREV_HEAD="$1"
+IS_BRANCH_CHECKOUT="$3"
+
+# Only a checkout that had no previous HEAD, which git reports as the null sha.
+# In a repository that is already cloned that means `git worktree add` — a
+# `git checkout` of any kind, including `-b`, passes the commit it came from.
+case "$PREV_HEAD" in
+  *[^0]*) exit 0 ;;
+esac
+[ "$IS_BRANCH_CHECKOUT" = "1" ] || exit 0
+
+# A linked worktree has its own git dir under the shared one; the main checkout
+# and a fresh clone have them the same. Hooks live in the common dir, so this
+# hook runs for all of them and only the worktree case is ours.
+if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ]; then
+  exit 0
+fi
+
+MAIN_CHECKOUT=$(cd "$(git rev-parse --git-common-dir)/.." 2>/dev/null && pwd -P) || exit 0
+WORKTREE=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -n "$MAIN_CHECKOUT" ] && [ -n "$WORKTREE" ] || exit 0
+
+# Both names are in the repo's tracked .gitignore, so the copies stay ignored in
+# the worktree too and no key material can reach a commit from here.
+for NAME in .envrc .env; do
+  if [ -f "$MAIN_CHECKOUT/$NAME" ] && [ ! -e "$WORKTREE/$NAME" ]; then
+    if cp "$MAIN_CHECKOUT/$NAME" "$WORKTREE/$NAME"; then
+      echo "  ✓ $NAME copied from $MAIN_CHECKOUT"
+    fi
+  fi
+done
+
+# direnv refuses an .envrc it has not been told to trust, and trust is recorded
+# per path, so the copy needs its own allow even though the original had one.
+if [ -f "$WORKTREE/.envrc" ] && command -v direnv >/dev/null 2>&1; then
+  if (cd "$WORKTREE" && direnv allow); then
+    echo "  ✓ direnv allow $WORKTREE"
+  fi
+fi
+
+# A worktree without an environment is still a usable worktree: never fail the
+# checkout that created it.
+exit 0

@@ -84,3 +84,27 @@ archive/
       ├── data/prd.json
       └── data/progress.txt
 ```
+
+Finished stories are archived too, but only where `project.prdMode` is `auto`.
+There, `prd.json` is a cache rebuilt from GitHub at the start of every run, so a
+`merged` or `invalid` story left in it is only something for the selector to
+filter and a reader to scroll past: `run.sh` moves it to `prd.archived.json`
+before any work is selected. The syncs read that file as well, so nothing that
+moves there is ever re-added as fresh work. A `curated` PRD is the operator's
+own list and is archived on the operator's say-so — `make archive-prd`.
+
+## Worktrees between runs
+
+Where the profile sets `"worktrees": true`, each story gets its own
+`../<repo>-<issue>` checkout, and each of those grows a build directory that can
+reach several gigabytes. `run.sh` collects them itself, so the disk does not fill
+with the build output of work that has already landed:
+
+- at the end of a session, every worktree nothing is using
+- at the start of the next one, the same but only those added over 24 hours ago,
+  since another run may be mid-iteration in one it created minutes ago
+
+`scripts/clean-worktrees.py` decides, and keeps anything that would lose work:
+uncommitted changes, a commit no remote has, a worktree a live run claims, or one
+git has locked. `--dry-run` reports without removing. A story whose worktree was
+collected re-creates it from `origin/<branch>` on its next iteration.

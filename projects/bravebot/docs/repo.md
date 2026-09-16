@@ -96,19 +96,26 @@ Untracked files are not shared: `target/` starts empty and the first
 `cargo build` in a new worktree is a cold one. Budget for it — that build, not
 the worktree, is what makes the first iteration slow.
 
+One untracked file arrives anyway: the post-checkout hook `make setup` installs
+copies `.envrc` from the main checkout and runs `direnv allow` in the new
+worktree, so a build there reads the same environment as one in the main
+checkout. Nothing to do — it has already happened by the time `worktree add`
+returns. If the main checkout has no `.envrc`, neither will the worktree, and
+that is the thing to fix (`cp .envrc.example .envrc`), in the main checkout.
+
 ### Removing
 
-Remove the worktree only after the story's post-merge bookkeeping is done:
+Nothing to do: `run.sh` collects worktrees itself, at the end of a session and
+again at the start of the next one, and `scripts/clean-worktrees.py` is what
+decides. It removes only a worktree that holds nothing — no uncommitted changes,
+and no commit that is missing from every remote — and never one a live run
+claims. A story whose worktree it removed reuses its branch from
+`origin/<branch-name>` on the next iteration, which is the case above.
 
-```sh
-"$LOCK" "$MAIN" -- git -C "$MAIN" worktree remove "$WORK"
-"$LOCK" "$MAIN" -- git -C "$MAIN" worktree prune
-```
-
-`worktree remove` refuses when the worktree has uncommitted changes. That is the
-correct outcome: commit or discard them deliberately, and never `--force` past
-it. Leave the worktree in place for a story that is still pending, committed, or
-pushed — a stale directory is cheap, a lost branch is not.
+So leave the directory where it is. Do not remove one to tidy up, and do not
+`--force` past a `worktree remove` that refuses because the tree is dirty: those
+changes are the reason it refused. A stale directory is cheap and something else
+collects it; a lost branch is not.
 
 ## Package managers
 
