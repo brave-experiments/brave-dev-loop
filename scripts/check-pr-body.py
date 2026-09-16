@@ -89,6 +89,39 @@ QUALIFIED_CLOSES = re.compile(
     r"^\s*(?:closes|fixes|resolves)\s+[\w.-]+/[\w.-]+#\d+\s*$", re.I
 )
 FENCE = re.compile(r"^\s*(?:```|~~~)")
+MD_LINK = re.compile(r"\[[^\]]*\]\([^)]+\)")
+# A spec clause, story or ticket cited as bare shorthand: capitals, a hyphen,
+# digits. It means nothing to a reviewer who does not have that document open,
+# and it is not clickable.
+BARE_ID = re.compile(r"\b([A-Z][A-Z0-9]{2,15})-\d{1,4}\b")
+# Prefixes that name a standard the reviewer already knows rather than something
+# local. Add to this only for identifiers that are widely published.
+PUBLISHED_IDS = {
+    "AES",
+    "ARM",
+    "ASCII",
+    "AVX",
+    "CSS",
+    "CVE",
+    "CWE",
+    "ECDSA",
+    "GHSA",
+    "HTTP",
+    "HTTPS",
+    "IEEE",
+    "IPV",
+    "ISO",
+    "MSRV",
+    "PEP",
+    "RFC",
+    "RSA",
+    "SHA",
+    "SQL",
+    "SSL",
+    "TLS",
+    "UTF",
+    "X86",
+}
 HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
 NUMBERED_STEP = re.compile(r"^\s*(?:>\s*)?\d+[.)]\s+\S", re.M)
 CHECKBOX = re.compile(r"^\s*[-*]\s*\[( |x|X)\]", re.M)
@@ -101,10 +134,12 @@ INLINE_CODE = re.compile(r"`([^`\n]+)`")
 # ::, (), a slash with a dot, an underscore or a dot between identifier chars.
 SYMBOLISH = re.compile(r"::|\(\)|->|\w/\w|\w\.\w|_")
 
-# Budgets. Prose only -- code blocks, tables and <details> are not counted.
+# Budgets. Prose only -- code blocks, tables and <details> are not counted, so
+# pasting the screen or the file a change produces costs a body nothing.
 PROBLEM_WORD_BUDGET = 110
 VISIBLE_PROSE_BUDGET = 400
 VISIBLE_LINE_BUDGET = 60
+EXAMPLE_LINE_BUDGET = 40
 SYMBOL_BUDGET = 3
 
 
@@ -122,14 +157,53 @@ def strip_fences(text):
 
 def fenced_lines(text):
     """The lines inside fenced code blocks -- the inverse of strip_fences."""
+    return [line for block in fenced_blocks(text) for line in block]
+
+
+def fenced_blocks(text):
+    """Each fenced code block as its own list of lines."""
+    blocks, current = [], None
+    for line in text.splitlines():
+        if FENCE.match(line):
+            if current is None:
+                current = []
+            else:
+                blocks.append(current)
+                current = None
+            continue
+        if current is not None:
+            current.append(line)
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def before_test_plan(text):
+    """Everything above the test plan heading, which is where the reviewer's
+    thirty seconds are spent. Measured on the same string the budget is about,
+    so a <details> block below the test plan cannot make the plan count twice."""
     out, in_fence = [], False
+    aliases = dict(REQUIRED_SECTIONS)["Test plan"]
     for line in text.splitlines():
         if FENCE.match(line):
             in_fence = not in_fence
-            continue
-        if in_fence:
-            out.append(line)
-    return out
+        elif not in_fence:
+            m = HEADING.match(line)
+            squashed = re.sub(r"[^a-z ]", "", m.group(2).lower()).strip() if m else ""
+            if squashed in aliases:
+                break
+        out.append(line)
+    return "\n".join(out)
+
+
+def bare_ids(text):
+    """Clause, story and ticket ids cited as shorthand rather than in English or
+    as a link. Link text is dropped first, so a linked id does not count."""
+    prose = strip_fences(MD_LINK.sub("", text))
+    found = [
+        m.group(0) for m in BARE_ID.finditer(prose) if m.group(1) not in PUBLISHED_IDS
+    ]
+    return sorted(set(found))
 
 
 def reproduction_lines(text):
@@ -328,21 +402,41 @@ def check(body, require_closes=True, test_only_change=False):
     if emoji_heading:
         warnings.append(f"emoji in heading {emoji_heading[0]!r}: drop the decoration")
 
-    testplan_text = found_at.get("Test plan", (None, "", 0))[1] or ""
-    above = visible.split(testplan_text)[0] if testplan_text else visible
-    prose_above = strip_fences(above)
-    n = words(prose_above)
+    n = words(strip_fences(before_test_plan(visible)))
     if n > VISIBLE_PROSE_BUDGET:
         warnings.append(
             f"{n} words of prose before the test plan (budget {VISIBLE_PROSE_BUDGET}): "
             "a body longer than a screen gets read by nobody -- move the depth "
             "into <details>"
         )
-    visible_lines = len([ln for ln in visible.splitlines() if ln.strip()])
-    if visible_lines > VISIBLE_LINE_BUDGET:
+    # Prose only: an example a reviewer scans is not the thing that makes a body
+    # unreadable, and charging for it is what pushes an author into shorthand.
+    prose_lines = len([ln for ln in strip_fences(visible).splitlines() if ln.strip()])
+    if prose_lines > VISIBLE_LINE_BUDGET:
         warnings.append(
-            f"{visible_lines} visible lines (budget {VISIBLE_LINE_BUDGET}): "
+            f"{prose_lines} lines of visible prose (budget {VISIBLE_LINE_BUDGET}): "
             "collapse the supporting detail into <details>"
+        )
+    longest = max((len(block) for block in fenced_blocks(visible)), default=0)
+    if longest > EXAMPLE_LINE_BUDGET:
+        warnings.append(
+            f"a {longest}-line code block (budget {EXAMPLE_LINE_BUDGET}): show the part "
+            "of the screen, file or output that this change makes different, not all of it"
+        )
+
+    # ── Shorthand a reviewer cannot resolve ─────────────────────────────────
+    cited = bare_ids(before_test_plan(visible))
+    if cited:
+        errors.append(
+            f"{', '.join(cited)}: shorthand for a document the reviewer does not have "
+            "open. Say the rule in English. If the id has to appear, make it a link to "
+            "the clause, e.g. [ABC-12](https://github.com/owner/repo/blob/main/docs/spec.md#ABC-12)"
+        )
+    buried = bare_ids("\n".join(DETAILS_BLOCK.findall(stripped)))
+    if buried:
+        warnings.append(
+            f"{', '.join(buried)}: a bare id even inside <details> is unclickable; "
+            "link it to the clause it names"
         )
 
     return errors, warnings

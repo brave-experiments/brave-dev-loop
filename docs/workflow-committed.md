@@ -83,7 +83,14 @@ link to the evidence — the CI job, the crash report, the logs.]
 
 ## The fix
 [2-5 sentences. The mechanism now, in plain language, and why it fixes the symptom
-above. Do not enumerate the diff — the reviewer has the Files Changed tab.]
+above. Do not enumerate the diff — the reviewer has the Files Changed tab. No bare
+clause, story or ticket id: say the rule in English, or link the id to the clause.]
+
+[Then show it, if there is anything to look at: the screen as it now renders, the
+file the product now writes, the output that is now different — pasted from a real
+run into a fenced block, trimmed to the part that changed. Code blocks count
+against no budget, so this is free and a paragraph describing it is not. Delete
+this slot only when the change is invisible.]
 
 [If the project inherits tests from an upstream: see the project profile's `docs/testing.md` for the extra PR-body fields it requires here.]
 

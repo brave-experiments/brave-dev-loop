@@ -108,13 +108,62 @@ not accept using the line to avoid the work.
 Now the mechanism, in plain language, in a few sentences. Name a symbol only
 where naming it is the shortest true statement — "the retry loop", "the AWS
 credential chain" and "the session cache" beat their identifiers most of the
-time. No file paths, no line numbers, no upstream source citations: the
+time. No *source* paths, no line numbers, no upstream source citations: the
 reviewer has the Files Changed tab, and a path in prose goes stale the first
-time something moves.
+time something moves. A path the product itself writes or reads is the opposite
+case — that one is the feature, and it belongs in the body.
 
 Do not enumerate the diff. "Added `foo()`, changed `bar()` to take a `&str`,
 updated the callers" tells a reviewer nothing they will not see in colour in
 ten seconds. Say what the code now does differently and why that is the fix.
+
+### Show it, do not describe it
+
+If the change alters anything a person could look at — a screen, a prompt, a
+file the product writes, a command's output, a new config key — paste the real
+thing in a fenced block. One block for the before, or one for the after, or
+both where the difference is the point. Copy it out of a real run; do not
+reconstruct it from the code, and do not paste more than the part that changed.
+
+Code blocks cost nothing against every length budget in this doc, so an example
+is free and a paragraph describing the example is not:
+
+- **Bad:** "An entry holds the line rather than anything a pattern could be read
+  out of: each step's name, the binary it resolved to, each argument, each
+  environment assignment and where each stream went, each its own field."
+- **Good:**
+  ````markdown
+  Pressing `r` appends one line to a new file, one per working directory:
+
+  ```
+  {"directory":"/Users/you/project","session":"a1b2c3","line":{"steps":
+  {"shape":"pipeline","steps":[{"program":"make","resolved":"/usr/bin/make",
+  "args":["check"],"environment":[],"routes":[]}]}}}
+  ```
+  ````
+
+The second one is shorter, is checkable against the diff, and answers questions
+the prose did not think to answer. The same applies to a new key on a prompt:
+show the row of keys as it now renders, not a sentence claiming a key was added.
+
+### Never cite shorthand a reviewer cannot resolve
+
+`RUN-19`, `SEC-4`, `US-088`, `ADR-11` — a bare id names a document the reviewer
+does not have open, and it reads as though the body were written for the person
+who wrote it. Say the rule in English instead: "the answer may outlive the
+session" rather than "RUN-19 governs".
+
+Where the id genuinely has to appear — the PR builds that clause and a reviewer
+will want it — make it a link to the clause itself, and keep the English:
+
+```markdown
+The rule this builds, [RUN-19](https://github.com/owner/repo/blob/main/docs/specs/tools/run.md#RUN-19),
+says a prompt's answer may outlive the session and stops only the asking.
+```
+
+The checker rejects a bare id above the test plan, and warns about one inside
+`<details>`. Widely published identifiers — `UTF-8`, `CVE-2025-1234`,
+`RFC-7231` — are not shorthand and are left alone.
 
 ## Test plan
 
@@ -134,12 +183,17 @@ rejects the ones it can match:
 - **Emoji section headers**, ✅ checkmark decoration, bold on every other
   phrase.
 - **A file-by-file changelog.** That is the diff.
+- **A bare clause, story or ticket id.** English, or a link. This is an error,
+  not a warning.
+- **Prose where an example would do.** If you find yourself describing a screen
+  or a file format in sentences, paste it instead.
 - **Restating the issue body** at length. Link it and summarise in two lines.
 - **Any AI attribution.** No "Generated with", no `Co-Authored-By: Claude`.
 
-Length is the tell that outlasts all of them: if the visible body is longer
-than a screen, a busy reviewer reads none of it. Depth is not banned — it is
-`<details>`' job:
+Length of *prose* is the tell that outlasts all of them: if the visible body is
+paragraph after paragraph, a busy reviewer reads none of it. An example is not
+length in that sense, and no budget here counts it. Depth is not banned either
+— it is `<details>`' job:
 
 ```markdown
 <details>
@@ -152,7 +206,7 @@ than a screen, a busy reviewer reads none of it. Depth is not banned — it is
 
 Collapsed, it costs a reviewer nothing and is there for the one who wants it.
 That is where a comparison table, a benchmark, a long root-cause chain, or a
-spec-clause reference belongs.
+linked spec-clause reference belongs.
 
 ## A rewrite
 
