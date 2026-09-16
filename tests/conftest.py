@@ -138,3 +138,11 @@ def repair_config_paths():
         "repair_config_paths",
         os.path.join(SCRIPTS_DIR, "repair-config-paths.py"),
     )
+
+
+@pytest.fixture
+def worktree_for_pr():
+    return _load_module(
+        "worktree_for_pr",
+        os.path.join(SCRIPTS_DIR, "worktree-for-pr.py"),
+    )

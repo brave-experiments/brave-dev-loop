@@ -1,4 +1,4 @@
-.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run
+.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree
 
 # Prefer .venv when it exists so no target needs an activated shell. PEP 668
 # interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
@@ -86,6 +86,31 @@ archive-prd:
 
 # Archive both progress.txt and completed PRD stories
 archive: archive-progress archive-prd
+
+# Open a shell in the worktree for a pull request:
+#
+#   make worktree PR=https://github.com/brave/bravebot/pull/351
+#   make worktree PR=351
+#   make worktree              # asks which pull request
+#
+# An existing worktree for the pull request's branch is reused -- the branch is
+# what identifies it, since a worktree's directory name follows the story's
+# issue and not the branch. Otherwise one is created from the pull request's
+# head. Either way the main checkout's .envrc is copied in and allowed, because
+# untracked files are not shared between worktrees and a fresh one would
+# otherwise have no environment at all. No model is involved.
+#
+# The cd happens here rather than in the script because a child process cannot
+# change its parent's directory: the only way to leave you somewhere is to open
+# a shell there. Exit that shell to come back.
+#
+# make reserves the name SHELL for the shell that runs recipes and refuses to
+# read it from the environment, so the user's own shell is read explicitly.
+USER_SHELL := $(shell printenv SHELL 2>/dev/null)
+worktree:
+	@dir=$$(python3 scripts/worktree-for-pr.py $(if $(PR),"$(PR)")) || exit $$?; \
+	 echo "--> $$dir" >&2; \
+	 cd "$$dir" && { $(or $(USER_SHELL),/bin/sh) -i || true; }
 
 # Clean up generated/temporary files
 clean:

@@ -86,6 +86,24 @@ make view-schedules              # show the current schedule
 ./scripts/reset-run.sh --stale   # clear slots left behind by a killed run
 ```
 
+To look at what a pull request actually did, open a shell in the worktree that
+holds its branch:
+
+```bash
+make worktree PR=https://github.com/brave/bravebot/pull/351
+make worktree PR=351             # the repo comes from config.json
+make worktree                    # asks which pull request
+```
+
+An existing worktree is found by branch rather than by directory name, since a
+worktree is named after its story's issue and not its branch. When none has the
+branch, one is created from the pull request's head — in `<target repo>-<issue>`,
+the directory that story's own worktree would use. Either way the main
+checkout's `.envrc` is copied in and allowed, because untracked files are not
+shared between worktrees and a fresh one would otherwise have no environment.
+Exit the shell to come back. No model is involved, and nothing is committed or
+pushed.
+
 Scheduled jobs are per-project: `make schedules` installs one crontab block for
 the project in `config.json` and leaves any other deployment's block alone, and
 what goes in it comes from `projects/<profile>/schedules.sh` — see
