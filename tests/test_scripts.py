@@ -3606,6 +3606,32 @@ class TestProjectSchedules:
         for job in self._jobs(self._render(tmp_dir, profile)):
             assert "git reset --hard origin/master" in job
 
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
+    def test_the_log_redirect_covers_the_whole_chain_not_just_the_last_command(
+        self, tmp_dir, profile
+    ):
+        """A redirect applies to one command. Applied to the last one, a failure
+        in the git sync ahead of it breaks the `&&` chain before anything is
+        redirected: cron mails the error into the void and the job leaves an
+        empty log, so it reads as a job that simply stopped running. That is how
+        a broken target repo kept review-prs from running for 8 days. Grouping
+        the chain puts every one of those failures in the log instead."""
+        for job in self._jobs(self._render(tmp_dir, profile)):
+            assert "&& { git fetch origin" in job, job
+            assert re.search(r" ; \} >> \{BOT\}/logs/\S+\.log 2>&1$", job), job
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
+    def test_a_gate_that_finds_nothing_to_do_stays_outside_the_log(
+        self, tmp_dir, profile
+    ):
+        """The gates run hundreds of times a day and almost always skip. Inside
+        the group, every one of those skips would write to the log and bury the
+        failures the group exists to capture."""
+        for job in self._jobs(self._render(tmp_dir, profile)):
+            before_group, _, _ = job.partition("{ git fetch origin")
+            if "./scripts/check-" in job:
+                assert "./scripts/check-" in before_group, job
+
     def test_a_profile_with_no_schedules_file_gets_the_default_ones(self, tmp_dir):
         """Adding a project is still just a profile directory."""
         bot = self._bot_dir(tmp_dir, "brave-core")
