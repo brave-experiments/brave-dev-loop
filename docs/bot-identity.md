@@ -28,6 +28,8 @@ gh auth login --hostname github.com   # makes the new account active
 gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
 ```
 
+**Checking a signature locally.** Signing a commit and being able to read that signature back are separate settings, and without the second git prints an error and `No signature` for a good one — the same words it uses for a commit that was never signed. So setup writes `<target-repo>/.git/allowed_signers`, naming the bot's address and signing key, and points `gpg.ssh.allowedSignersFile` at it. `git log --show-signature` then reports the bot's commits as good, and a commit by anybody else as having no matching principal, which is a different sentence from having no signature. GitHub is not the place to find this out: it shows a signature it cannot attribute as Unverified, on a page nobody opens until a reviewer does.
+
 ## Hooks
 
 Four hooks are installed by `make setup`:
