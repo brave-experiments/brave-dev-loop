@@ -32,10 +32,12 @@ gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
 
 ## Hooks
 
-Four hooks are installed by `make setup`, and every run reinstalls the three target-repo ones whose installed copy differs from this checkout's. `make setup` runs once per machine, so without that a hook added here afterwards reaches a repo configured before it existed only if somebody remembers to run setup again, and until they do nothing reports the gap: the repo pushes exactly as it always did, with one fewer check than this checkout believes it has. The signature refusal below landed that way and sat uninstalled for a week in the repository it was written for.
+Three hooks are installed by `make setup` — into the target repo, and `pre-commit` into this repo as well — and every run reinstalls the target-repo ones whose installed copy differs from this checkout's. `make setup` runs once per machine, so without that a hook added here afterwards reaches a repo configured before it existed only if somebody remembers to run setup again, and until they do nothing reports the gap: the repo pushes exactly as it always did, with one fewer check than this checkout believes it has. The signature refusal below landed that way and sat uninstalled for a week in the repository it was written for.
 
-**Target repo pre-commit** (`hooks/pre-commit`):
-Blocks the configured bot account from modifying dependency files (package.json, DEPS, Cargo.toml, go.mod, etc.). Prevents bots from introducing external dependencies without review.
+**pre-commit** (`hooks/pre-commit`), installed into the target repo and into this one:
+Blocks the configured bot account from modifying dependency files (package.json, DEPS, Cargo.toml, go.mod, etc.), so no bot introduces an external dependency without review. It also refuses any user's commit of this loop's runtime state — `data/prd.json`, `data/progress.txt`, `data/run-state.json`, `data/claims.json` — which `.gitignore` keeps out of an ordinary `git add` and not out of `git add -f`.
+
+Both guards are in one file because one repository can need both. Where the target repo is this repo — a deployment developing the loop itself — they wanted the same `hooks/pre-commit` path from two installers, and whichever wrote second silently replaced the other's guard.
 
 **Target repo pre-push** (`hooks/pre-push`):
 Refuses a push whose new commits are authored or committed by anybody other than the `user.name` and `user.email` set above. Commits already on a remote-tracking ref are not its subject, so a branch rebased onto upstream work is not blamed for who wrote that work.
@@ -61,10 +63,7 @@ Copies the main checkout's `.envrc` and `.env` into a newly added worktree and r
 
 It is a hook rather than a step in the agent's instructions because a hook costs no tokens: it runs on the `git worktree add` itself and adds nothing to any prompt. Nothing else in a checkout triggers it — git reports the null sha as the previous HEAD only when there was none, and the main checkout and a fresh clone are told apart from a linked worktree by whether their git dir is the shared one.
 
-**Bot repo pre-commit** (`hooks/pre-commit-bot-repo`):
-Blocks committing `data/prd.json`, `data/progress.txt`, and `data/run-state.json` to ensure user-specific files don't get committed.
-
-All three target-repo hooks are inert in a checkout whose `user.name` is not the bot: each exits at its first check having done nothing, so a person's clone of the same repository behaves as if none were there.
+Each hook is inert in a checkout whose `user.name` is not the bot — it exits at its first check having done nothing, so a person's clone of the same repository behaves as if none were there. The runtime-state half of `pre-commit` is the exception, and deliberately: those files are nobody's to commit.
 
 **Where a target repo's hook lands.** Not `<repo>/.git/hooks` unconditionally. `core.hooksPath` *replaces* that directory rather than adding to it, so in a target repo that sets it — as one with its own checked-in hooks does — a hook written to `.git/hooks` never runs and never says so. Setup resolves the configured path and installs into that.
 
