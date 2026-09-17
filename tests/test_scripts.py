@@ -3560,21 +3560,32 @@ class TestProjectSchedules:
         with open(self.GOLDEN) as f:
             assert self._render(tmp_dir, "brave-core") == f.read()
 
-    def test_bravebot_runs_one_job(self, tmp_dir):
-        assert len(self._jobs(self._render(tmp_dir, "bravebot"))) == 1
+    def test_bravebot_runs_two_jobs_a_day(self, tmp_dir):
+        assert len(self._jobs(self._render(tmp_dir, "bravebot"))) == 2
 
-    def test_bravebot_runs_twenty_iterations_daily(self, tmp_dir):
-        (job,) = self._jobs(self._render(tmp_dir, "bravebot"))
-        assert job.startswith("0 1 * * * ")
-        assert "./run.sh 20 " in job
+    def test_bravebot_runs_twenty_iterations_overnight_and_ten_after_lunch(
+        self, tmp_dir
+    ):
+        jobs = self._jobs(self._render(tmp_dir, "bravebot"))
+        (overnight,) = [j for j in jobs if j.startswith("0 1 * * * ")]
+        (afternoon,) = [j for j in jobs if j.startswith("45 13 * * * ")]
+        assert "./run.sh 20 " in overnight
+        assert "./run.sh 10 " in afternoon
 
-    def test_bravebot_run_dies_before_the_next_one_starts(self, tmp_dir):
-        """Only one run may hold the slot. A run still alive at 01:00 would make
-        tomorrow's job exit on a busy slot, and the night after that one too."""
-        (job,) = self._jobs(self._render(tmp_dir, "bravebot"))
-        m = re.search(r"timeout-tree\.sh (\d+) \./run\.sh", job)
-        assert m, job
-        assert int(m.group(1)) < 24 * 60 * 60
+    def test_no_bravebot_run_is_alive_when_the_overnight_one_starts(self, tmp_dir):
+        """Only one run may hold the slot. A run still going at 01:00 would make
+        that night's job exit on a busy slot, and the night after that one too,
+        so every job's timeout-tree.sh cap has to expire before the hour comes
+        round again."""
+        day = 24 * 60 * 60
+        for job in self._jobs(self._render(tmp_dir, "bravebot")):
+            minute, hour = (int(field) for field in job.split()[:2])
+            # How long this job has until 01:00 next comes round. The overnight
+            # job starts on it, so the wrap gives it nothing and it gets the day.
+            until_overnight = (1 * 60 * 60 - (hour * 60 * 60 + minute * 60)) % day
+            m = re.search(r"timeout-tree\.sh (\d+) \./run\.sh", job)
+            assert m, job
+            assert int(m.group(1)) < (until_overnight or day), job
 
     def test_bravebot_does_not_share_an_hour_with_brave_core(self, tmp_dir):
         """Both projects can be deployed on one machine, and each run.sh drives

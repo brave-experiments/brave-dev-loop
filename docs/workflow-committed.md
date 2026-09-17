@@ -60,6 +60,15 @@
 
    **SECURITY NOTE**: If this PR fixes a security-sensitive issue, use discretion in the title and description. See [SECURITY.md](../SECURITY.md#public-security-messaging) for detailed guidance on avoiding detailed vulnerability disclosure in public messages.
 
+   The `## The fix` section ends by showing the thing itself, pasted from a real
+   run. Fenced blocks count against no length budget, so a block costs less than
+   the paragraph that would describe it. For a full-screen terminal program its
+   output is not its screen: capture a raw run and replay it with
+   `$BOT_DIR/scripts/terminal-screenshot.py` rather than pasting redirected
+   output — the profile's `docs/testing.md` gives the recipe. When the diff
+   touches a path the profile lists under `uiPaths` the checker requires a screen
+   there, and nothing written in the body opts out of it.
+
    Write the body to a file first — it has to be checked before it becomes a PR:
 
 ````bash
@@ -96,17 +105,10 @@ clause, story or ticket id: say the rule in English, or link the id to the claus
 
 [Then show it, if there is anything to look at: the screen as it now renders, the
 file the product now writes, the output that is now different — pasted from a real
-run into a fenced block, trimmed to the part that changed. Code blocks count
-against no budget, so this is free and a paragraph describing it is not. Use one
-block per thing a person would otherwise have to be told: the before and the after
-where the difference is the point, and each step where the change is a sequence.
-Delete this slot only when the change is invisible.
-
-For a full-screen terminal program its output is not its screen, so capture a raw
-run and replay it with $BOT_DIR/scripts/terminal-screenshot.py rather than pasting
-redirected output — the profile's docs/testing.md gives the recipe. When the diff
-touches a path the profile lists under uiPaths the checker requires a screen here,
-and nothing written in the body opts out of it.]
+run into a fenced block, trimmed to the part that changed. Use one block per thing
+a person would otherwise have to be told: the before and the after where the
+difference is the point, and each step where the change is a sequence. Delete this
+slot only when the change is invisible.]
 
 [If the project inherits tests from an upstream: see the project profile's `docs/testing.md` for the extra PR-body fields it requires here.]
 
