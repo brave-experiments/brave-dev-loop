@@ -22,12 +22,21 @@
 # The gate is a script that exits non-zero when there is nothing to do; it runs
 # before the git sync so a job with no work costs no fetches. Pass "" for a job
 # that always runs.
+#
+# The gate stays outside the `{ ...; }` group so a routine "nothing to do" skip
+# stays quiet, and everything after it -- the git sync and the command itself --
+# goes inside, so the redirect captures the WHOLE chain rather than only its
+# last command. Without the group, a failure in `git fetch` or `git checkout`
+# breaks the `&&` chain before reaching the redirected command, and the job dies
+# with nothing in its log at all: cron mails the output into the void and the
+# operator sees a job that simply stopped running. That is how a broken target
+# repo kept review-prs from running for 8 days, invisibly.
 bot_cron_job() {
   local schedule="$1" gate="$2" command="$3" log="$4"
   local line="$schedule cd $PROJECT_ROOT && source .envrc"
   [ -n "$gate" ] && line="$line && $gate"
-  line="$line && git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH"
-  printf '%s && %s >> %s/%s 2>&1\n' "$line" "$command" "$LOG_DIR" "$log"
+  line="$line && { git fetch origin && git checkout $BOT_REPO_BRANCH && git reset --hard origin/$BOT_REPO_BRANCH"
+  printf '%s && %s ; } >> %s/%s 2>&1\n' "$line" "$command" "$LOG_DIR" "$log"
 }
 
 # The command for a job that starts an agent session, held under a named lock
