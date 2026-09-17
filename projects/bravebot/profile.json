@@ -8,12 +8,15 @@
     "Create or re-enter this story's git worktree at {targetRepo}-<issue-number> and do all of the work there — every git, build, test, edit and file read below, including paths written as {targetRepo}/..., means the worktree and never {targetRepo} itself (see projects/bravebot/docs/repo.md)",
     "Read {targetRepo}/agents/AGENTS.md — the prompt-injection rule it states overrides every other consideration in this repo",
     "Read {targetRepo}/docs/development/README.md and the subfile that covers what you are about to do \u2014 checks.md before running anything, commits.md before committing",
+    "Read {targetRepo}/agents/skills/testing-preflight/SKILL.md before choosing the tests for a change in behaviour \u2014 it decides what each test has to distinguish and what evidence the pull request has to carry, and choosing first and reading after is how a test that cannot fail gets written",
     "Read {bestPractices} and the documents it names that bear on this change \u2014 they are what the pull request is reviewed against, and they hold only what no check can decide"
   ],
   "validations": [
     "Build the project: cargo build --all --locked (must pass)",
     "Format the code: cargo fmt --all (must pass)",
     "{testStep}",
+    "Hold the final diff to agents/skills/testing-preflight/SKILL.md: for every new, changed or relaxed test, name the plausible wrong implementation it rejects, then restore that fault in the tree, watch that test fail for that reason, restore the tree and re-run it (must pass; required for a change to a security boundary, cancellation, concurrency or usage accounting, and skipped only with the reason written down)",
+    "Carry that evidence into the pull request body: per behaviour, the test, the fault it rejects, and whether the failure was demonstrated or the coverage is reasoned only — a passing test count is not evidence that a test can fail (must pass)",
     "Run make check (cargo fmt --check, cargo clippy --all-targets --all-features -D warnings, cargo test --all --locked, toolchain age) and fix every failure (must pass)",
     "Run make check-spec — the mechanical docs/specs check: clause numbering, the tests each clause names, the paths it governs (must pass)",
     "Run make check-npm — npm ci --ignore-scripts and the lockfile lint, as the npm-lockfile CI job does (must pass)",

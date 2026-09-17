@@ -7,6 +7,21 @@ Every command here runs in the story's worktree (`../bravebot-<issue-number>`),
 never in the main checkout — see [repo.md](./repo.md#worktrees). A fresh
 worktree has an empty `target/`, so its first build is a cold one.
 
+## Choosing the tests
+
+`agents/skills/testing-preflight/SKILL.md` in the target repo is what the tests
+are designed against, and `docs/development/commits.md` makes its output part of
+the pull request. Read it before writing a test, not after: it asks, for each
+behaviour the change touches, which wrong implementation would still pass the
+test you were about to write, and that question changes the fixture rather than
+the wording.
+
+It is also the standard the tests are reviewed against, so the body has to say
+per behaviour whether the test was **demonstrated** to fail on the fault —
+restore the fault, watch that test fail for that reason, restore the tree, re-run
+it — or is **reasoned only**. Restore by saving the file's exact bytes first;
+`git checkout --` takes the review fixes with it.
+
 ## Running tests
 
 ```sh
