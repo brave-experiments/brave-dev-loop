@@ -1,0 +1,66 @@
+# Lint and the test suite, on every pull request and every push to master.
+#
+# `make check` is lint, the tests, and the security scan. The scan already runs
+# on a pull request here as an organization-level workflow calling
+# brave/security-action, so this covers the other two -- which until now ran
+# only where somebody remembered to run them, and were red on master for a week
+# because nothing said so.
+#
+# Not `make check` itself: check-reviewdog clones brave/security-action and
+# drives its runners, which is the scan the organization workflow is already
+# doing on the same commit. tests/test_ci.py holds this file to that split, so a
+# target added to `check` fails a test rather than quietly going unrun.
+#
+# The suite needs git, jq and ps, all of which the ubuntu runner image ships.
+#
+# The two Python versions are the floor pyproject.toml declares and the current
+# release. Nothing else verified the floor before: the scripts are stdlib-only
+# and every operator machine has run something newer.
+name: lint and test
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A second push supersedes the first; there is no reason to finish the run it
+# replaced.
+concurrency:
+  group: lint-and-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      # Both versions report. Knowing a failure is on 3.9 alone is the whole
+      # point of testing 3.9.
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.13"]
+    steps:
+      # Both actions are pinned to a commit SHA with the tag in a comment, which
+      # is what the security scan requires of a third-party action: a tag can be
+      # moved to point at something else, a SHA cannot. Renovate bumps the pair
+      # together. tests/test_ci.py fails on a bare tag, because the scan only
+      # comments and a comment is easy to merge past.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Unpinned, as scripts/install-dev-deps.sh installs them locally, so this
+      # runs what a contributor's machine runs. The cost is that a ruff release
+      # which reformats something turns master red with no change to the code;
+      # `make format` is the fix.
+      - name: Install pytest and ruff
+        run: python -m pip install --disable-pip-version-check pytest ruff
+
+      - run: make lint
+
+      - run: make test

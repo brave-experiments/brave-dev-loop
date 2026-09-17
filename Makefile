@@ -22,9 +22,10 @@ format:
 	$(RUFF) check --fix .
 	$(RUFF) format .
 
-# The whole local pass, in one target. The security scan is the only one of the
-# three that anything runs for us -- there are no workflows in this repository,
-# so lint and the tests are enforced here or nowhere. Run it before pushing.
+# The whole local pass, in one target. All three run on a pull request too --
+# lint and the tests from .github/workflows/lint-and-test.yml, the security scan
+# from an organization-level workflow -- so this is the same pass, before the
+# push rather than after it. Run it anyway: it is minutes faster than waiting.
 check: lint test check-reviewdog
 
 # The security scan that comments on our pull requests, before pushing rather
