@@ -50,8 +50,17 @@ creates `config.json` and the data files, configures the bot's git identity and
 commit signing, installs the pre-commit hooks, caches org membership, and
 repairs configuration left over from older versions.
 
-For an existing brave-core deployment, `cp config.brave-core.json config.json`
-first to skip the wizard, then run `make setup`.
+To skip the wizard, copy the reference config for the deployment you want over
+`config.json` first, then run `make setup`:
+
+```bash
+cp config.brave-core.json config.json     # the brave-core deployment
+cp config.brave-dev-loop.json config.json # the loop developing itself
+```
+
+The second one is self-hosted: the target repo is the clone you are standing in,
+and each story works in a `../brave-dev-loop-<issue>` worktree of it. See
+[projects/brave-dev-loop/docs/repo.md](projects/brave-dev-loop/docs/repo.md).
 
 ## Usage
 

@@ -4,6 +4,7 @@ Covers: update-prd-status.py, select-task.py, business-hours-elapsed.py,
 and check-prd-has-work.py.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -15,13 +16,27 @@ from datetime import datetime, timezone
 
 import pytest
 
-SCRIPT_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts")
-PROJECTS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "projects")
-DOCS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "docs")
+REPO_ROOT = os.path.join(os.path.dirname(__file__), os.pardir)
+SCRIPT_DIR = os.path.join(REPO_ROOT, "scripts")
+PROJECTS_DIR = os.path.join(REPO_ROOT, "projects")
+DOCS_DIR = os.path.join(REPO_ROOT, "docs")
 UPDATE_PRD_SCRIPT = os.path.join(SCRIPT_DIR, "update-prd-status.py")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _reference_configs():
+    """The tracked config templates, newest deployment included automatically.
+
+    The glob deliberately misses `config.json`: that is one machine's live
+    configuration, gitignored, and a test that read it would pass or fail on
+    whichever project the machine happens to be running."""
+    return [
+        name
+        for name in sorted(os.listdir(REPO_ROOT))
+        if fnmatch.fnmatch(name, "config.*.json")
+    ]
 
 
 def make_story(status="pending", id="US-001", priority=1, **overrides):
@@ -2420,12 +2435,27 @@ class TestShippedConfigs:
     def test_example_defaults_to_fork_layout(self):
         assert self._load("config.example.json")["project"]["useFork"] is True
 
+    def test_brave_dev_loop_targets_the_bot_directory(self):
+        """The self-hosted layout: the loop develops the checkout it runs from.
+
+        A targetRepoPath pointing elsewhere, or a fork, would send the stories to
+        a second copy of this repository -- and the project's docs, which put
+        every story in a worktree of the bot directory, describe this one."""
+        project = self._load("config.brave-dev-loop.json")["project"]
+        assert project["targetRepoPath"] == "."
+        assert project["useFork"] is False
+
     def test_docs_dir_matches_target_repo_in_reference_configs(self):
         """docsDir is bot-dir-relative; targetRepoPath may be either base."""
-        for name in ("config.brave-core.json", "config.example.json"):
+        for name in _reference_configs():
             cfg = self._load(name)
             target = cfg["project"]["targetRepoPath"].lstrip("./")
             docs = cfg["bestPractices"]["docsDir"]
+            if not target:
+                # targetRepoPath "." — the bot dir is the target repo, so the
+                # bot-dir-relative docsDir has no prefix in front of it.
+                assert docs == "docs", (name, docs)
+                continue
             assert docs.endswith("/docs"), (name, docs)
             assert target.split("/")[-1] in docs, (name, target, docs)
 
@@ -2872,6 +2902,21 @@ class TestStoryBranchesComeFromUpstream:
         "origin/main\n",
     )
 
+    @staticmethod
+    def _no_fork_profiles():
+        """Profiles a shipped config puts on the no-fork layout.
+
+        The rule below is about a fork being stale, so it does not hold where
+        there is no fork: `origin` is the pull-request repository itself, and
+        setup adds no `upstream` remote to base on instead."""
+        names = set()
+        for entry in _reference_configs():
+            with open(os.path.join(REPO_ROOT, entry)) as f:
+                project = json.load(f).get("project") or {}
+            if project.get("useFork") is False:
+                names.add(project.get("profile") or project.get("name"))
+        return names
+
     def _target_repo_docs(self):
         """Every document that tells the agent how to work the target repo: the
         shared workflow docs and each profile's own. The bot directory is not a
@@ -2879,9 +2924,10 @@ class TestStoryBranchesComeFromUpstream:
         for name in sorted(os.listdir(DOCS_DIR)):
             if name.endswith(".md") and name != "learnable-patterns.md":
                 yield os.path.join("docs", name)
+        no_fork = self._no_fork_profiles()
         for profile in sorted(os.listdir(PROJECTS_DIR)):
             profile_docs = os.path.join(PROJECTS_DIR, profile, "docs")
-            if not os.path.isdir(profile_docs):
+            if not os.path.isdir(profile_docs) or profile in no_fork:
                 continue
             for name in sorted(os.listdir(profile_docs)):
                 if name.endswith(".md"):
@@ -3278,11 +3324,10 @@ class TestProfileMismatch:
 
     def test_shipped_config_examples_name_their_own_profile(self):
         """The templates operators copy must not seed the bug."""
-        root = os.path.join(SCRIPT_DIR, os.pardir)
-        for name in ("config.example.json", "config.brave-core.json"):
-            with open(os.path.join(root, name)) as f:
+        for name in _reference_configs():
+            with open(os.path.join(REPO_ROOT, name)) as f:
                 cfg = json.load(f)["project"]
-            named = os.path.join(root, "projects", cfg["name"], "profile.json")
+            named = os.path.join(PROJECTS_DIR, cfg["name"], "profile.json")
             if os.path.exists(named):
                 assert cfg.get("profile") == cfg["name"], name
 

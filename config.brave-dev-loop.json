@@ -1,0 +1,44 @@
+{
+  "project": {
+    "name": "brave-dev-loop",
+    "org": "brave-experiments",
+    "prRepository": "brave-experiments/brave-dev-loop",
+    "issueRepository": "brave-experiments/brave-dev-loop",
+    "defaultBranch": "master",
+    "targetRepoPath": ".",
+    "botOwnerGithubHandle": "bbondy",
+    "useFork": false,
+    "profile": "brave-dev-loop",
+    "prdMode": "auto"
+  },
+  "bot": {
+    "username": "netzenbot",
+    "email": "netzenbot@agentmail.to",
+    "sshKeyPath": null,
+    "signingKeyPath": null,
+    "ghAccount": null,
+    "agent": "claude",
+    "maxConcurrentRuns": 1,
+    "claudeModel": "opus",
+    "claudeBin": null,
+    "codexModel": null,
+    "codexBin": null,
+    "cursorModel": null,
+    "cursorBin": null,
+    "ghConfigDir": null
+  },
+  "labels": {
+    "prLabels": [],
+    "issueLabels": [],
+    "disabledTestLabel": ""
+  },
+  "bestPractices": {
+    "docsDir": "docs",
+    "indexFile": "best_practices.md",
+    "securityFile": "SECURITY.md"
+  },
+  "schedules": {
+    "syncRepo": false,
+    "syncRepoPath": null
+  }
+}
