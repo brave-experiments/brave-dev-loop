@@ -612,6 +612,62 @@ test_hook_install_leaves_status_clean() {
   fi
 }
 
+test_hook_refresh_installs_a_missing_hook() {
+  # A repo set up before a hook existed here. Nothing in it reports the absence, so a run that does
+  # not reinstall is a run guarding less than this checkout says it does.
+  local test_dir installed=1
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config user.name "testbot"
+  git -C "$test_dir" config user.email "testbot@example.com"
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" &&
+    repo_refresh_bot_hooks "$test_dir" testbot "$ROOT_DIR/hooks" ) > /dev/null 2>&1
+
+  [ -x "$test_dir/.git/hooks/pre-push" ] && installed=0
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ $installed -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} PASS: Hook refresh installs a hook the target repo is missing"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Hook refresh left the target repo without a pre-push hook"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Hook refresh installs a hook the target repo is missing")
+    return 1
+  fi
+}
+
+test_hook_refresh_is_quiet_when_current() {
+  # It runs at the start of every run, so a repo whose hooks are already right has to produce no
+  # output at all: three lines each time would be three lines nobody reads by the second day.
+  local test_dir output
+  test_dir=$(mktemp -d)
+  git -C "$test_dir" init -q
+  git -C "$test_dir" config user.name "testbot"
+  git -C "$test_dir" config user.email "testbot@example.com"
+
+  ( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" &&
+    repo_refresh_bot_hooks "$test_dir" testbot "$ROOT_DIR/hooks" ) > /dev/null 2>&1
+  output=$( source "$ROOT_DIR/scripts/lib/repo-hooks.sh" &&
+    repo_refresh_bot_hooks "$test_dir" testbot "$ROOT_DIR/hooks" 2>&1 )
+  rm -rf "$test_dir"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [ -z "$output" ]; then
+    echo -e "${GREEN}✓${NC} PASS: Hook refresh says nothing about hooks already installed"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    return 0
+  else
+    echo -e "${RED}✗${NC} FAIL: Hook refresh reported work it did not do ($output)"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED_TESTS+=("Hook refresh says nothing about hooks already installed")
+    return 1
+  fi
+}
+
 #######################
 # Configuration Tests
 #######################
@@ -697,6 +753,8 @@ run_all_tests() {
   test_hooks_dir_follows_hookspath
   test_hook_install_refuses_tracked_hook
   test_hook_install_leaves_status_clean
+  test_hook_refresh_installs_a_missing_hook
+  test_hook_refresh_is_quiet_when_current
   echo ""
 
   echo "=== Configuration Tests ==="

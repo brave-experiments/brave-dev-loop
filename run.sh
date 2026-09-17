@@ -203,6 +203,7 @@ fi
 
 source "$SCRIPT_DIR/scripts/lib/load-config.sh"
 source "$SCRIPT_DIR/scripts/lib/git-identity.sh"
+source "$SCRIPT_DIR/scripts/lib/repo-hooks.sh"
 source "$SCRIPT_DIR/scripts/lib/terminal-title.sh"
 
 # This run titles its own tab, with the issue and PR numbers an operator
@@ -337,6 +338,10 @@ if [ ! -e "$GIT_REPO/.git" ]; then
   echo "     and $(dirname "$SCRIPT_DIR")/$BOT_TARGET_REPO_PATH"
   exit 1
 fi
+
+# Every run, rather than at setup only: a hook added to this checkout otherwise never reaches the
+# repo it guards, and the repo cannot say what it is missing.
+repo_refresh_bot_hooks "$GIT_REPO" "$BOT_USERNAME" "$SCRIPT_DIR/hooks"
 
 # Hand the current story back so another run (or the next iteration) can take
 # it. A run that is killed outright skips this, and that is fine: a claim only
