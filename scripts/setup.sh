@@ -28,8 +28,9 @@ else
   if [ ! -t 0 ]; then
     echo "Error: No config.json found and no interactive terminal available."
     echo "  Either run setup.sh directly from a terminal, or create config.json first:"
-    echo "    cp config.example.json config.json   # then edit with your values"
-    echo "    cp config.brave-core.json config.json # for existing brave-core deployments"
+    echo "    cp config.example.json config.json        # then edit with your values"
+    echo "    cp config.brave-core.json config.json     # for existing brave-core deployments"
+    echo "    cp config.brave-dev-loop.json config.json # for this repo developing itself"
     exit 1
   fi
   echo "No config.json found — starting setup wizard."
@@ -735,13 +736,20 @@ fi
 
 # ─── Step 5: Bot repo hook ───────────────────────────────────────────────────
 
-BOT_HOOK_SOURCE="$PROJECT_ROOT/hooks/pre-commit-bot-repo"
-BOT_HOOK_DEST="$PROJECT_ROOT/.git/hooks/pre-commit"
-
-cp "$BOT_HOOK_SOURCE" "$BOT_HOOK_DEST"
-chmod +x "$BOT_HOOK_DEST"
-echo "✓ Bot repo pre-commit hook installed"
-echo "  (Prevents committing data/prd.json, data/progress.txt, data/run-state.json)"
+# The same pre-commit the target repo gets, because it carries both guards: the
+# runtime-state one this repo needs, and the dependency one that is inert unless
+# user.name is the bot. Installed through repo_install_hook so it lands where
+# git looks -- .git/hooks is not that directory in a worktree, and a
+# core.hooksPath here would replace it rather than add to it.
+#
+# Where the target repo *is* this repo -- the self-hosted layout -- this writes
+# what step 4 and every run write, so the two no longer take turns clobbering
+# each other.
+if repo_install_hook "$PROJECT_ROOT" "$PROJECT_ROOT/hooks/pre-commit" pre-commit "$BOT_USERNAME"; then
+  echo "✓ Bot repo pre-commit hook installed"
+  echo "  (Refuses staged data/prd.json, data/progress.txt, data/run-state.json,"
+  echo "   data/claims.json, and dependency edits by $BOT_USERNAME)"
+fi
 
 # The bot commits to this repo too (learned patterns, best-practice updates), so
 # it needs the same identity here. Without it these commits inherit the machine

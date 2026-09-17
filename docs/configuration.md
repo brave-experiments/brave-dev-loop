@@ -11,7 +11,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `project.prRepository`: PR repository as `owner/repo` (e.g. `brave/brave-core`)
 - `project.issueRepository`: Issue repository as `owner/repo` (e.g. `brave/brave-browser`)
 - `project.defaultBranch`: Default branch for the PR repo (e.g. `master`)
-- `project.targetRepoPath`: Path to the target git repo (relative to the bot dir, to its parent, or absolute — all three resolve)
+- `project.targetRepoPath`: Path to the target git repo (relative to the bot dir, to its parent, or absolute — all three resolve). `.` is the self-hosted case: the target repo is the bot directory, so the loop develops itself. That needs a profile with `"worktrees": true`, because every cron job's prologue hard-resets the bot directory onto its default branch and would throw away work left in it
 - `project.prdMode`: `curated` (default) — `data/prd.json` is authored and is the source of truth for what the bot works on; a run never rewrites it, and the scheduled `scripts/sync-prd.sh` only appends stories for newly assigned issues. `auto` — the PRD is a cache with no manual curation: `run.sh` rebuilds it from assigned issues and open bot PRs before each run, and retires the stories whose PR has been merged since the last one, so a landed PR does not hold a place in the queue that outranks pending work. Either way the sync is plain Python against the GitHub API (no agent, no tokens)
 - `project.profile`: Which `projects/<name>/` profile supplies this project's rules — validation steps, test targets, and the project-specific docs the workflows point at. Omitted means `brave-core` (every deployment predating profiles is one); new setups get the profile named after the project when one exists, else `default`. Leaving it at `default` while `projects/<project.name>/` exists is refused: `run.sh` stops and says which line to change, because a profile nobody chose produces wrong work rather than no work
 - `project.useFork`: `true` (default) — the bot pushes branches to its own fork (`origin` = fork, `upstream` = PR repo). `false` — the bot has write access to the PR repo and pushes there directly (`origin` = PR repo, no fork). Set `false` only when the bot account is a collaborator on the PR repo; `make setup` will then stop expecting a fork and stop offering to create one
@@ -33,7 +33,9 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `labels.*`: legacy. Labels now live in the project profile (`projects/<name>/profile.json`); `labels.disabledTestLabel` is still honoured as a fallback for deployments that set it by hand. See [Project profiles](../projects/README.md)
 - `bestPractices.docsDir`: Path to the docs directory containing best practices (relative to bot dir)
 
-A `config.example.json` template and `config.brave-core.json` reference config are included.
+A `config.example.json` template is included, plus a reference config per shipped
+deployment: `config.brave-core.json` and `config.brave-dev-loop.json` (this repo
+developing itself). Copy one over `config.json` to skip the wizard.
 
 ## data/prd.json
 

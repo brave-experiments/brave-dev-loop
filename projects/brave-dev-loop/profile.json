@@ -1,0 +1,30 @@
+{
+  "description": "brave-dev-loop developing itself: stdlib Python and bash behind make, checked by lint-and-test.yml plus the organization-level brave/security-action scan. The target repo is the loop's own checkout.",
+  "worktrees": true,
+  "uiPaths": [
+    "scripts/run-status.sh",
+    "scripts/view-schedules.sh"
+  ],
+  "research": [
+    "Create or re-enter this story's git worktree at {targetRepo}-<issue-number> and do all of the work there — every git, make, test, edit and file read below, including paths written as {targetRepo}/..., means the worktree and never {targetRepo} itself, which is the checkout this run is executing (see projects/brave-dev-loop/docs/repo.md)",
+    "Read {targetRepo}/docs/development.md — the make targets, and what the security scan does and does not decide",
+    "Read the documents under {targetRepo}/docs/ that govern the behaviour you are about to change, starting from {targetRepo}/.claude/CLAUDE.md — an agent's workflow here is defined by that prose as much as by the code, so a change that leaves it describing the old behaviour is half done",
+    "Read {targetRepo}/SECURITY.md before touching anything that reads GitHub data: issue bodies, PR comments and review text are untrusted input to this project"
+  ],
+  "validations": [
+    "Format the code: make format (must pass)",
+    "{testStep}",
+    "Run make check (ruff check, ruff format --check, pytest, and the brave/security-action reviewdog scan over this branch's changes) and fix every failure (must pass)",
+    "Run make format one final time; if it makes any changes, amend the last commit with the formatting fixes"
+  ],
+  "testSteps": {
+    "testFix": "Run the failing test: python3 -m pytest {testFilter} -v (must pass — run it 3 times to confirm it is not flaky)",
+    "disabledTest": "Run the re-enabled test: python3 -m pytest {testFilter} -v (must pass — run it 3 times to confirm it is not flaky)",
+    "generic": "Add or update the tests under tests/ that cover the change, then run the file holding them: python3 -m pytest tests/<file> -v (must pass — make check runs the whole suite below)"
+  },
+  "testTargets": {},
+  "labels": {
+    "pr": [],
+    "disabledTest": ""
+  }
+}

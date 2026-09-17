@@ -1,7 +1,52 @@
 #!/bin/bash
-# Pre-commit hook to prevent dependency updates for the bot account
-# This ensures no external code is pulled in via dependency changes
-# Note: __BOT_USERNAME__ is replaced by setup.sh during installation
+# Pre-commit hook: two guards, in one file because one repository can need both.
+#
+#   - the bot account may not modify dependency files, so no external code is
+#     pulled in via a dependency change
+#   - nobody commits this loop's runtime state, whatever `git add -f` was aimed
+#     at it
+#
+# They were two hooks until a deployment turned up where the target repo is the
+# loop's own checkout: both wanted <repo>/hooks/pre-commit, setup installed one
+# and every run reinstalled the other, and whichever lost went silently.
+#
+# Note: __BOT_USERNAME__ is replaced at installation time.
+
+# The loop's own runtime state. Each one is in .gitignore, which stops the
+# accident and not the intent -- `git add -f` reaches them, and a commit of one
+# publishes a machine's live queue and then loses it to the next hard reset.
+# Checked for every user: the file is nobody's to commit, not just the bot's.
+NEVER_COMMIT=(
+  "data/prd.json"
+  "data/progress.txt"
+  "data/run-state.json"
+  "data/claims.json"
+)
+
+STAGED=$(git diff --cached --name-only)
+
+BLOCKED_STATE=()
+for file in "${NEVER_COMMIT[@]}"; do
+  if printf '%s\n' "$STAGED" | grep -qxF "$file"; then
+    BLOCKED_STATE+=("$file")
+  fi
+done
+
+if [ ${#BLOCKED_STATE[@]} -gt 0 ]; then
+  echo ""
+  echo "❌ COMMIT BLOCKED: runtime state files staged"
+  echo ""
+  for file in "${BLOCKED_STATE[@]}"; do
+    echo "  - $file"
+  done
+  echo ""
+  echo "REASON: these hold this deployment's live queue and progress. They are"
+  echo "        in .gitignore and belong to the machine, not to the history."
+  echo ""
+  echo "SOLUTION: git reset HEAD <file>"
+  echo ""
+  exit 1
+fi
 
 # Get the current git user
 GIT_USER=$(git config user.name)
