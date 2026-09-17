@@ -28,9 +28,11 @@ gh auth login --hostname github.com   # makes the new account active
 gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
 ```
 
+**Checking a signature locally.** Signing a commit and being able to read that signature back are separate settings, and without the second git prints an error and `No signature` for a good one — the same words it uses for a commit that was never signed. So setup writes `<target-repo>/.git/allowed_signers`, naming the bot's address and signing key, and points `gpg.ssh.allowedSignersFile` at it. `git log --show-signature` then reports the bot's commits as good, and a commit by anybody else as having no matching principal, which is a different sentence from having no signature. GitHub is not the place to find this out: it shows a signature it cannot attribute as Unverified, on a page nobody opens until a reviewer does.
+
 ## Hooks
 
-Four hooks are installed by `make setup`:
+Four hooks are installed by `make setup`, and every run reinstalls the three target-repo ones whose installed copy differs from this checkout's. `make setup` runs once per machine, so without that a hook added here afterwards reaches a repo configured before it existed only if somebody remembers to run setup again, and until they do nothing reports the gap: the repo pushes exactly as it always did, with one fewer check than this checkout believes it has. The signature refusal below landed that way and sat uninstalled for a week in the repository it was written for.
 
 **Target repo pre-commit** (`hooks/pre-commit`):
 Blocks the configured bot account from modifying dependency files (package.json, DEPS, Cargo.toml, go.mod, etc.). Prevents bots from introducing external dependencies without review.
@@ -66,7 +68,7 @@ All three target-repo hooks are inert in a checkout whose `user.name` is not the
 
 **Where a target repo's hook lands.** Not `<repo>/.git/hooks` unconditionally. `core.hooksPath` *replaces* that directory rather than adding to it, so in a target repo that sets it — as one with its own checked-in hooks does — a hook written to `.git/hooks` never runs and never says so. Setup resolves the configured path and installs into that.
 
-Two things follow from the resolved directory usually being inside the working tree. Setup adds an entry to the target repo's `.git/info/exclude`, which is local to the clone, so the installed file does not show up as untracked and no tracked `.gitignore` is touched. And where the target repo already tracks a hook of that name, setup installs nothing and says so, rather than overwriting a file somebody committed.
+Two things follow from the resolved directory usually being inside the working tree. Setup adds an entry to the target repo's `.git/info/exclude`, which is local to the clone, so the installed file does not show up as untracked and no tracked `.gitignore` is touched. And where the target repo already tracks a hook of that name, nothing is installed over it, rather than overwriting a file somebody committed. Setup names it, so whoever is setting the machine up knows the check that hook would have carried is not in force; a run passes over it silently, since a line printed at every start is one nobody reads.
 
 ## Commit Format
 

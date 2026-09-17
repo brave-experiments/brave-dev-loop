@@ -1223,6 +1223,82 @@ class TestBotApplyRepoIdentity:
         assert result.returncode == 0, result.stderr
 
 
+class TestSignaturesVerifyLocally:
+    """Whether git can tell the bot's signed commit from an unsigned one.
+
+    Signing and verifying are separately configured, and without the second git reports a good
+    signature as "No signature": the same words it uses for a commit that never had one.
+    """
+
+    def _signing_repo(self, tmp_path):
+        """A repo configured as the bot signs, with the key beside its own public half.
+
+        ssh-keygen falls back to the private file next to the .pub it was given, so nothing here
+        needs an agent. Global config is redirected at a throwaway file because this machine's own
+        signing settings would otherwise decide what these tests observe.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        key = tmp_path / "botkey"
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                "bot",
+                "-f",
+                str(key),
+            ],
+            check=True,
+        )
+        fake_global = tmp_path / "gitconfig"
+        fake_global.write_text("")
+        env = {"GIT_CONFIG_GLOBAL": str(fake_global), "GIT_CONFIG_NOSYSTEM": "1"}
+        run_identity_snippet(
+            f"bot_apply_repo_identity '{repo}' bot bot@example.com '{key}.pub'",
+            env=env,
+        )
+        return repo, dict(os.environ, **env)
+
+    def _commit(self, repo, env):
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "signed"],
+            check=True,
+            env=env,
+        )
+
+    def _verdict(self, repo, env, cwd=None):
+        return subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%G?"],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=cwd,
+        )
+
+    def test_a_signed_commit_reads_as_signed(self, tmp_path):
+        repo, env = self._signing_repo(tmp_path)
+        self._commit(repo, env)
+        result = self._verdict(repo, env)
+        assert result.stdout.strip() == "G", result.stderr
+
+    def test_it_holds_below_the_top_of_the_repo(self, tmp_path):
+        # A relative allowedSignersFile is resolved against the directory git was run from, so
+        # verification would work at the top of the repo and fail in any subdirectory, which is
+        # where a hook and an editor both tend to run.
+        repo, env = self._signing_repo(tmp_path)
+        self._commit(repo, env)
+        below = repo / "a" / "b"
+        below.mkdir(parents=True)
+        result = self._verdict(repo, env, cwd=below)
+        assert result.stdout.strip() == "G", result.stderr
+
+
 class TestBotExportIdentityEnv:
     def _fake_gh(self, tmp_path, tokens):
         """A stub gh that knows tokens for the given accounts."""

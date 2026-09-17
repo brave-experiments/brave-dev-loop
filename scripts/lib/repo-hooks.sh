@@ -96,3 +96,70 @@ repo_install_hook() {
     fi
   fi
 }
+
+# The hooks a target repo gets, in one place, so a hook added to this checkout reaches both the
+# machine being set up and every run after that.
+REPO_BOT_HOOKS="pre-commit pre-push post-checkout"
+
+# Whether the hook a repo has installed is already what this checkout would write. Compared against
+# the rendered source rather than by date, so an edit here counts and a re-run does not.
+repo_hook_current() {
+  local repo="$1" source_file="$2" hook_name="$3" bot_user="$4" dest
+  dest="$(repo_hooks_dir "$repo")/$hook_name"
+  [ -f "$dest" ] || return 1
+  sed "s/__BOT_USERNAME__/$bot_user/g" "$source_file" | cmp -s - "$dest"
+}
+
+# Echo the path a repo tracks its own hook of this name at, or nothing where it tracks none. Read
+# only: it looks where git looks without creating the directory, since a repo tracking a file there
+# has one already.
+repo_tracked_hook() {
+  local repo="$1" hook_name="$2" dir dest relative
+  dir=$(repo_hooks_dir "$repo")
+  [ -d "$dir" ] || return 0
+  dest="$(cd "$dir" && pwd -P)/$hook_name"
+  relative=$(repo_worktree_relative "$repo" "$dest")
+  [ -n "$relative" ] || return 0
+  git -C "$repo" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1 || return 0
+  printf '%s\n' "$relative"
+}
+
+# Say which hooks a repo keeps its own committed copy of, so whoever is setting the machine up knows
+# the guard that one would have carried is not in force. Setup's business rather than a run's: it is
+# an arrangement somebody chose, and a warning repeated at every start is one nobody reads.
+repo_report_tracked_hooks() {
+  local repo="$1" name tracked
+  for name in $REPO_BOT_HOOKS; do
+    tracked=$(repo_tracked_hook "$repo" "$name")
+    [ -n "$tracked" ] || continue
+    echo "  ⚠ $name not installed: that repo tracks $tracked as its own hook."
+  done
+  return 0
+}
+
+# Bring a target repo's hooks up to date with this checkout's, saying nothing about the ones that
+# already are.
+#
+# `make setup` installs them, and it runs once per machine. So a hook added here afterwards reaches a
+# repo configured before it existed only if somebody remembers to run setup again, and until they do
+# nothing reports the gap: the repo pushes exactly as it always did, with one fewer check than this
+# checkout believes it has. The signature check landed that way and sat uninstalled for a week in
+# the repository it was written for.
+repo_refresh_bot_hooks() {
+  local repo="$1" bot_user="$2" hooks_src="$3" name note
+  [ -n "$bot_user" ] || return 0
+  for name in $REPO_BOT_HOOKS; do
+    [ -f "$hooks_src/$name" ] || continue
+    [ -n "$(repo_tracked_hook "$repo" "$name")" ] && continue
+    repo_hook_current "$repo" "$hooks_src/$name" "$name" "$bot_user" && continue
+    case "$name" in
+      pre-commit) note="blocks $bot_user from modifying dependencies" ;;
+      pre-push) note="blocks a push whose commits are not $bot_user's, or unsigned" ;;
+      post-checkout) note="gives a new worktree the main checkout's .envrc" ;;
+    esac
+    if repo_install_hook "$repo" "$hooks_src/$name" "$name" "$bot_user"; then
+      echo "  ✓ $name hook installed ($note)"
+    fi
+  done
+  return 0
+}

@@ -140,7 +140,7 @@ bot_signing_key() {
 # Set locally, never globally: the machine owner's own signing config is left
 # alone, and this repo stops inheriting it.
 bot_apply_repo_signing() {
-  local repo="$1" signing_key="$2"
+  local repo="$1" signing_key="$2" email="$3" key_line allowed
   if [ -z "$signing_key" ]; then
     # No bot key configured — leave whatever the owner has set rather than
     # half-configuring signing.
@@ -150,6 +150,29 @@ bot_apply_repo_signing() {
   git -C "$repo" config --local user.signingkey "$signing_key"
   git -C "$repo" config --local commit.gpgsign true
   git -C "$repo" config --local tag.gpgsign true
+
+  # Signing and being able to check a signature are separate settings, and without the second git
+  # cannot read an ssh signature at all. What it prints for a good one is then an error and "No
+  # signature" — the same words as for a commit that was never signed. So the one command anybody
+  # reaches for reports the bot's own work as unsigned, and a branch has been rewritten and
+  # force-pushed to add a signature that was already on it.
+  [ -n "$email" ] || return 0
+  [ -r "$signing_key" ] || return 0
+  key_line=$(awk 'NF >= 2 { print $1, $2; exit }' "$signing_key")
+  [ -n "$key_line" ] || return 0
+
+  # In the git directory rather than the working tree: it is one clone's state and belongs beside the
+  # config that names it. Absolute, because a relative path is resolved against whatever directory
+  # git was run from, which would verify from the top of the repo and fail anywhere below it.
+  allowed=$(git -C "$repo" rev-parse --git-common-dir) || return 0
+  case "$allowed" in
+    /*) ;;
+    *) allowed="$repo/$allowed" ;;
+  esac
+  allowed="$allowed/allowed_signers"
+
+  printf '%s %s\n' "$email" "$key_line" >"$allowed"
+  git -C "$repo" config --local gpg.ssh.allowedSignersFile "$allowed"
   return 0
 }
 
@@ -162,7 +185,7 @@ bot_apply_repo_identity() {
   else
     git -C "$repo" config --local --unset core.sshCommand 2>/dev/null || true
   fi
-  bot_apply_repo_signing "$repo" "$(bot_signing_key "$5" "$key")"
+  bot_apply_repo_signing "$repo" "$(bot_signing_key "$5" "$key")" "$email"
   return 0
 }
 
