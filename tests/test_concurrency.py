@@ -50,7 +50,12 @@ class Holder:
         # outlives its parent — how a lock gets orphaned in the wild. Without
         # it bash execs the sleep, so the holder is a single process and
         # killing it drops the lock (the ordinary case).
-        keep = "sleep 120 &\nwait" if orphan_child else "sleep 120"
+        #
+        # It echoes the child's pid, and __init__ waits for that line, because
+        # the slot number is printed before the fork: a caller that killed the
+        # parent as soon as it had the slot could land in between, leaving no
+        # child, no orphan and a lock the kernel had already dropped.
+        keep = 'sleep 120 &\necho "$!"\nwait' if orphan_child else "sleep 120"
         script = (
             f"source {LIB}/run-slots.sh\n"
             f"bot_acquire_run_slot {bot_dir} {max_slots} || exit 1\n"
@@ -67,6 +72,8 @@ class Holder:
         self.bot_dir = bot_dir
         self.slot = int(self.proc.stdout.readline().strip())
         self.pid = self.proc.pid
+        if orphan_child:
+            self.proc.stdout.readline()
 
     def kill(self, children_too=True):
         with_children = _descendants(self.proc.pid) if children_too else []
