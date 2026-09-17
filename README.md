@@ -172,9 +172,10 @@ make check             # all three: the before-you-push pass
 
 `./tests/test-suite.sh` validates an installation end to end.
 
-The security scan is the only check CI runs on pull requests here, and
-`make check-reviewdog` is the same scan locally — see
-[Development](docs/development.md).
+A pull request here gets lint and the tests from
+[`.github/workflows/lint-and-test.yml`](.github/workflows/lint-and-test.yml), and
+the security scan from an organization-level workflow — `make check-reviewdog` is
+that scan locally. See [Development](docs/development.md).
 
 ## License
 

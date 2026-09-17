@@ -41,7 +41,7 @@ This documentation is split into focused files for better performance. Read only
 - **best_practices.md** (in target repo's docs dir, per `bestPractices.docsDir` config) - Index of all best practices for the target codebase, *when the project has one*. Read the relevant sub-docs based on what you're working on. Most projects do not have it: check, and if it is absent read the rules the target repo does keep (its root `AGENTS.md`/`CLAUDE.md`, the profile's `docs/`) instead of hunting for the file.
 
 ### Changes to This Repository
-- **[docs/development.md](../docs/development.md)** - Read this when the code you are changing is *this* repo (brave-dev-loop), not the target repo. Before committing such a change, run `make check` from the bot directory — lint, tests, and `make check-reviewdog`, the same brave/security-action scan that comments on pull requests here. It is the only check CI runs on this repo, so a finding you do not see locally is one a reviewer sees on the PR.
+- **[docs/development.md](../docs/development.md)** - Read this when the code you are changing is *this* repo (brave-dev-loop), not the target repo. Before committing such a change, run `make check` from the bot directory — lint, tests, and `make check-reviewdog`, the same brave/security-action scan that comments on pull requests here. A pull request runs all three too, lint and tests in `.github/workflows/lint-and-test.yml` and the scan in an organization-level workflow, so anything you skip locally you wait for afterwards.
 
 ### Continuous Improvement
 - **[docs/learnable-patterns.md](../docs/learnable-patterns.md)** - Identifying, evaluating, and capturing reusable patterns
