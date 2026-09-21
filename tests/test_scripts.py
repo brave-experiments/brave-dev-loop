@@ -3382,6 +3382,164 @@ class TestBotConfigBool:
         assert self._read(tmp_dir, False, "bot_config") == ""
 
 
+class TestReviewRequestQueue:
+    """The queue is GitHub's own: a PR where the bot is a requested reviewer.
+    Nothing local records what has been answered, which is what makes the answer
+    the same on every machine the loop is deployed to — the bot submitting a
+    review is what removes the PR from the queue, and a re-request is what puts
+    it back."""
+
+    GATE = os.path.join(SCRIPT_DIR, "check-review-requests.sh")
+    JOB = os.path.join(SCRIPT_DIR, "review-requested.sh")
+
+    @staticmethod
+    def _configured_bot():
+        """Whichever bot lib/load-config.sh resolves here. The shell loader
+        reads config.json beside it, so the suite must not assume a name."""
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"source {os.path.join(SCRIPT_DIR, 'lib', 'load-config.sh')}"
+                ' >/dev/null && printf "%s" "$BOT_USERNAME"',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    @staticmethod
+    def _stubs(tmp_dir, queue="101\n102\n103", gh_rc=0, failing_pr=None):
+        """A gh that answers the queue query and a claude that records its
+        prompt, both ahead of the real ones on PATH."""
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        gh = os.path.join(bindir, "gh")
+        with open(gh, "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                'echo "$*" >> "$GH_LOG"\n'
+                f"[ {gh_rc} -eq 0 ] || {{ echo 'gh: bad credentials' >&2; exit {gh_rc}; }}\n"
+                f"printf '%s' '{queue}'\n"
+                f"[ -z '{queue}' ] || echo\n"
+            )
+        os.chmod(gh, 0o755)
+        claude = os.path.join(bindir, "claude")
+        with open(claude, "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                'echo "$*" >> "$CLAUDE_LOG"\n'
+                + (
+                    f'case "$*" in *"#{failing_pr}"*) exit 2 ;; esac\n'
+                    if failing_pr
+                    else ""
+                )
+                + "exit 0\n"
+            )
+        os.chmod(claude, 0o755)
+        return bindir
+
+    def _run(self, script, tmp_dir, bindir, env=None):
+        logs = {
+            "GH_LOG": os.path.join(tmp_dir, "gh.log"),
+            "CLAUDE_LOG": os.path.join(tmp_dir, "claude.log"),
+        }
+        result = subprocess.run(
+            [script],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                **logs,
+                **(env or {}),
+            },
+        )
+
+        def read(path):
+            try:
+                with open(path) as f:
+                    return [line.strip() for line in f if line.strip()]
+            except FileNotFoundError:
+                return []
+
+        return result, read(logs["GH_LOG"]), read(logs["CLAUDE_LOG"])
+
+    def test_an_empty_queue_stops_at_the_gate(self, tmp_dir):
+        """96 polls a day, and all but a few find nothing. The gate runs before
+        the git sync and before any agent, so those cost one API call."""
+        result, _, _ = self._run(self.GATE, tmp_dir, self._stubs(tmp_dir, queue=""))
+        assert result.returncode == 1, result.stdout
+        assert "nothing to do" in result.stdout
+
+    def test_a_failed_query_is_not_an_empty_queue_but_stops_all_the_same(self, tmp_dir):
+        """An expired token answers every question with silence. Treating that
+        as work would start a session to review nothing."""
+        result, _, _ = self._run(self.GATE, tmp_dir, self._stubs(tmp_dir, gh_rc=1))
+        assert result.returncode == 1
+        assert "Could not query review requests" in result.stderr
+
+    def test_a_queued_request_opens_the_gate_and_names_its_prs(self, tmp_dir):
+        result, gh_log, _ = self._run(self.GATE, tmp_dir, self._stubs(tmp_dir))
+        assert result.returncode == 0, result.stderr
+        assert "101 102 103" in result.stdout
+        assert f"review-requested:{self._configured_bot()}" in gh_log[0]
+        assert "--state open" in gh_log[0]
+
+    def test_the_job_reviews_every_queued_pr_in_its_own_session(self, tmp_dir):
+        """A review is most of a context window on its own. One session per PR,
+        and the skill fans out to subagents inside each one."""
+        result, _, claude_log = self._run(
+            self.JOB, tmp_dir, self._stubs(tmp_dir), {"REVIEW_REQUESTED_MAX_PRS": "3"}
+        )
+        assert result.returncode == 0, result.stderr
+        assert len(claude_log) == 3
+        for pr, invocation in zip((101, 102, 103), claude_log):
+            assert f"-p /review-prs #{pr} open auto" in invocation
+
+    def test_the_session_may_launch_subagents(self, tmp_dir):
+        """Without Task the skill's whole file-based pipeline runs in the one
+        session it was trying to keep small."""
+        _, _, claude_log = self._run(self.JOB, tmp_dir, self._stubs(tmp_dir))
+        assert "--allowedTools" in claude_log[0]
+        assert "Task" in claude_log[0].split("--allowedTools")[1]
+
+    def test_the_cap_leaves_the_rest_of_the_queue_for_the_next_poll(self, tmp_dir):
+        """Fifteen minutes later there is another poll. Reviewing the whole
+        queue in one job is how a backlog turns into a job that never ends."""
+        result, _, claude_log = self._run(
+            self.JOB, tmp_dir, self._stubs(tmp_dir), {"REVIEW_REQUESTED_MAX_PRS": "2"}
+        )
+        assert result.returncode == 0, result.stderr
+        assert len(claude_log) == 2
+        assert "#103" in result.stdout
+
+    def test_one_failed_review_does_not_take_the_queue_down_with_it(self, tmp_dir):
+        result, _, claude_log = self._run(
+            self.JOB,
+            tmp_dir,
+            self._stubs(tmp_dir, failing_pr=102),
+            {"REVIEW_REQUESTED_MAX_PRS": "3"},
+        )
+        assert len(claude_log) == 3
+        assert result.returncode != 0
+        assert "Review of #102 failed" in result.stderr
+
+    def test_the_job_asks_again_because_another_machine_may_have_answered(
+        self, tmp_dir
+    ):
+        """Between the gate and the job is a git fetch, a checkout and a target
+        repo sync. The queue is shared, so it can empty in that window."""
+        result, gh_log, claude_log = self._run(
+            self.JOB, tmp_dir, self._stubs(tmp_dir, queue="")
+        )
+        assert gh_log, "the job took the gate's word for it"
+        assert claude_log == []
+        assert result.returncode == 0
+        assert "nothing to do" in result.stdout
+
+
 class TestRunLocking:
     """A missing flock used to exit 127, which `|| exit 0` reported as "already
     running" — so on a machine without flock every run and every cron job
@@ -3905,6 +4063,22 @@ class TestProjectSchedules:
             if re.match(r"^[0-9*]", line)  # a cron line, not a comment or SHELL=
         ]
 
+    @classmethod
+    def _run_jobs(cls, block):
+        """The jobs that start a run.sh. The hour-by-hour reasoning below is
+        about those: they hold a run slot for hours. The gated polls run on
+        every hour by design and are constrained on minutes instead."""
+        return [j for j in cls._jobs(block) if "./run.sh " in j]
+
+    @classmethod
+    def _review_request_job(cls, tmp_dir, profile):
+        (job,) = [
+            j
+            for j in cls._jobs(cls._render(tmp_dir, profile))
+            if "review-requested.sh" in j
+        ]
+        return job
+
     def test_brave_core_jobs_are_what_is_installed_today(self, tmp_dir):
         """These jobs run unattended on a machine nobody watches. Moving them
         into a profile is a refactor, and a refactor that changes one cron line
@@ -3912,8 +4086,8 @@ class TestProjectSchedules:
         with open(self.GOLDEN) as f:
             assert self._render(tmp_dir, "brave-core") == f.read()
 
-    def test_bravebot_runs_two_jobs_a_day(self, tmp_dir):
-        assert len(self._jobs(self._render(tmp_dir, "bravebot"))) == 2
+    def test_bravebot_runs_two_agent_runs_a_day(self, tmp_dir):
+        assert len(self._run_jobs(self._render(tmp_dir, "bravebot"))) == 2
 
     def test_bravebot_runs_twenty_iterations_overnight_and_ten_after_lunch(
         self, tmp_dir
@@ -3930,7 +4104,7 @@ class TestProjectSchedules:
         so every job's timeout-tree.sh cap has to expire before the hour comes
         round again."""
         day = 24 * 60 * 60
-        for job in self._jobs(self._render(tmp_dir, "bravebot")):
+        for job in self._run_jobs(self._render(tmp_dir, "bravebot")):
             minute, hour = (int(field) for field in job.split()[:2])
             # How long this job has until 01:00 next comes round. The overnight
             # job starts on it, so the wrap gives it nothing and it gets the day.
@@ -3942,9 +4116,59 @@ class TestProjectSchedules:
     def test_bravebot_does_not_share_an_hour_with_brave_core(self, tmp_dir):
         """Both projects can be deployed on one machine, and each run.sh drives
         its own agent session for hours."""
-        mine = {j.split()[1] for j in self._jobs(self._render(tmp_dir, "bravebot"))}
-        theirs = {j.split()[1] for j in self._jobs(self._render(tmp_dir, "brave-core"))}
+        mine = {j.split()[1] for j in self._run_jobs(self._render(tmp_dir, "bravebot"))}
+        theirs = {
+            j.split()[1] for j in self._run_jobs(self._render(tmp_dir, "brave-core"))
+        }
         assert not (mine & theirs)
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot"])
+    def test_a_review_requested_of_the_bot_is_polled_for(self, tmp_dir, profile):
+        """Someone clicking "Request review" (or the re-request arrow) is an ask
+        no schedule predicted. The poll is what turns it into a review, and it
+        goes through the gate so the 96 polls a day that find nothing cost
+        nothing — no agent session appears in the crontab line at all."""
+        job = self._review_request_job(tmp_dir, profile)
+        assert "./scripts/check-review-requests.sh && git fetch origin" in job
+        assert (
+            "./scripts/with-lock.sh review-prs -- ./scripts/review-requested.sh" in job
+        )
+        assert "/usr/bin/claude" not in job
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot"])
+    def test_the_poll_runs_every_fifteen_minutes(self, tmp_dir, profile):
+        job = self._review_request_job(tmp_dir, profile)
+        minutes = [int(m) for m in job.split()[0].split(",")]
+        assert len(minutes) == 4
+        assert all(b - a == 15 for a, b in zip(minutes, minutes[1:]))
+
+    def test_the_two_projects_poll_on_different_minutes(self, tmp_dir):
+        """Deployed on one machine these are two checkouts, two crontab blocks
+        and two locks — nothing stops them polling at once, and the job behind
+        the gate builds a worktree per PR."""
+
+        def minutes(profile):
+            return set(self._review_request_job(tmp_dir, profile).split()[0].split(","))
+
+        assert not (minutes("brave-core") & minutes("bravebot"))
+
+    def test_the_poll_and_the_sweep_share_one_lock(self, tmp_dir):
+        """A PR review is a full checkout of the target repo per PR. Two of them
+        at once is what the shared lock name buys, at the cost of a request
+        waiting behind a sweep that is already running."""
+        jobs = self._jobs(self._render(tmp_dir, "brave-core"))
+        reviewing = [j for j in jobs if "review-prs" in j]
+        assert len(reviewing) == 3  # weekday sweep, weekend sweep, the poll
+        for job in reviewing:
+            assert "./scripts/with-lock.sh review-prs -- " in job
+
+    def test_bravebot_reviews_only_what_it_is_asked_to(self, tmp_dir):
+        """This project has no automated best-practices sweep yet. Answering an
+        explicit request does not wait on one: what a human asked for is not the
+        unsolicited pass over everything that moved today."""
+        block = self._render(tmp_dir, "bravebot")
+        assert "review-requested.sh" in block
+        assert "/review-prs 1d" not in block
 
     @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
     def test_every_job_runs_in_the_bot_dir_and_logs_there(self, tmp_dir, profile):

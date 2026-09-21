@@ -179,6 +179,11 @@ BOT_CODEX_BIN=$(bot_config '.bot.codexBin')
 BOT_CURSOR_MODEL=$(bot_config '.bot.cursorModel')
 BOT_CURSOR_BIN=$(bot_config '.bot.cursorBin')
 
+# --allowedTools for an unattended agent session. Every caller uses this one
+# value: a job started with a shorter list than the crontab's fails somewhere
+# mid-session, on whichever tool the skill reaches for last.
+BOT_AGENT_TOOLS="Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch"
+
 BOT_BP_DOCS_DIR=$(bot_config '.bestPractices.docsDir')
 
 # Absolute paths. Prefer these over the raw (base-ambiguous) config values.
@@ -238,6 +243,6 @@ export BOT_DIR BOT_CONFIG_FILE
 export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BOT_TARGET_REPO_PATH BOT_TARGET_REPO_DIR BOT_PRD_MODE
 export BOT_PROFILE BOT_PROFILE_DIR BOT_PROFILE_WORKTREES BOT_MAX_CONCURRENT_RUNS
 export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_SIGNING_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
-export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN
+export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN BOT_AGENT_TOOLS
 export BOT_BRAVEBOT_MODEL BOT_BRAVEBOT_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS

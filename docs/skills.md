@@ -19,6 +19,14 @@ Bot-only skills are available as slash commands in Claude Code. 8 bot-specific s
 | `/learnable-pattern-search` | Analyze PR review comments to discover learnable patterns. Supports self-review mode to identify overly strict rules |
 | `/update-best-practices` | Fetch and merge upstream Chromium documentation guidelines |
 
+`/review-prs` is scheduled two ways, and a project can have either or both.
+The **sweep** reviews whatever moved today, unsolicited, a few times a day. The
+**review-request poll** runs every 15 minutes and reviews only PRs where someone
+clicked "Request review" on the bot — `scripts/check-review-requests.sh` asks
+GitHub, and `scripts/review-requested.sh` gives each one its own session. An
+empty queue costs one API call: the gate stops before any agent starts. Both hold
+the same `review-prs` lock, because either one builds a checkout per PR.
+
 ## Monitoring
 
 | Skill | Description |
