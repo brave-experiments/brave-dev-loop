@@ -4253,23 +4253,25 @@ class TestProjectSchedules:
         with open(self.GOLDEN) as f:
             assert self._render(tmp_dir, "brave-core") == f.read()
 
-    def test_bravebot_runs_two_agent_runs_a_day(self, tmp_dir):
-        assert len(self._run_jobs(self._render(tmp_dir, "bravebot"))) == 2
+    def test_bravebot_runs_three_agent_runs_a_day(self, tmp_dir):
+        assert len(self._run_jobs(self._render(tmp_dir, "bravebot"))) == 3
 
-    def test_bravebot_runs_twenty_iterations_overnight_and_ten_after_lunch(
+    def test_bravebot_runs_twenty_iterations_overnight_and_ten_twice_after(
         self, tmp_dir
     ):
         jobs = self._jobs(self._render(tmp_dir, "bravebot"))
         (overnight,) = [j for j in jobs if j.startswith("0 1 * * * ")]
-        (afternoon,) = [j for j in jobs if j.startswith("45 13 * * * ")]
+        (midday,) = [j for j in jobs if j.startswith("45 12 * * * ")]
+        (evening,) = [j for j in jobs if j.startswith("0 17 * * * ")]
         assert "./run.sh 20 " in overnight
-        assert "./run.sh 10 " in afternoon
+        assert "./run.sh 10 " in midday
+        assert "./run.sh 10 " in evening
 
     def test_no_bravebot_run_is_alive_when_the_overnight_one_starts(self, tmp_dir):
-        """Only one run may hold the slot. A run still going at 01:00 would make
-        that night's job exit on a busy slot, and the night after that one too,
-        so every job's timeout-tree.sh cap has to expire before the hour comes
-        round again."""
+        """Runs overlap on purpose, each on its own slot, but a wedged one must
+        not accumulate: a run still going when 01:00 comes round again has
+        outlived every story it claimed, so every job's timeout-tree.sh cap has
+        to expire before that hour."""
         day = 24 * 60 * 60
         for job in self._run_jobs(self._render(tmp_dir, "bravebot")):
             minute, hour = (int(field) for field in job.split()[:2])
