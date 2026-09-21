@@ -39,10 +39,20 @@ ISSUE_LINE = re.compile(
 )
 PR_URL = re.compile(r"github\.com/([^/]+/[^/]+)/pull/(\d+)")
 
-PR_FIELDS = (
-    "headRefName,headRefOid,headRepositoryOwner,state,title,body,"
-    "closingIssuesReferences"
-)
+PR_FIELDS = "headRefName,headRefOid,headRepositoryOwner,state,title,body"
+
+# `gh pr view --json closingIssuesReferences` only exists from gh 2.46, and an
+# unknown field fails the whole read, so the link comes from GraphQL instead --
+# every gh version can reach it.
+CLOSING_ISSUES_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      closingIssuesReferences(first: 10) { nodes { number } }
+    }
+  }
+}
+"""
 
 
 def say(message):
@@ -95,7 +105,37 @@ def pr_details(repo, number):
         raw = run("gh", "pr", "view", number, "--repo", repo, "--json", PR_FIELDS)
     except subprocess.CalledProcessError as exc:
         die(f"gh could not read {repo}#{number}: {exc.stderr.strip()}")
-    return json.loads(raw)
+    pr = json.loads(raw)
+    pr["closingIssuesReferences"] = closing_issues(repo, number)
+    return pr
+
+
+def closing_issues(repo, number):
+    """The issues this pull request closes, as `[{"number": n}, ...]`.
+
+    An empty list stands for both "closes nothing" and "the query failed": the
+    only caller falls back to the body's first line, which is enough to name a
+    worktree, so a GraphQL failure is not worth stopping for.
+    """
+    owner, _, name = repo.partition("/")
+    try:
+        raw = run(
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={CLOSING_ISSUES_QUERY}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            "-F",
+            f"number={number}",
+        )
+        pr = json.loads(raw)["data"]["repository"]["pullRequest"]
+        return pr["closingIssuesReferences"]["nodes"]
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, TypeError):
+        return []
 
 
 def worktree_for_branch(main, branch):
