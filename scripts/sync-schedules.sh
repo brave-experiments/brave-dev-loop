@@ -23,7 +23,7 @@ source "$SCRIPT_DIR/lib/cron-blocks.sh"
 source "$SCRIPT_DIR/lib/cron-jobs.sh"
 
 CLAUDE_BIN="$BOT_CLAUDE_BIN"
-CLAUDE_TOOLS="Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch"
+CLAUDE_TOOLS="$BOT_AGENT_TOOLS"
 LOG_DIR="$PROJECT_ROOT/logs"
 $PRINT_ONLY || mkdir -p "$LOG_DIR"
 

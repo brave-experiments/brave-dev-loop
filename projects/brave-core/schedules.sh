@@ -44,6 +44,15 @@ bot_cron_job "0 12 * * 0,6" "./scripts/check-new-prs.sh" \
   "review-prs-cron.log"
 
 echo ""
+echo "# Review requested from the bot — skip unless someone asked"
+echo "# Gate check runs before git sync to avoid wasted fetches (96 runs/day, most exit early)"
+echo "# Every 15 min, on minutes no other job here uses. Shares the review-prs"
+echo "# lock with the sweep above, so the two never review at once."
+bot_cron_job "3,18,33,48 * * * *" "./scripts/check-review-requests.sh" \
+  "./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- ./scripts/review-requested.sh" \
+  "review-requested-cron.log"
+
+echo ""
 echo "# Learnable pattern search — skip if no recent merged PRs"
 echo "# Gate check runs before git sync to avoid wasted fetches"
 bot_cron_job "0 6 * * *" "./scripts/check-bot-prs.sh" \

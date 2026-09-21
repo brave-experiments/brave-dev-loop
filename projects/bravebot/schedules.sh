@@ -29,3 +29,14 @@ echo "# Daily: one run of 10 iterations, afternoon, killed at 11h13m"
 bot_cron_job "45 13 * * *" "./scripts/check-has-work.sh" \
   "./scripts/sync-target-repo.sh && ./scripts/timeout-tree.sh 40380 ./run.sh 10" \
   "run-cron.log"
+
+echo ""
+echo "# Review requested from the bot — skip unless someone asked"
+echo "# Gate check runs before git sync to avoid wasted fetches (96 runs/day, most exit early)"
+echo "# This project schedules no unsolicited best-practices sweep: the bot reviews"
+echo "# a bravebot PR when a human clicks Request review on it, and not otherwise."
+echo "# Minutes are offset from brave-core's copy of this job, which can be"
+echo "# deployed on the same machine."
+bot_cron_job "8,23,38,53 * * * *" "./scripts/check-review-requests.sh" \
+  "./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- ./scripts/review-requested.sh" \
+  "review-requested-cron.log"
