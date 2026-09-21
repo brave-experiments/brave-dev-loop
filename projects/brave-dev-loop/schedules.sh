@@ -12,7 +12,8 @@
 # the target repo is this bot directory.
 #
 # The hours dodge the other two deployments a machine can be running: bravebot
-# starts at 01:00 and 13:45, brave-core between 06:00 and 20:00, and each one
+# starts at 01:00, 12:45 and 17:00, brave-core between 06:00 and 20:00, and
+# each one
 # drives its own agent session over its own checkout.
 
 echo ""
