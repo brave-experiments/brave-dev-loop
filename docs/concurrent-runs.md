@@ -108,6 +108,16 @@ issue is not the loop's to undo.
 ./scripts/sweep-in-progress.py --dry-run   # what start-up would hand back
 ```
 
+It reads the label twice, and the second read is not redundant. `gh issue list
+--label` searches an index that trails a write by seconds — measured at 4.8s to
+show a label that had been added and 2.2s to stop showing one that had been
+removed — and `make schedules` installs the same cron times on every machine, so
+two of them select inside that window as a matter of course rather than by bad
+luck. The listing is what filters the whole PRD in one call; `gh issue view` on
+the single issue about to be taken does not trail, so that is what decides. A
+story that loses the second read is dropped, its claim handed straight back, and
+the next candidate tried.
+
 So one issue can sit up to 6 hours after the machine working it dies before
 another picks it up. The cost of the other choice is worse: two machines open
 two PRs for one issue. Turn it on by naming a label the issue repository

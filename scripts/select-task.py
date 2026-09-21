@@ -404,9 +404,10 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
         sid for sid, c in held.items() if int(c.get("slot", -1)) != int(args.slot)
     }
 
-    # A story this machine already holds a claim on is governed by that claim,
-    # not by the label it put on the issue itself — otherwise our own label
-    # would stop us resuming our own story on the next iteration.
+    # A claim here outranks a label: the claim knows which slot holds it and
+    # dies with that slot, the label knows neither. So a story this machine has
+    # a claim on is judged by the claim alone, and the label it put on the issue
+    # can never end up arguing against its own bookkeeping.
     blocked_issues = set(in_progress or ()) - {
         issue_number(s) for s in stories if s.get("id") in held
     }
@@ -467,47 +468,43 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
         selected = candidates[0]
 
     now = datetime.now(timezone.utc)
+
+    # Claim it while we still hold the lock, so no other run can select it, and
+    # label the issue so a run on another machine filters it out. Filtering
+    # excluded both already, so a refusal here means the state changed under us:
+    # a run here claimed the story, or a machine elsewhere labelled the issue
+    # inside the seconds its label takes to reach the index filtering searched.
+    # Either way take the next candidate rather than working somebody's story.
+    order = [selected] + [c for c in candidates if c.get("id") != selected.get("id")]
+    selected = None
+    for candidate in order:
+        candidate_id = candidate.get("id", "?")
+        if not claims_lib.claim(
+            bot_dir,
+            candidate_id,
+            args.slot,
+            args.run_pid,
+            args.run_id or None,
+            locked=True,
+        ):
+            continue
+        if not issue_lock.acquire(issue_number(candidate), bot_dir=bot_dir):
+            claims_lib.release(
+                bot_dir, story_id=candidate_id, slot=args.slot, locked=True
+            )
+            continue
+        selected = candidate
+        break
+
+    if selected is None:
+        print(
+            json.dumps({"selected": False, "reason": "Could not claim any candidate"})
+        )
+        return 1
+
     story_id = selected.get("id", "?")
     status = selected.get("status", "pending")
     tier = assign_tier(selected, now)
-
-    # Claim it while we still hold the lock, so no other run can select it.
-    # Filtering already excluded stories held elsewhere; a refusal here means
-    # the state changed under us, so take the next candidate rather than
-    # working a story someone else is on.
-    if not claims_lib.claim(
-        bot_dir, story_id, args.slot, args.run_pid, args.run_id or None, locked=True
-    ):
-        remaining = [c for c in candidates if c.get("id") != story_id]
-        if not remaining:
-            print(
-                json.dumps(
-                    {
-                        "selected": False,
-                        "reason": f"{story_id} was claimed by another run",
-                    }
-                )
-            )
-            return 1
-        selected = remaining[0]
-        story_id = selected.get("id", "?")
-        status = selected.get("status", "pending")
-        tier = assign_tier(selected, now)
-        if not claims_lib.claim(
-            bot_dir, story_id, args.slot, args.run_pid, args.run_id or None, locked=True
-        ):
-            print(
-                json.dumps(
-                    {"selected": False, "reason": "Could not claim any candidate"}
-                )
-            )
-            return 1
-
-    # Label the issue so runs on other machines filter this story out. The
-    # claim above is what makes the story ours; the label is only how a machine
-    # that cannot read our claims file learns of it, so a failure here costs
-    # the guard and not the work.
-    issue_lock.acquire(issue_number(selected), bot_dir=bot_dir)
 
     # Update run-state.json
     update_run_state(run_state_path, run_state, story_id)

@@ -35,19 +35,23 @@ OFF = {
 class Gh:
     """Stands in for the gh CLI, answering by subcommand rather than by order.
 
-    ``issues`` is what `issue list` returns (None to fail the read), ``events``
+    ``issues`` is what `issue list` returns (None to fail the read), ``labels``
+    maps an issue number to the labels `issue view` finds on it, and ``events``
     maps an issue number to the (label, timestamp) pairs its event log holds.
     """
 
-    def __init__(self, issues="[]", events=None):
+    def __init__(self, issues="[]", events=None, labels=None):
         self.calls = []
         self.issues = issues
         self.events = events or {}
+        self.labels = labels or {}
 
     def __call__(self, args, timeout=120):
         self.calls.append(args)
         if args[:2] == ["issue", "list"]:
             return self.issues
+        if args[:2] == ["issue", "view"]:
+            return json.dumps(self.labels.get(int(args[2]), []))
         if args[0] == "api":
             number = int(args[2].rsplit("/", 2)[1])
             lines = [
@@ -130,9 +134,30 @@ class TestInProgress:
         assert "--assignee" not in fake.calls[0]
 
 
+class TestLabelsOn:
+    """The read that decides, so it must be the issue and not the index."""
+
+    def test_returns_the_labels(self, gh):
+        gh(labels={101: ["bug", "bot/in-progress"]})
+        assert issue_lock.labels_on(101, ON) == {"bug", "bot/in-progress"}
+
+    def test_reads_the_issue_not_the_label_index(self, gh):
+        fake = gh(labels={101: []})
+        issue_lock.labels_on(101, ON)
+        assert fake.calls[0][:3] == ["issue", "view", "101"]
+
+    def test_none_when_the_read_fails(self, monkeypatch):
+        monkeypatch.setattr(issue_lock, "_gh", lambda args, timeout=120: None)
+        assert issue_lock.labels_on(101, ON) is None
+
+    def test_none_on_unparseable_output(self, monkeypatch):
+        monkeypatch.setattr(issue_lock, "_gh", lambda args, timeout=120: "not json")
+        assert issue_lock.labels_on(101, ON) is None
+
+
 class TestAcquire:
     def test_adds_the_label(self, gh):
-        fake = gh()
+        fake = gh(labels={101: ["bug"]})
         assert issue_lock.acquire(101, ON) is True
         assert fake.edits() == [
             [
@@ -146,19 +171,26 @@ class TestAcquire:
             ]
         ]
 
-    def test_no_label_configured_is_not_an_acquire(self, gh):
-        fake = gh()
-        assert issue_lock.acquire(101, OFF) is False
-        assert fake.calls == []
-
-    def test_a_story_with_no_issue_is_not_an_acquire(self, gh):
-        fake = gh()
-        assert issue_lock.acquire(None, ON) is False
-        assert fake.calls == []
-
-    def test_a_failed_add_is_reported_not_raised(self, gh, monkeypatch):
-        monkeypatch.setattr(issue_lock, "_gh", lambda args, timeout=120: None)
+    def test_refuses_an_issue_another_machine_already_labelled(self, gh):
+        """The index read that filtered trails a write; this read does not."""
+        fake = gh(labels={101: ["bot/in-progress"]})
         assert issue_lock.acquire(101, ON) is False
+        assert fake.edits() == []
+
+    def test_no_label_configured_stands_in_no_ones_way(self, gh):
+        fake = gh()
+        assert issue_lock.acquire(101, OFF) is True
+        assert fake.calls == []
+
+    def test_a_story_with_no_issue_stands_in_no_ones_way(self, gh):
+        fake = gh()
+        assert issue_lock.acquire(None, ON) is True
+        assert fake.calls == []
+
+    def test_an_unreadable_issue_does_not_block_the_work(self, monkeypatch):
+        """Fail open: a GitHub hiccup costs the guard, never the story."""
+        monkeypatch.setattr(issue_lock, "_gh", lambda args, timeout=120: None)
+        assert issue_lock.acquire(101, ON) is True
 
 
 class TestRelease:

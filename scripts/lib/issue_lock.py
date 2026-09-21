@@ -18,9 +18,9 @@ dies never removes its labels. run.sh therefore drops the labels older than
 the age limit at start: that is the whole reason the age limit exists, and why
 it can be generous rather than tuned.
 
-The label speaks for other machines only. A story covered by this machine's own
-claims file is governed by that instead, which is what lets a run re-select a
-story it labelled in an earlier iteration — see select-task.py.
+The label speaks for other machines only. Where this machine's claims file has
+something to say about a story, that wins: a label is a weaker claim than the
+lock-backed one beside it, and must never outvote it — see select-task.py.
 
 Every call here is best-effort. A GitHub hiccup must not stop a run that can
 still work its own PRD, so a failed read means "no cross-machine guard for this
@@ -102,12 +102,47 @@ def _parse_iso(ts):
         return None
 
 
+def labels_on(issue, config=None):
+    """Every label on one issue, or None if it could not be read.
+
+    `gh issue view` reads the issue. `gh issue list --label` searches an index
+    that trails a write by a few seconds (measured: 4.8s to show a label that
+    had been added, 2.2s to stop showing one that had been removed). So this is
+    the read to trust when the answer decides something.
+    """
+    config = _config(config)
+    out = _gh(
+        [
+            "issue",
+            "view",
+            str(issue),
+            "--repo",
+            require_config(config, "project.issueRepository"),
+            "--json",
+            "labels",
+            "--jq",
+            "[.labels[].name]",
+        ]
+    )
+    if out is None:
+        return None
+    try:
+        return set(json.loads(out))
+    except (TypeError, ValueError, json.JSONDecodeError) as e:
+        print(f"WARNING: could not read the labels of #{issue}: {e}", file=sys.stderr)
+        return None
+
+
 def in_progress(config=None, bot_dir=None):
     """Issue numbers labelled in progress, whichever machine labelled them.
 
     Deliberately not filtered by assignee: the label means somebody is working
     the issue, and that is true whoever it is assigned to. `stale()` is the one
     that narrows to the bot's own issues, because that one removes labels.
+
+    This is the index-backed read, so it misses a label applied in the last few
+    seconds. It is the right shape for filtering a whole PRD in one call, and
+    `acquire()` closes the gap by reading the one issue it is about to take.
     """
     label = label_name(config, bot_dir)
     if not label:
@@ -139,30 +174,38 @@ def in_progress(config=None, bot_dir=None):
 
 
 def acquire(issue, config=None, bot_dir=None):
-    """Label an issue in progress. True when the label is on it afterwards.
+    """Take the in-progress label on an issue. False only if it is already taken.
 
-    False where the project defines no label, the story references no issue, or
-    the call failed — the caller works the story regardless. Losing the label
-    costs the cross-machine guard for that story, not the work.
+    False means the label was on the issue when we looked, so a machine
+    elsewhere is working it and the caller must pick something else. That is the
+    one answer worth a second call: the filtering read searches an index that
+    trails by seconds, and `make schedules` gives every machine the same cron
+    times, so two of them select inside that window rather than by bad luck.
+
+    Everything else is True, because nothing stands in the way of working the
+    story: a project with no label configured, a story naming no issue, an
+    unreadable issue, a failed write. A guard that cannot be placed costs the
+    guard, not the work.
     """
     label = label_name(config, bot_dir)
     if not label or not issue:
-        return False
+        return True
     config = _config(config)
-    return (
-        _gh(
-            [
-                "issue",
-                "edit",
-                str(issue),
-                "--repo",
-                require_config(config, "project.issueRepository"),
-                "--add-label",
-                label,
-            ]
-        )
-        is not None
+    held = labels_on(issue, config)
+    if held is not None and label in held:
+        return False
+    _gh(
+        [
+            "issue",
+            "edit",
+            str(issue),
+            "--repo",
+            require_config(config, "project.issueRepository"),
+            "--add-label",
+            label,
+        ]
     )
+    return True
 
 
 def release(issue, config=None, bot_dir=None):
