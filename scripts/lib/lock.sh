@@ -37,6 +37,8 @@ export BOT_LOCK_FD
 BOT_LOCK_DIR=""
 BOT_LOCK_FILE=""
 BOT_LOCK_BACKEND=""
+# Which of a counting semaphore's slots this process took. See bot_acquire_slot_of.
+BOT_LOCK_SLOT=""
 
 # Split out so tests can exercise every path on any machine. Set
 # BOT_LOCK_FORCE_BACKEND to flock|python|mkdir to pin one.
@@ -174,6 +176,46 @@ bot_acquire_lock() {
   # Not ours — close the fd again so a later attempt on another lock file
   # starts clean, and so a caller that gives up leaves nothing open.
   eval "exec $BOT_LOCK_FD>&-" 2>/dev/null || true
+  return 1
+}
+
+# Take any one of <count> locks sharing a name: a counting semaphore, for a job
+# that may run several at a time but not without limit.
+#
+# Slot 1 is the bare lock file, so a name that never asks for more than one
+# contends with every caller that took it before this existed — and a job whose
+# count is lowered back to 1 goes back to exactly the lock it had.
+#
+# Sets BOT_LOCK_SLOT to the number taken.
+# 0 = acquired, 1 = every slot is busy, 2 = error.
+bot_acquire_slot_of() {
+  local lockfile="$1" count="${2:-1}"
+  local slot candidate rc
+  [ -n "$lockfile" ] || { echo "bot_acquire_slot_of: no lockfile given" >&2; return 2; }
+  case "$count" in
+    ''|*[!0-9]*) echo "bot_acquire_slot_of: bad slot count '$count'" >&2; return 2 ;;
+  esac
+  [ "$count" -ge 1 ] || { echo "bot_acquire_slot_of: slot count must be >= 1" >&2; return 2; }
+
+  BOT_LOCK_SLOT=""
+  slot=1
+  while [ "$slot" -le "$count" ]; do
+    if [ "$slot" = "1" ]; then
+      candidate="$lockfile"
+    else
+      candidate="$lockfile.slot-$slot"
+    fi
+    # `|| rc=$?`: under `set -e` a bare call to a function that returns
+    # non-zero exits the caller before it can read $?.
+    rc=0
+    bot_acquire_lock "$candidate" || rc=$?
+    case $rc in
+      0) BOT_LOCK_SLOT="$slot"; return 0 ;;
+      1) ;;
+      *) return 2 ;;
+    esac
+    slot=$((slot + 1))
+  done
   return 1
 }
 

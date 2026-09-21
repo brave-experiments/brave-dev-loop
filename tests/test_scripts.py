@@ -8,6 +8,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -3440,6 +3441,29 @@ class TestReviewRequestQueue:
         os.chmod(claude, 0o755)
         return bindir
 
+    @staticmethod
+    def _hold_pr_lock(tmp_dir, pr):
+        """Another run, mid-review of `pr`: a live process holding its lock.
+
+        A separate process and not a lock file written by hand, because the
+        lock is the kernel's — the file on disk is just the inode it lives on,
+        and its presence says nothing about whether anything is running."""
+        lock = os.path.join(REPO_ROOT, ".ignore", f".review-pr-{pr}.lock")
+        os.makedirs(os.path.dirname(lock), exist_ok=True)
+        proc = subprocess.Popen(
+            [
+                "bash",
+                "-c",
+                f"source {os.path.join(SCRIPT_DIR, 'lib', 'lock.sh')}\n"
+                f'bot_acquire_lock "{lock}" || exit 1\n'
+                "echo held\nexec sleep 300",
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        assert proc.stdout.readline().strip() == "held", "could not take the PR lock"
+        return proc
+
     def _run(self, script, tmp_dir, bindir, env=None):
         logs = {
             "GH_LOG": os.path.join(tmp_dir, "gh.log"),
@@ -3506,14 +3530,100 @@ class TestReviewRequestQueue:
         assert "Task" in claude_log[0].split("--allowedTools")[1]
 
     def test_the_cap_leaves_the_rest_of_the_queue_for_the_next_poll(self, tmp_dir):
-        """Fifteen minutes later there is another poll. Reviewing the whole
-        queue in one job is how a backlog turns into a job that never ends."""
+        """Five minutes later there is another poll, and it does not wait for
+        this one. Reviewing the whole queue in one job is how a backlog turns
+        into a job that never ends."""
         result, _, claude_log = self._run(
             self.JOB, tmp_dir, self._stubs(tmp_dir), {"REVIEW_REQUESTED_MAX_PRS": "2"}
         )
         assert result.returncode == 0, result.stderr
         assert len(claude_log) == 2
         assert "#103" in result.stdout
+
+    def test_five_prs_a_run_by_default(self, tmp_dir):
+        """The cap and the poll interval together are the answer-within time
+        for a request at the back of the queue. Two per run left eight queued
+        requests draining for over two hours."""
+        result, _, claude_log = self._run(
+            self.JOB,
+            tmp_dir,
+            self._stubs(tmp_dir, queue="\n".join(str(n) for n in range(101, 108))),
+        )
+        assert result.returncode == 0, result.stderr
+        assert len(claude_log) == 5
+        assert "#106 #107" in result.stdout
+
+    def test_a_pr_another_run_is_reviewing_is_walked_past(self, tmp_dir):
+        """GitHub only drops a PR from the queue once the review is submitted,
+        so an overlapping run sees the PR being reviewed right now at the front
+        of its own queue. Without the per-PR lock every run would start on the
+        same PR and post the same review."""
+        held = self._hold_pr_lock(tmp_dir, 101)
+        try:
+            result, _, claude_log = self._run(
+                self.JOB,
+                tmp_dir,
+                self._stubs(tmp_dir),
+                {"REVIEW_REQUESTED_MAX_PRS": "2"},
+            )
+        finally:
+            held.kill()
+            held.wait()
+        assert result.returncode == 0, result.stderr
+        reviewed = [
+            pr for pr in (101, 102, 103) if f"#{pr} open auto" in " ".join(claude_log)
+        ]
+        assert reviewed == [102, 103], claude_log
+        assert "skipped #101" in result.stdout
+
+    def test_a_pr_held_by_another_run_does_not_use_up_the_cap(self, tmp_dir):
+        """Counting a PR this run never reviewed would make an overlapping run
+        shrink the one behind it: two runs, and the second does one review."""
+        held = self._hold_pr_lock(tmp_dir, 101)
+        try:
+            _, _, claude_log = self._run(
+                self.JOB,
+                tmp_dir,
+                self._stubs(tmp_dir),
+                {"REVIEW_REQUESTED_MAX_PRS": "2"},
+            )
+        finally:
+            held.kill()
+            held.wait()
+        assert len(claude_log) == 2, claude_log
+
+    def test_a_skipped_pr_is_not_reported_as_a_failed_review(self, tmp_dir):
+        """The subshell signals "someone else has this" with an exit code. A
+        code the agent could also return would make every overlap look like a
+        broken review and fail the cron job."""
+        held = self._hold_pr_lock(tmp_dir, 101)
+        try:
+            result, _, _ = self._run(
+                self.JOB,
+                tmp_dir,
+                self._stubs(tmp_dir),
+                {"REVIEW_REQUESTED_MAX_PRS": "3"},
+            )
+        finally:
+            held.kill()
+            held.wait()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "failed" not in result.stderr
+
+    def test_the_pr_lock_is_released_when_the_session_ends(self, tmp_dir):
+        """Held for the life of the session and no longer. A lock that outlived
+        its session would be indistinguishable from a review in progress, and
+        no later poll would ever pick that PR up again — the queue would go
+        quiet one PR at a time with nothing in the log to say why."""
+        first, _, first_log = self._run(self.JOB, tmp_dir, self._stubs(tmp_dir))
+        assert first.returncode == 0, first.stderr
+        assert len(first_log) == 3
+        os.remove(os.path.join(tmp_dir, "claude.log"))
+
+        again, _, claude_log = self._run(self.JOB, tmp_dir, self._stubs(tmp_dir))
+        assert again.returncode == 0, again.stderr
+        assert len(claude_log) == 3, "a leaked lock would have skipped every PR"
+        assert "skipped" not in again.stdout
 
     def test_one_failed_review_does_not_take_the_queue_down_with_it(self, tmp_dir):
         result, _, claude_log = self._run(
@@ -3607,12 +3717,69 @@ class TestRunLocking:
         assert "held=1" in held.stdout, held.stdout + held.stderr
         assert "free=0" in free.stdout, free.stdout + free.stderr
 
+    def test_one_slot_behaves_exactly_like_the_single_lock_it_replaced(self, tmp_dir):
+        """Every caller that does not ask for more than one slot has to keep
+        contending on the file it always used, or a deployment mid-upgrade runs
+        two of a job that may only ever run once."""
+        lock = os.path.join(tmp_dir, "one.lock")
+        r = self._run(
+            f'bot_acquire_slot_of "{lock}" 1; echo "first=$? file=$BOT_LOCK_FILE"\n'
+            f'( source {self.LOCK_LIB}; bot_acquire_lock "{lock}"; echo "second=$?" )'
+        )
+        assert "first=0" in r.stdout, r.stdout + r.stderr
+        assert f"file={lock}" in r.stdout, "slot 1 must be the bare lock file"
+        assert "second=1" in r.stdout, r.stdout
+
+    def test_slots_are_handed_out_until_the_count_runs_out(self, tmp_dir):
+        lock = os.path.join(tmp_dir, "many.lock")
+        r = self._run(
+            "\n".join(
+                f'( source {self.LOCK_LIB}; bot_acquire_slot_of "{lock}" 3'
+                f'; echo "rc=$? slot=$BOT_LOCK_SLOT"; exec sleep 30 ) &'
+                for _ in range(3)
+            )
+            + "\nsleep 1\n"
+            f'bot_acquire_slot_of "{lock}" 3; echo "fourth=$?"\n'
+            "kill $(jobs -p) 2>/dev/null; wait 2>/dev/null"
+        )
+        assert sorted(re.findall(r"rc=0 slot=(\d)", r.stdout)) == ["1", "2", "3"], (
+            r.stdout
+        )
+        assert "fourth=1" in r.stdout, r.stdout
+
+    def test_a_freed_slot_is_handed_out_again(self, tmp_dir):
+        lock = os.path.join(tmp_dir, "reuse.lock")
+        r = self._run(
+            f'bot_acquire_slot_of "{lock}" 2; echo "a=$BOT_LOCK_SLOT"\n'
+            "bot_release_lock\n"
+            f'bot_acquire_slot_of "{lock}" 2; echo "b=$BOT_LOCK_SLOT"'
+        )
+        assert "a=1" in r.stdout and "b=1" in r.stdout, r.stdout
+
+    def test_a_bad_slot_count_is_an_error_not_a_silent_single_slot(self, tmp_dir):
+        """`--slots` comes from a schedule file. A typo that quietly meant one
+        would serialize a job that was meant to overlap, with nothing to see."""
+        lock = os.path.join(tmp_dir, "bad.lock")
+        for count in ("0", "two", "-1"):
+            r = self._run(f'bot_acquire_slot_of "{lock}" "{count}"; echo "rc=$?"')
+            assert "rc=2" in r.stdout, f"count {count!r}: {r.stdout}"
+
+    def test_no_count_means_one_slot(self, tmp_dir):
+        """An omitted count is the single-instance case, not a bad argument."""
+        lock = os.path.join(tmp_dir, "default.lock")
+        r = self._run(
+            f'bot_acquire_slot_of "{lock}"; echo "rc=$? slot=$BOT_LOCK_SLOT"\n'
+            f'( source {self.LOCK_LIB}; bot_acquire_slot_of "{lock}"; echo "second=$?" )'
+        )
+        assert "rc=0 slot=1" in r.stdout, r.stdout + r.stderr
+        assert "second=1" in r.stdout, r.stdout
+
     def test_no_call_site_still_uses_bare_flock(self):
         # run.sh takes a numbered run slot; with-lock.sh takes a named lock.
         # Either way the lock library owns the flock, not the call site.
         entry_points = {
             "../run.sh": "bot_acquire_run_slot",
-            "with-lock.sh": "bot_acquire_lock",
+            "with-lock.sh": "bot_acquire_slot_of",
         }
         for name, entry in entry_points.items():
             with open(os.path.join(SCRIPT_DIR, name)) as f:
@@ -4130,17 +4297,36 @@ class TestProjectSchedules:
         nothing — no agent session appears in the crontab line at all."""
         job = self._review_request_job(tmp_dir, profile)
         assert "./scripts/check-review-requests.sh && git fetch origin" in job
-        assert (
-            "./scripts/with-lock.sh review-prs -- ./scripts/review-requested.sh" in job
-        )
+        assert "-- ./scripts/review-requested.sh" in job
         assert "/usr/bin/claude" not in job
 
     @pytest.mark.parametrize("profile", ["brave-core", "bravebot"])
-    def test_the_poll_runs_every_fifteen_minutes(self, tmp_dir, profile):
+    def test_the_poll_runs_every_five_minutes(self, tmp_dir, profile):
+        """The answer-within promise is the poll interval plus however long the
+        queue ahead of a request takes. Fifteen minutes of that was the poll."""
         job = self._review_request_job(tmp_dir, profile)
         minutes = [int(m) for m in job.split()[0].split(",")]
-        assert len(minutes) == 4
-        assert all(b - a == 15 for a, b in zip(minutes, minutes[1:]))
+        assert len(minutes) == 12
+        assert all(b - a == 5 for a, b in zip(minutes, minutes[1:]))
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot"])
+    def test_the_poll_does_not_wait_for_the_previous_poll(self, tmp_dir, profile):
+        """A review runs for far longer than five minutes. A single exclusive
+        lock would make every poll in between exit on it, so the interval would
+        buy nothing at all — the queue would still drain one session at a time.
+        The cap moves to a slot count, and review-requested.sh locks per PR."""
+        job = self._review_request_job(tmp_dir, profile)
+        assert "./scripts/with-lock.sh review-prs --slots 3 " in job
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot"])
+    def test_a_poll_outlives_five_reviews_before_it_is_killed(self, tmp_dir, profile):
+        """with-lock.sh kills the job at its timeout. Five reviews in one run
+        do not fit in the two-hour default, and a run killed partway leaves the
+        PRs it had not reached for the next poll — forever, if every run dies
+        at the same point."""
+        job = self._review_request_job(tmp_dir, profile)
+        timeout = int(re.search(r"--timeout (\d+)", job).group(1))
+        assert timeout >= 5 * 30 * 60
 
     def test_the_two_projects_poll_on_different_minutes(self, tmp_dir):
         """Deployed on one machine these are two checkouts, two crontab blocks
@@ -4152,15 +4338,21 @@ class TestProjectSchedules:
 
         assert not (minutes("brave-core") & minutes("bravebot"))
 
-    def test_the_poll_and_the_sweep_share_one_lock(self, tmp_dir):
-        """A PR review is a full checkout of the target repo per PR. Two of them
-        at once is what the shared lock name buys, at the cost of a request
-        waiting behind a sweep that is already running."""
+    def test_the_poll_and_the_sweep_draw_on_the_same_slots(self, tmp_dir):
+        """A PR review is a full checkout of the target repo per PR, so the
+        total number running at once has to be bounded however they were
+        started. One lock name, and — this is the part that bites — the same
+        count from every job that uses it: a job asking for one slot takes slot
+        1 only, and exits doing nothing whenever a job asking for three holds
+        it. That is a sweep starved by the poll."""
         jobs = self._jobs(self._render(tmp_dir, "brave-core"))
         reviewing = [j for j in jobs if "review-prs" in j]
         assert len(reviewing) == 3  # weekday sweep, weekend sweep, the poll
-        for job in reviewing:
-            assert "./scripts/with-lock.sh review-prs -- " in job
+        counts = {
+            re.search(r"with-lock\.sh review-prs --slots (\d+)", j).group(1)
+            for j in reviewing
+        }
+        assert counts == {"3"}
 
     def test_bravebot_reviews_only_what_it_is_asked_to(self, tmp_dir):
         """This project has no automated best-practices sweep yet. Answering an
@@ -4211,3 +4403,332 @@ class TestProjectSchedules:
         with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
             body = f.read()
         assert body.index("if $PRINT_ONLY; then") < body.index("| crontab -")
+
+
+class TestPythonFileLock:
+    """lib/file_lock.py and lib/repo_lock.py: the shell locks, for Python.
+
+    The review-prs skill is Python and it fetches into the same repository
+    run.sh builds worktrees in. Two mechanisms guarding one repository
+    serialize nothing, so what matters here is not that the Python lock works
+    but that it is the *same* lock."""
+
+    LOCK_LIB = os.path.join(SCRIPT_DIR, "lib", "lock.sh")
+
+    @staticmethod
+    def _py(body):
+        return subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                f"import sys; sys.path.insert(0, {SCRIPT_DIR!r})\n{body}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_the_repo_lock_file_is_the_one_the_shell_uses(self, tmp_dir):
+        """git-repo-lock.sh names the file from a sha1 of the repo's absolute
+        path. Python has to spell it identically or the two never contend."""
+        repo = os.path.join(tmp_dir, "repo")
+        os.makedirs(repo)
+        shell = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'REPO_ABS="$(cd "$1" && pwd)"; '
+                "printf '%s' \"$REPO_ABS\" | shasum | cut -c1-12",
+                "bash",
+                repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert shell.returncode == 0, shell.stderr
+        expected = f".git-{shell.stdout.strip()}.lock"
+
+        r = self._py(
+            "from lib.repo_lock import lock_path\n"
+            f"print(lock_path({repo!r}, bot_dir={tmp_dir!r}))"
+        )
+        assert r.returncode == 0, r.stderr
+        assert os.path.basename(r.stdout.strip()) == expected, r.stdout
+
+    def test_python_and_shell_exclude_each_other(self, tmp_dir):
+        """The property the whole thing rests on: a lock the shell holds is a
+        lock Python waits for."""
+        lock = os.path.join(tmp_dir, "shared.lock")
+        holder = subprocess.Popen(
+            [
+                "bash",
+                "-c",
+                f"source {self.LOCK_LIB}\n"
+                f'bot_acquire_lock "{lock}" || exit 1\n'
+                "echo held\nexec sleep 30",
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert holder.stdout.readline().strip() == "held"
+            r = self._py(
+                "from lib.file_lock import file_lock, FileLockTimeout\n"
+                "try:\n"
+                f"    with file_lock({lock!r}, timeout=1):\n"
+                "        print('acquired')\n"
+                "except FileLockTimeout:\n"
+                "    print('waited')\n"
+            )
+        finally:
+            holder.kill()
+            holder.wait()
+        assert r.returncode == 0, r.stderr
+        assert "waited" in r.stdout, r.stdout
+
+    def test_a_released_python_lock_is_free_for_the_shell(self, tmp_dir):
+        lock = os.path.join(tmp_dir, "handover.lock")
+        r = self._py(
+            "from lib.file_lock import file_lock\n"
+            f"with file_lock({lock!r}, timeout=1):\n"
+            "    pass\n"
+            "print('done')\n"
+        )
+        assert "done" in r.stdout, r.stderr
+        shell = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'source {self.LOCK_LIB}\nbot_acquire_lock "{lock}"; echo "rc=$?"',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert "rc=0" in shell.stdout, shell.stdout + shell.stderr
+
+    def test_the_lock_serializes_threads_of_one_process_too(self, tmp_dir):
+        """It replaced a threading.Lock, so it has to keep doing that job. A
+        lock held on one descriptor shared between threads would not."""
+        lock = os.path.join(tmp_dir, "threads.lock")
+        r = self._py(
+            "import threading\n"
+            "from lib.file_lock import file_lock\n"
+            "overlaps = []\n"
+            "inside = []\n"
+            "def work():\n"
+            f"    with file_lock({lock!r}, timeout=10):\n"
+            "        inside.append(1)\n"
+            "        overlaps.append(len(inside))\n"
+            "        inside.pop()\n"
+            "ts = [threading.Thread(target=work) for _ in range(8)]\n"
+            "[t.start() for t in ts]\n"
+            "[t.join() for t in ts]\n"
+            "print('max', max(overlaps), 'runs', len(overlaps))\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert "max 1 runs 8" in r.stdout, r.stdout
+
+    def test_a_concurrent_json_update_keeps_both_writers_entries(self, tmp_dir):
+        """The review cache, written by two runs finishing moments apart. An
+        unlocked read-modify-write keeps only the last writer's entry, and a
+        lost entry is a PR reviewed a second time."""
+        cache = os.path.join(tmp_dir, "cache.json")
+        r = self._py(
+            "from concurrent.futures import ThreadPoolExecutor\n"
+            "from lib.file_lock import locked_json_update\n"
+            "def add(n):\n"
+            f"    with locked_json_update({cache!r}) as data:\n"
+            "        data[str(n)] = n\n"
+            "with ThreadPoolExecutor(max_workers=16) as pool:\n"
+            "    list(pool.map(add, range(40)))\n"
+            "import json\n"
+            f"print(len(json.load(open({cache!r}))))\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "40", r.stdout
+
+    def test_unreadable_json_is_replaced_not_appended_to(self, tmp_dir):
+        """Callers treat a torn file as absent. The write still has to leave a
+        valid document behind, or the file stays broken for good."""
+        cache = os.path.join(tmp_dir, "torn.json")
+        with open(cache, "w") as f:
+            f.write('{"half": ')
+        r = self._py(
+            "import json\n"
+            "from lib.file_lock import locked_json_update\n"
+            f"with locked_json_update({cache!r}) as data:\n"
+            "    data['ok'] = 1\n"
+            f"print(json.load(open({cache!r})))\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert "{'ok': 1}" in r.stdout, r.stdout
+
+    def test_a_failed_update_leaves_the_previous_contents(self, tmp_dir):
+        """Atomic because the alternative is a truncated file: the callers read
+        that as no cache at all and re-review everything."""
+        cache = os.path.join(tmp_dir, "keep.json")
+        with open(cache, "w") as f:
+            f.write('{"before": 1}')
+        r = self._py(
+            "from lib.file_lock import locked_json_update\n"
+            "try:\n"
+            f"    with locked_json_update({cache!r}) as data:\n"
+            "        data['during'] = 2\n"
+            "        raise RuntimeError('killed')\n"
+            "except RuntimeError:\n"
+            "    pass\n"
+        )
+        assert r.returncode == 0, r.stderr
+        with open(cache) as f:
+            assert f.read() == '{"before": 1}'
+
+
+class TestTargetRepoSync:
+    """`sync-target-repo.sh` resets the target repo's default branch to
+    upstream. It sits in an `&&` chain ahead of run.sh and every review job, so
+    a non-zero exit here cancels the work behind it — which is exactly what a
+    lost race with a concurrent fetch produces."""
+
+    @staticmethod
+    def _bot_with_target(tmp_dir):
+        """A bot directory whose target repo has an `upstream` ahead of it."""
+        upstream = os.path.join(tmp_dir, "upstream.git")
+        subprocess.run(
+            ["git", "init", "--bare", "-b", "master", upstream],
+            check=True,
+            capture_output=True,
+        )
+        seed = os.path.join(tmp_dir, "seed")
+        subprocess.run(
+            ["git", "clone", upstream, seed], check=True, capture_output=True
+        )
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        for text in ("one", "two"):
+            with open(os.path.join(seed, "f.txt"), "w") as f:
+                f.write(text)
+            subprocess.run(
+                ["git", "-C", seed, "add", "f.txt"], check=True, capture_output=True
+            )
+            subprocess.run(
+                ["git", "-C", seed, "commit", "-m", text],
+                check=True,
+                capture_output=True,
+                env=env,
+            )
+        subprocess.run(
+            ["git", "-C", seed, "push", "origin", "master"],
+            check=True,
+            capture_output=True,
+        )
+
+        target = os.path.join(tmp_dir, "target")
+        subprocess.run(
+            ["git", "clone", upstream, target], check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "-C", target, "remote", "rename", "origin", "upstream"],
+            check=True,
+            capture_output=True,
+        )
+        # One commit behind, and a stray local commit a reset has to discard.
+        subprocess.run(
+            ["git", "-C", target, "reset", "--hard", "HEAD~1"],
+            check=True,
+            capture_output=True,
+        )
+
+        bot = os.path.join(tmp_dir, "bot")
+        os.makedirs(os.path.join(bot, ".ignore"))
+        shutil.copytree(
+            os.path.join(REPO_ROOT, "scripts"),
+            os.path.join(bot, "scripts"),
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        with open(os.path.join(bot, "config.json"), "w") as f:
+            json.dump(
+                {
+                    "project": {
+                        "name": "p",
+                        "org": "o",
+                        "prRepository": "o/p",
+                        "issueRepository": "o/p",
+                        "defaultBranch": "master",
+                        "targetRepoPath": target,
+                    },
+                    "bot": {"username": "b"},
+                },
+                f,
+            )
+        return bot, target
+
+    @staticmethod
+    def _head_subject(repo):
+        return subprocess.run(
+            ["git", "-C", repo, "log", "-1", "--format=%s"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def test_the_branch_is_reset_to_upstream(self, tmp_dir):
+        bot, target = self._bot_with_target(tmp_dir)
+        assert self._head_subject(target) == "one"
+        r = subprocess.run(
+            [os.path.join(bot, "scripts", "sync-target-repo.sh")],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert self._head_subject(target) == "two", r.stdout + r.stderr
+
+    def test_the_sync_waits_for_the_repo_lock(self, tmp_dir):
+        """The reason it is one critical section and not three bare commands:
+        a fetch another process is midway through is what breaks the reset."""
+        bot, target = self._bot_with_target(tmp_dir)
+        lock_lib = os.path.join(bot, "scripts", "lib", "lock.sh")
+        lockfile = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                f"import sys; sys.path.insert(0, {os.path.join(bot, 'scripts')!r});"
+                "from lib.repo_lock import lock_path;"
+                f"print(lock_path({target!r}, bot_dir={bot!r}))",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert lockfile.returncode == 0, lockfile.stderr
+        lockfile = lockfile.stdout.strip()
+
+        holder = subprocess.Popen(
+            [
+                "bash",
+                "-c",
+                f"source {lock_lib}\n"
+                f'bot_acquire_lock "{lockfile}" || exit 1\necho held\nexec sleep 30',
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert holder.stdout.readline().strip() == "held"
+            sync = subprocess.Popen(
+                [os.path.join(bot, "scripts", "sync-target-repo.sh")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            with pytest.raises(subprocess.TimeoutExpired):
+                sync.wait(timeout=3)
+            assert self._head_subject(target) == "one", (
+                "it reset while the lock was held"
+            )
+        finally:
+            holder.kill()
+            holder.wait()
+        assert sync.wait(timeout=30) == 0, sync.communicate()
+        assert self._head_subject(target) == "two"

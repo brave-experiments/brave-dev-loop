@@ -33,8 +33,14 @@ bot_cron_job() {
 # The command for a job that starts an agent session, held under a named lock
 # so two schedules never run the same job twice over one bot directory.
 #
-#   bot_cron_agent <lock name> '<prompt>'
+#   bot_cron_agent <lock name> '<prompt>' [slots]
+#
+# `slots` makes the lock a counting semaphore instead of a single instance.
+# Every job sharing a lock name has to ask for the same count: a job that asks
+# for one takes slot 1 only, so it exits doing nothing whenever a job asking
+# for three happens to hold that slot.
 bot_cron_agent() {
-  printf "./scripts/with-lock.sh %s -- %s -p '%s' --allowedTools '%s'" \
-    "$1" "$CLAUDE_BIN" "$2" "$CLAUDE_TOOLS"
+  local slots="${3:-}"
+  printf "./scripts/with-lock.sh %s%s -- %s -p '%s' --allowedTools '%s'" \
+    "$1" "${slots:+ --slots $slots}" "$CLAUDE_BIN" "$2" "$CLAUDE_TOOLS"
 }

@@ -22,10 +22,15 @@ import os
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _SCRIPT_DIR)
 from lib.load_config import load_config, require_config
 
-REVIEW_CACHE_PATH = ".ignore/review-prs-cache.json"
+# Absolute, not relative to the caller's cwd: the same file the review-prs
+# skill writes, wherever this is run from.
+REVIEW_CACHE_PATH = os.path.normpath(
+    os.path.join(_SCRIPT_DIR, "..", ".ignore", "review-prs-cache.json")
+)
 
 
 def gh_api(endpoint, method="GET", input_data=None):
