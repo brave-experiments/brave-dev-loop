@@ -82,6 +82,14 @@ def sync_merged_prs():
 
 
 @pytest.fixture
+def sync_closed_issues():
+    return _load_module(
+        "sync_closed_issues_to_prd",
+        os.path.join(SCRIPTS_DIR, "sync-closed-issues-to-prd.py"),
+    )
+
+
+@pytest.fixture
 def add_backlog():
     return _load_module(
         "add_backlog_to_prd",

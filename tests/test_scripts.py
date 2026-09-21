@@ -1631,6 +1631,220 @@ class TestSyncMergedRun:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# sync-closed-issues-to-prd.py
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def story_for_issue(number, **overrides):
+    """A story that references an issue the way intake writes it."""
+    return make_story(
+        description=f"Resolve issue #{number}: something is broken", **overrides
+    )
+
+
+def closed_issue(state_reason="COMPLETED", closed_at="2026-09-16T16:36:00Z"):
+    return {"state": "CLOSED", "stateReason": state_reason, "closedAt": closed_at}
+
+
+class TestSyncClosedCandidates:
+    def test_only_pending_stories_with_no_pr_are_asked_about(self, sync_closed_issues):
+        # A committed or pushed story has commits or a PR that a person has to
+        # dispose of; retiring it here would orphan them silently.
+        prd = {
+            "stories": [
+                story_for_issue(116, id="US-001", status="pending"),
+                story_for_issue(117, id="US-002", status="pushed", prNumber=22),
+                story_for_issue(118, id="US-003", status="committed"),
+                story_for_issue(119, id="US-004", status="merged", prNumber=44),
+                story_for_issue(120, id="US-005", status="invalid"),
+                story_for_issue(121, id="US-006", status="pending", prNumber=66),
+            ]
+        }
+        assert sync_closed_issues.candidate_issue_numbers(prd) == [116]
+
+    def test_a_story_with_no_issue_reference_is_skipped(self, sync_closed_issues):
+        prd = {"stories": [make_story(status="pending")]}
+        assert sync_closed_issues.candidate_issue_numbers(prd) == []
+
+    def test_one_issue_shared_by_two_stories_is_asked_about_once(
+        self, sync_closed_issues
+    ):
+        prd = {
+            "stories": [
+                story_for_issue(116, id="US-001"),
+                story_for_issue(116, id="US-002"),
+            ]
+        }
+        assert sync_closed_issues.candidate_issue_numbers(prd) == [116]
+
+
+class TestSyncClosedRetire:
+    def test_it_writes_the_fields_an_iteration_writes(
+        self, sync_closed_issues, update_prd_status
+    ):
+        by_script = story_for_issue(116)
+        sync_closed_issues.retire(by_script, 116, closed_issue())
+        by_agent = story_for_issue(116)
+        update_prd_status.handle_invalid(by_agent, Namespace(reason="already fixed"))
+        assert set(by_script) == set(by_agent)
+        assert by_script["status"] == "invalid"
+
+    def test_the_reason_names_the_issue_and_how_it_was_closed(self, sync_closed_issues):
+        story = story_for_issue(116)
+        sync_closed_issues.retire(story, 116, closed_issue())
+        assert "#116" in story["skipReason"]
+        assert "COMPLETED" in story["skipReason"]
+        assert "2026-09-16T16:36:00Z" in story["skipReason"]
+
+    def test_the_reason_survives_an_issue_closed_without_a_state_reason(
+        self, sync_closed_issues
+    ):
+        story = story_for_issue(116)
+        sync_closed_issues.retire(story, 116, {"state": "CLOSED"})
+        assert "CLOSED" in story["skipReason"]
+
+
+class TestSyncClosedRun:
+    def _run(self, sync_closed_issues, monkeypatch, tmp_path, stories, issues, *extra):
+        prd_path = tmp_path / "prd.json"
+        prd_path.write_text(json.dumps({"stories": stories}))
+        monkeypatch.setattr(sync_closed_issues, "fetch_issue", lambda n: issues.get(n))
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["sync-closed-issues-to-prd.py", "--prd", str(prd_path), *extra],
+        )
+        assert sync_closed_issues.main() == 0
+        return json.loads(prd_path.read_text())["stories"]
+
+    def test_a_closed_issue_retires_its_story(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_closed_issues,
+            monkeypatch,
+            tmp_path,
+            [story_for_issue(116)],
+            {116: closed_issue()},
+        )
+        assert stories[0]["status"] == "invalid"
+
+    def test_an_issue_closed_as_not_planned_retires_its_story_too(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        # Declined is as final as done: neither is work the loop should open a
+        # pull request for.
+        stories = self._run(
+            sync_closed_issues,
+            monkeypatch,
+            tmp_path,
+            [story_for_issue(116)],
+            {116: closed_issue(state_reason="NOT_PLANNED")},
+        )
+        assert stories[0]["status"] == "invalid"
+        assert "NOT_PLANNED" in stories[0]["skipReason"]
+
+    def test_an_open_issue_keeps_its_place_in_the_queue(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_closed_issues,
+            monkeypatch,
+            tmp_path,
+            [story_for_issue(116)],
+            {116: {"state": "OPEN", "stateReason": None, "closedAt": None}},
+        )
+        assert stories[0]["status"] == "pending"
+
+    def test_an_issue_github_cannot_be_asked_about_is_left_alone(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_closed_issues, monkeypatch, tmp_path, [story_for_issue(116)], {}
+        )
+        assert stories[0]["status"] == "pending"
+
+    def test_a_pushed_story_is_left_for_an_iteration(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        # Its PR is still open against a closed issue: closing or repointing it
+        # is a judgement this script does not make.
+        stories = self._run(
+            sync_closed_issues,
+            monkeypatch,
+            tmp_path,
+            [story_for_issue(116, status="pushed", prNumber=349)],
+            {116: closed_issue()},
+        )
+        assert stories[0]["status"] == "pushed"
+
+    def test_dry_run_writes_nothing(self, sync_closed_issues, monkeypatch, tmp_path):
+        stories = self._run(
+            sync_closed_issues,
+            monkeypatch,
+            tmp_path,
+            [story_for_issue(116)],
+            {116: closed_issue()},
+            "--dry-run",
+        )
+        assert stories[0]["status"] == "pending"
+
+    def test_one_closed_issue_does_not_disturb_the_other_stories(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        stories = self._run(
+            sync_closed_issues,
+            monkeypatch,
+            tmp_path,
+            [
+                story_for_issue(116, id="US-001"),
+                story_for_issue(117, id="US-002"),
+                make_story(id="US-003"),
+            ],
+            {
+                116: closed_issue(),
+                117: {"state": "OPEN", "stateReason": None, "closedAt": None},
+            },
+        )
+        assert [s["status"] for s in stories] == ["invalid", "pending", "pending"]
+
+    def test_a_story_another_run_claimed_mid_pass_is_left_alone(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        # The GitHub reads are deliberately outside the PRD lock, so another
+        # run's iteration can push this story while its issue is being asked
+        # about. Retiring it then would drop the PR that iteration just opened.
+        prd_path = tmp_path / "prd.json"
+        prd_path.write_text(json.dumps({"stories": [story_for_issue(116)]}))
+
+        def claim_it_meanwhile(number):
+            prd_path.write_text(
+                json.dumps(
+                    {"stories": [story_for_issue(116, status="pushed", prNumber=349)]}
+                )
+            )
+            return closed_issue()
+
+        monkeypatch.setattr(sync_closed_issues, "fetch_issue", claim_it_meanwhile)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["sync-closed-issues-to-prd.py", "--prd", str(prd_path)],
+        )
+        assert sync_closed_issues.main() == 0
+        stories = json.loads(prd_path.read_text())["stories"]
+        assert stories[0]["status"] == "pushed"
+
+    def test_a_missing_prd_is_an_error(self, sync_closed_issues, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["sync-closed-issues-to-prd.py", "--prd", str(tmp_path / "nope.json")],
+        )
+        assert sync_closed_issues.main() == 2
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # add-backlog-to-prd.py
 # ═══════════════════════════════════════════════════════════════════════════
 
