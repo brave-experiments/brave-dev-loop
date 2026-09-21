@@ -22,7 +22,7 @@ def git(repo, *args):
     ).stdout.strip()
 
 
-def pr_json(head_oid, body="", issues=(), state="OPEN", branch=BRANCH):
+def pr_json(head_oid, body="", state="OPEN", branch=BRANCH):
     return json.dumps(
         {
             "headRefName": branch,
@@ -31,7 +31,20 @@ def pr_json(head_oid, body="", issues=(), state="OPEN", branch=BRANCH):
             "state": state,
             "title": "answer NO_COLOR",
             "body": body,
-            "closingIssuesReferences": [{"number": n} for n in issues],
+        }
+    )
+
+
+def graphql_json(issues=()):
+    """What `gh api graphql` answers for the pull request's closing issues."""
+    nodes = [{"number": n} for n in issues]
+    return json.dumps(
+        {
+            "data": {
+                "repository": {
+                    "pullRequest": {"closingIssuesReferences": {"nodes": nodes}}
+                }
+            }
         }
     )
 
@@ -70,7 +83,15 @@ class World:
         self.bin = tmp_path / "bin"
         self.bin.mkdir()
         self.direnv_log = tmp_path / "direnv.log"
-        self._stub("gh", 'printf "%s" "$GH_STUB_JSON"\n')
+        # Two different calls: `gh pr view` and `gh api graphql` for the issue
+        # link, which `gh pr view --json` cannot read before gh 2.46.
+        self._stub(
+            "gh",
+            'if [ "$1" = api ]; then'
+            ' [ -n "$GH_STUB_GRAPHQL" ] || exit 1;'
+            ' printf "%s" "$GH_STUB_GRAPHQL";'
+            ' else printf "%s" "$GH_STUB_JSON"; fi\n',
+        )
         self._stub("direnv", f'echo "$@ in $PWD" >> {self.direnv_log}\n')
 
     def _stub(self, name, body):
@@ -78,11 +99,14 @@ class World:
         path.write_text("#!/bin/sh\n" + body)
         path.chmod(0o755)
 
-    def run(self, *args, gh_json=None, expect=0):
+    def run(self, *args, gh_json=None, issues=(), graphql=None, expect=0):
         env = dict(
             os.environ,
             PATH=f"{self.bin}:{os.environ['PATH']}",
             GH_STUB_JSON=gh_json if gh_json is not None else pr_json(self.head),
+            # Empty makes the stub fail, standing in for a gh too old for the
+            # query or an API that did not answer.
+            GH_STUB_GRAPHQL=graphql_json(issues) if graphql is None else graphql,
         )
         result = subprocess.run(
             [
@@ -179,7 +203,16 @@ def test_closing_reference_beats_the_body(world):
     """GitHub's own link is authoritative when the pull request closes an issue."""
     body = "Part of brave/bravebot#999\n"
 
-    result = world.run("351", gh_json=pr_json(world.head, body=body, issues=[105]))
+    result = world.run("351", gh_json=pr_json(world.head, body=body), issues=[105])
+
+    assert result.stdout.strip() == str(world.sibling("105"))
+
+
+def test_an_unanswered_issue_query_still_reads_the_body(world):
+    """The pull request has to resolve on a gh too old for the closing-issue query."""
+    body = "Part of brave/bravebot#105\n"
+
+    result = world.run("351", gh_json=pr_json(world.head, body=body), graphql="")
 
     assert result.stdout.strip() == str(world.sibling("105"))
 
