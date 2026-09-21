@@ -147,7 +147,7 @@ def holders():
         h.cleanup()
 
 
-def select(bot_dir, slot, pid, extra=()):
+def select(bot_dir, slot, pid, extra=(), env=None):
     result = subprocess.run(
         [
             sys.executable,
@@ -164,6 +164,7 @@ def select(bot_dir, slot, pid, extra=()):
         ],
         capture_output=True,
         text=True,
+        env={**os.environ, **(env or {})},
     )
     return json.loads(result.stdout or "{}")
 
@@ -459,6 +460,89 @@ class TestConcurrentSelection:
             others = [f"US-{i:03d}" for i in range(1, 6) if f"US-{i:03d}" != picked]
             json.dump({"runId": None, "storiesCheckedThisRun": others}, f)
         assert select(bot_dir, second.slot, second.pid)["storyId"] == picked
+
+
+class TestCrossMachineSelection:
+    """Another machine's run shares neither the PRD lock nor claims.json with
+    this one. All it leaves behind is a label on the issue, so that label has to
+    be what keeps this run off the story."""
+
+    LABEL = "bot/in-progress"
+
+    def _prd(self, bot_dir):
+        stories = [
+            {
+                "id": f"US-{i:03d}",
+                "title": f"Story {i}",
+                "description": f"Resolve issue #{100 + i}",
+                "status": "pending",
+                "priority": i,
+            }
+            for i in (1, 2)
+        ]
+        with open(os.path.join(bot_dir, "data", "prd.json"), "w") as f:
+            json.dump({"stories": stories}, f)
+
+    def _env(self, tmp_dir, labelled, label=LABEL):
+        """A config with the label configured, and a gh that reports ``labelled``."""
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        listing = json.dumps([{"number": n} for n in labelled])
+        gh = os.path.join(bindir, "gh")
+        with open(gh, "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                'if [ "$1 $2" = "issue list" ]; then\n'
+                f"  echo '{listing}'\n"
+                "fi\n"
+                "exit 0\n"
+            )
+        os.chmod(gh, 0o755)
+
+        with open(os.environ["BOT_CONFIG_FILE"]) as f:
+            config = json.load(f)
+        config["labels"]["inProgressLabel"] = label
+        config_path = os.path.join(tmp_dir, "config.labelled.json")
+        with open(config_path, "w") as f:
+            json.dump(config, f)
+        return {
+            "BOT_CONFIG_FILE": config_path,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+        }
+
+    def test_a_labelled_issue_is_not_selected(self, bot_dir, holders):
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, [101]))
+        assert picked["storyId"] == "US-002", picked
+
+    def test_the_same_story_is_selected_once_the_label_is_gone(self, bot_dir, holders):
+        """The control: US-001 is only skipped above because of the label."""
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, []))
+        assert picked["storyId"] == "US-001", picked
+
+    def test_every_labelled_issue_leaves_nothing_to_do(self, bot_dir, holders):
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(
+            bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, [101, 102])
+        )
+        assert picked["selected"] is False
+        assert "#101" in picked["reason"] and "#102" in picked["reason"]
+
+    def test_no_configured_label_ignores_the_labels_github_reports(
+        self, bot_dir, holders
+    ):
+        """A project that configures no label must not pay for a gh call, and
+        must not start filtering on somebody else's label of the same name."""
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(
+            bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, [101], label="")
+        )
+        assert picked["storyId"] == "US-001", picked
 
 
 # ═══════════════════════════════════════════════════════════════════════════
