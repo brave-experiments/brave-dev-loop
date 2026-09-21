@@ -115,6 +115,15 @@ code review"**. When upstream guidance is about formatting that tooling already
 enforces, either drop it or state explicitly that it is not review-enforced, and
 link the rule that owns the exception.
 
+**The conflict can be in the example, not just the prose.** A rule whose text
+is fine can still ship a ✅ CORRECT snippet that another rule marks ❌ WRONG.
+Real example: a new braces rule in `coding-standards.md` used
+`for (auto& observer : observers_) { observer.OnStateChanged(); }` as its ✅
+snippet, while `CS-056` in the same file marks manual observer iteration ❌ and
+requires `observers_.Notify(&Observer::OnStateChanged)`. Read every snippet you
+add as if it were the code under review, and pick an example that exercises
+nothing but the rule being illustrated.
+
 **Pay special attention to:**
 - Meta-rules about what reviewers should and should not flag (formatting,
   include order, line wrapping) — new rules must not re-import what these
@@ -202,6 +211,7 @@ Output a summary to the user with:
 
 - **Upstream docs are authoritative** - when our docs conflict with Chromium docs, fix ours (unless it's a deliberate Brave-specific deviation, which should be documented as such)
 - **Skip rules covered by tooling** - don't add best practices that are already enforced by linting, presubmit checks, or formatters (clang-format, cpplint, PRESUBMIT.py, etc.); these rules are redundant and become misleading when tooling evolves
+- **Read the config before claiming what tooling does** - a sentence like "clang-format will not add these for you" is a factual claim about this checkout, and upstream prose is not evidence for it. Check the config the target repo actually uses (`src/.clang-format`, `PRESUBMIT.py`, the lint config) before asserting that tooling does or does not handle something. A wrong claim here does not just mislead: it inverts the rule's rationale, because "the formatter won't do it, so catch it in review" and "the formatter does it, so don't flag it" are opposite instructions. Real example: CS-073 shipped the first of those while `src/.clang-format` had `InsertBraces: true` all along
 - **Keep entries concise** - link to upstream for full details rather than duplicating everything
 - **Preserve existing format** - match the `## <emoji> <Title>` heading style with BAD/GOOD examples
 - **Don't remove Brave-specific rules** - rules about Brave patterns (e.g., `Brave*` prefix convention) have no upstream equivalent and should be kept
