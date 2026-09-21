@@ -7,13 +7,16 @@
 # authored, not a list of every issue somebody remembered to type in by hand;
 # before this was a script, that same append ran nightly as an agent session.
 #
-# The two PR syncs rewrite story status from GitHub, which is only true of a PRD
-# that is a cache. They run in "auto" alone: a curated PRD is never rewritten
-# from GitHub behind the operator. One adopts the bot's open PRs as "pushed"
-# stories, the other retires the ones that have since been merged — without it a
-# merged PR holds its place in the pushed queue, which select-task.py ranks
-# above pending work, so a run spends iterations moving statuses instead of
-# writing code.
+# The three status syncs rewrite story status from GitHub, which is only true of
+# a PRD that is a cache. They run in "auto" alone: a curated PRD is never
+# rewritten from GitHub behind the operator. The first adopts the bot's open PRs
+# as "pushed" stories, the second retires the ones that have since been merged —
+# without it a merged PR holds its place in the pushed queue, which
+# select-task.py ranks above pending work, so a run spends iterations moving
+# statuses instead of writing code. The third is the same waste at the issue end:
+# intake only ever asks GitHub for open issues, so a pending story whose issue
+# somebody else closed keeps its place in the queue until an iteration reads the
+# issue and reaches the status one API call decides.
 
 set -e
 
@@ -34,11 +37,12 @@ python3 "$SCRIPT_DIR/add-backlog-to-prd.py" || echo "WARNING: issue sync failed 
 if [ "$BOT_PRD_MODE" = "auto" ]; then
   python3 "$SCRIPT_DIR/sync-bot-prs-to-prd.py" || echo "WARNING: PR sync failed — continuing with the cached PRD." >&2
   python3 "$SCRIPT_DIR/sync-merged-prs-to-prd.py" || echo "WARNING: merged-PR sync failed — continuing with the cached PRD." >&2
-  # Last, so the stories the merged sync just retired go too. A cached PRD is
-  # rebuilt from GitHub every run, so a finished story left in it is only
+  python3 "$SCRIPT_DIR/sync-closed-issues-to-prd.py" || echo "WARNING: closed-issue sync failed — continuing with the cached PRD." >&2
+  # Last, so the stories the two retiring syncs just finished go too. A cached
+  # PRD is rebuilt from GitHub every run, so a finished story left in it is only
   # something for the selector to filter and a reader to scroll past; the two
-  # syncs above read prd.archived.json as well, and will not re-add work that
-  # moved there. A curated PRD is the operator's list and is archived on the
-  # operator's say-so — `make archive-prd`.
+  # syncs that add stories read prd.archived.json as well, and will not re-add
+  # work that moved there. A curated PRD is the operator's list and is archived
+  # on the operator's say-so — `make archive-prd`.
   python3 "$SCRIPT_DIR/archive-prd.py" "$PRD_FILE" || echo "WARNING: archiving finished stories failed — continuing with the cached PRD." >&2
 fi
