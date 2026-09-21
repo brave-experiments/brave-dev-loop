@@ -30,7 +30,8 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `bot.cursorModel`: Cursor model to use (`null` = account default; overridden by `./run.sh --model` for Cursor runs)
 - `bot.cursorBin`: Path to the `cursor-agent` binary (`null` = found on PATH)
 - bravebot has no config keys. Its binary comes from `./run.sh --agent-bin <path>` (`bravebot` on PATH when not given) and its model from `./run.sh --model`, so a locally built binary is a flag rather than a config edit
-- `labels.*`: legacy. Labels now live in the project profile (`projects/<name>/profile.json`); `labels.disabledTestLabel` is still honoured as a fallback for deployments that set it by hand. See [Project profiles](../projects/README.md)
+- `labels.*`: legacy. Labels now live in the project profile (`projects/<name>/profile.json`); `labels.disabledTestLabel` and `labels.inProgressLabel` are still honoured as fallbacks for deployments that set them by hand. See [Project profiles](../projects/README.md)
+- `labels.inProgressLabel`: label marking an issue as being worked, so deployments on other machines skip it (`""` = off, the profile's `labels.inProgress` wins where it defines one). See [Concurrent runs](./concurrent-runs.md)
 - `bestPractices.docsDir`: Path to the docs directory containing best practices (relative to bot dir)
 
 A `config.example.json` template is included, plus a reference config per shipped

@@ -147,7 +147,7 @@ def holders():
         h.cleanup()
 
 
-def select(bot_dir, slot, pid, extra=()):
+def select(bot_dir, slot, pid, extra=(), env=None):
     result = subprocess.run(
         [
             sys.executable,
@@ -164,6 +164,7 @@ def select(bot_dir, slot, pid, extra=()):
         ],
         capture_output=True,
         text=True,
+        env={**os.environ, **(env or {})},
     )
     return json.loads(result.stdout or "{}")
 
@@ -459,6 +460,148 @@ class TestConcurrentSelection:
             others = [f"US-{i:03d}" for i in range(1, 6) if f"US-{i:03d}" != picked]
             json.dump({"runId": None, "storiesCheckedThisRun": others}, f)
         assert select(bot_dir, second.slot, second.pid)["storyId"] == picked
+
+
+class TestCrossMachineSelection:
+    """Another machine's run shares neither the PRD lock nor claims.json with
+    this one. All it leaves behind is a label on the issue, so that label has to
+    be what keeps this run off the story."""
+
+    LABEL = "bot/in-progress"
+
+    def _prd(self, bot_dir):
+        stories = [
+            {
+                "id": f"US-{i:03d}",
+                "title": f"Story {i}",
+                "description": f"Resolve issue #{100 + i}",
+                "status": "pending",
+                "priority": i,
+            }
+            for i in (1, 2)
+        ]
+        with open(os.path.join(bot_dir, "data", "prd.json"), "w") as f:
+            json.dump({"stories": stories}, f)
+
+    def _env(self, tmp_dir, labelled, label=LABEL, on_issue=None):
+        """A config with the label configured, and a gh reporting those labels.
+
+        ``labelled`` is what `issue list` finds, which on GitHub is an index that
+        trails a write by seconds. ``on_issue`` is what `issue view` finds on one
+        issue, which does not trail — so the two disagreeing is the real case
+        this has to get right, not a contrived one.
+        """
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        listing = json.dumps([{"number": n} for n in labelled])
+        if on_issue is None:
+            on_issue = {n: [label] for n in labelled}
+        arms = "".join(
+            f"    {n}) echo '{json.dumps(names)}' ;;\n" for n, names in on_issue.items()
+        )
+        gh = os.path.join(bindir, "gh")
+        with open(gh, "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                f'echo "$@" >> "{os.path.join(tmp_dir, "gh.log")}"\n'
+                'if [ "$1 $2" = "issue list" ]; then\n'
+                f"  echo '{listing}'\n"
+                'elif [ "$1 $2" = "issue view" ]; then\n'
+                '  case "$3" in\n'
+                f"{arms}"
+                "    *) echo '[]' ;;\n"
+                "  esac\n"
+                "fi\n"
+                "exit 0\n"
+            )
+        os.chmod(gh, 0o755)
+
+        with open(os.environ["BOT_CONFIG_FILE"]) as f:
+            config = json.load(f)
+        config["labels"]["inProgressLabel"] = label
+        config_path = os.path.join(tmp_dir, "config.labelled.json")
+        with open(config_path, "w") as f:
+            json.dump(config, f)
+        return {
+            "BOT_CONFIG_FILE": config_path,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+        }
+
+    def test_a_labelled_issue_is_not_selected(self, bot_dir, holders):
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, [101]))
+        assert picked["storyId"] == "US-002", picked
+
+    def test_the_same_story_is_selected_once_the_label_is_gone(self, bot_dir, holders):
+        """The control: US-001 is only skipped above because of the label."""
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, []))
+        assert picked["storyId"] == "US-001", picked
+
+    def test_every_labelled_issue_leaves_nothing_to_do(self, bot_dir, holders):
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(
+            bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, [101, 102])
+        )
+        assert picked["selected"] is False
+        assert "#101" in picked["reason"] and "#102" in picked["reason"]
+
+    def _gh_log(self, tmp_dir):
+        path = os.path.join(tmp_dir, "gh.log")
+        if not os.path.exists(path):
+            return []
+        with open(path) as f:
+            return [line.strip() for line in f]
+
+    def test_a_label_the_index_has_not_caught_up_to_still_counts(
+        self, bot_dir, holders
+    ):
+        """The window two machines on one cron schedule actually select in.
+
+        `issue list` is served from an index that trailed a real add by 4.8s, so
+        it reports nothing while #101 is already taken. Reading the issue itself
+        is what keeps this run off it."""
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        env = self._env(bot_dir, [], on_issue={101: [self.LABEL]})
+        picked = select(bot_dir, holder.slot, holder.pid, env=env)
+        assert picked["storyId"] == "US-002", picked
+
+    def test_the_story_it_takes_is_the_one_it_labels(self, bot_dir, holders):
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        env = self._env(bot_dir, [], on_issue={101: [self.LABEL]})
+        picked = select(bot_dir, holder.slot, holder.pid, env=env)
+        assert picked["storyId"] == "US-002"
+        added = [c for c in self._gh_log(bot_dir) if "--add-label" in c]
+        assert added == [
+            f"issue edit 102 --repo test-org/test-project --add-label {self.LABEL}"
+        ], self._gh_log(bot_dir)
+
+    def test_a_claim_it_cannot_label_is_handed_straight_back(self, bot_dir, holders):
+        """Nothing may be left holding a story this run decided against."""
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        env = self._env(bot_dir, [], on_issue={101: [self.LABEL], 102: [self.LABEL]})
+        picked = select(bot_dir, holder.slot, holder.pid, env=env)
+        assert picked["selected"] is False, picked
+        with open(os.path.join(bot_dir, "data", "claims.json")) as f:
+            assert json.load(f) == {}
+
+    def test_no_configured_label_ignores_the_labels_github_reports(
+        self, bot_dir, holders
+    ):
+        """A project that configures no label must not pay for a gh call, and
+        must not start filtering on somebody else's label of the same name."""
+        self._prd(bot_dir)
+        holder = holders(bot_dir, max_slots=1)
+        picked = select(
+            bot_dir, holder.slot, holder.pid, env=self._env(bot_dir, [101], label="")
+        )
+        assert picked["storyId"] == "US-001", picked
 
 
 # ═══════════════════════════════════════════════════════════════════════════

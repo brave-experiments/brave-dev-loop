@@ -413,6 +413,23 @@ class TestSelectTaskFilter:
         )
         assert [s["id"] for s in result] == ["US-002"]
 
+    def test_excludes_an_issue_another_machine_is_working(self, select_task):
+        stories = [
+            make_story("pending", id="US-001", description="Resolve issue #101"),
+            make_story("pending", id="US-002", description="Resolve issue #102"),
+        ]
+        result = select_task.filter_stories(
+            stories, empty_run_state(), in_progress={101}
+        )
+        assert [s["id"] for s in result] == ["US-002"]
+
+    def test_a_story_naming_no_issue_is_never_in_progress(self, select_task):
+        stories = [make_story("pending", id="US-001", description="no issue here")]
+        result = select_task.filter_stories(
+            stories, empty_run_state(), in_progress={101}
+        )
+        assert [s["id"] for s in result] == ["US-001"]
+
 
 class TestSelectTaskSortKey:
     def test_urgent_before_normal(self, select_task):

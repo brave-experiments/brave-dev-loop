@@ -476,6 +476,17 @@ if [ "$BOT_PRD_MODE" = "auto" ]; then
   "$SCRIPT_DIR/scripts/with-lock.sh" prd-sync --timeout 900 -- "$SCRIPT_DIR/scripts/sync-prd.sh"
 fi
 
+# Hand back the issues a dead run is still holding. Runs on other machines share
+# no claims file with this one, so each labels the issue it is working and
+# filters out the stories another machine has labelled; nothing refreshes those
+# labels, and a machine that was killed never removes its own. A label older
+# than the limit therefore means nobody is on that issue any more. Only issues
+# assigned to the bot are touched. gh and Python; no agent, no tokens.
+# with-lock keeps 20 slots starting together from sweeping 20 times over.
+"$SCRIPT_DIR/scripts/with-lock.sh" in-progress-sweep --timeout 600 -- \
+  python3 "$SCRIPT_DIR/scripts/sweep-in-progress.py" \
+  || echo "WARNING: could not sweep stale in-progress labels — continuing." >&2
+
 # Collect the worktrees of finished work before starting any. Each one carries a
 # build directory of several gigabytes, and a run that is killed leaves its
 # worktree behind, so they accumulate until the disk fills. A day is the age

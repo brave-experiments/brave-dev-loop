@@ -89,6 +89,44 @@ nothing expires, nothing is reclaimed by a timer.
 ./scripts/claims.py release --story US-4  # hand one back by hand
 ```
 
+**The in-progress label** does the same job across machines, where several
+deployments work one GitHub backlog from their own bot directories. Each has
+its own claims file and its own PRD, so a claim here is invisible there — and
+all of them select from the same issues. `select-task.py` therefore labels the
+issue when it claims the story, skips every issue already wearing that label
+whoever put it there, and `claims.py` takes it off with the claim. It is `gh`
+and Python throughout; no agent reads or writes it.
+
+The label cannot borrow the kernel the way a claim does. A lock on one machine
+says nothing to the others, and a machine that dies never removes its labels,
+so `run.sh` drops the labels older than 6 hours at start (`--max-age-hours` to
+change it, `--dry-run` to look first). That is the whole reason an age limit
+exists. Only issues assigned to the bot are swept: the same label on a human's
+issue is not the loop's to undo.
+
+```bash
+./scripts/sweep-in-progress.py --dry-run   # what start-up would hand back
+```
+
+It reads the label twice, and the second read is not redundant. `gh issue list
+--label` searches an index that trails a write by seconds — measured at 4.8s to
+show a label that had been added and 2.2s to stop showing one that had been
+removed — and `make schedules` installs the same cron times on every machine, so
+two of them select inside that window as a matter of course rather than by bad
+luck. The listing is what filters the whole PRD in one call; `gh issue view` on
+the single issue about to be taken does not trail, so that is what decides. A
+story that loses the second read is dropped, its claim handed straight back, and
+the next candidate tried.
+
+So one issue can sit up to 6 hours after the machine working it dies before
+another picks it up. The cost of the other choice is worse: two machines open
+two PRs for one issue. Turn it on by naming a label the issue repository
+already has — profile `labels.inProgress`, or `labels.inProgressLabel` in
+`config.json`. No label means no cross-machine guard, which is right for a
+project only ever run from one machine. Every call is best-effort: a GitHub
+failure leaves selection exactly as it was before the label existed, never
+"every issue is taken".
+
 **`data/prd.json`** is written under an exclusive lock
 (`data/.prd.lock`, see `scripts/lib/prd_store.py`) by everything that touches
 it: `select-task.py`, `update-prd-status.py`, both syncs, `archive-prd.py`.

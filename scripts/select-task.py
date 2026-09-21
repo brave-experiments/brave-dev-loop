@@ -8,6 +8,10 @@ Selection is one critical section under the PRD lock: filter, sort, claim the
 winner, record it. Runs sharing a bot directory therefore cannot pick the same
 story — whoever gets the lock first claims it, and the next run filters it out.
 
+A run on another machine shares neither the lock nor the claims file, so the
+story it is working is filtered by the in-progress label it left on the issue
+instead (lib/issue_lock.py).
+
 Exit codes:
   0 - Story selected (JSON output on stdout)
   1 - No candidates remain (run complete)
@@ -24,7 +28,8 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import claims as claims_lib
-from lib import slots, triage
+from lib import issue_lock, slots, triage
+from lib.issue_lock import issue_number
 from lib.load_config import build_research, load_config, load_profile
 from lib.prd_store import bot_dir_for, load_prd, prd_lock, save_prd
 
@@ -104,16 +109,6 @@ def research_steps(bot_dir):
     return build_research(load_profile(config, bot_dir), config, bot_dir)
 
 
-def issue_number(story):
-    """Issue number a story references in its description, or None.
-
-    Stories carry the issue only in their prose ("Resolve issue #133"), so the
-    number has to be parsed back out whenever something wants to link to it.
-    """
-    match = re.search(r"issue #(\d+)", story.get("description") or "")
-    return int(match.group(1)) if match else None
-
-
 def assign_tier(story, now=None):
     """Assign a priority tier to a story based on its status and lastActivityBy."""
     if now is None:
@@ -187,14 +182,20 @@ def sort_key(story, now=None, promote_pending=False):
     return (eff_tier, urgency, importance, secondary, priority)
 
 
-def filter_stories(stories, run_state, claimed=None):
+def filter_stories(stories, run_state, claimed=None, in_progress=None):
     """Apply all filtering rules to get candidate stories.
 
     ``claimed`` is the set of story ids another live run is already working;
     they are not candidates for this one.
+
+    ``in_progress`` is the set of issue numbers a run on another machine holds
+    an in-progress label on. A story naming one is left alone until that label
+    is released or swept — this machine's claims file cannot see that run, so
+    the label is all there is to go on.
     """
     checked = set(run_state.get("storiesCheckedThisRun", []))
     claimed = set(claimed or ())
+    in_progress = set(in_progress or ())
     skip_pushed = run_state.get("skipPushedTasks", False)
 
     candidates = []
@@ -212,6 +213,10 @@ def filter_stories(stories, run_state, claimed=None):
         if sid in claimed:
             continue
         if skip_pushed and status == "pushed":
+            continue
+
+        # Filter 2.3: another machine is working this issue
+        if issue_number(story) in in_progress:
             continue
 
         candidates.append(story)
@@ -357,15 +362,21 @@ def main():
     # pointing somewhere else).
     bot_dir = bot_dir_for(prd_path, bot_dir)
 
+    # The issues another machine's runs are on, read before taking the lock:
+    # it is a network call and every slot here queues behind that lock. A set
+    # that goes stale between this line and the claim costs at worst the
+    # duplicated work the label exists to make rare.
+    in_progress = issue_lock.in_progress(bot_dir=bot_dir)
+
     try:
         with prd_lock(prd_path):
-            return _select_locked(args, prd_path, run_state_path, bot_dir)
+            return _select_locked(args, prd_path, run_state_path, bot_dir, in_progress)
     except TimeoutError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
 
-def _select_locked(args, prd_path, run_state_path, bot_dir):
+def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
     # Read prd.json
     try:
         prd = load_prd(prd_path)
@@ -393,8 +404,18 @@ def _select_locked(args, prd_path, run_state_path, bot_dir):
         sid for sid, c in held.items() if int(c.get("slot", -1)) != int(args.slot)
     }
 
+    # A claim here outranks a label: the claim knows which slot holds it and
+    # dies with that slot, the label knows neither. So a story this machine has
+    # a claim on is judged by the claim alone, and the label it put on the issue
+    # can never end up arguing against its own bookkeeping.
+    blocked_issues = set(in_progress or ()) - {
+        issue_number(s) for s in stories if s.get("id") in held
+    }
+
     # Apply filters
-    candidates = filter_stories(stories, run_state, claimed=claimed_elsewhere)
+    candidates = filter_stories(
+        stories, run_state, claimed=claimed_elsewhere, in_progress=blocked_issues
+    )
 
     if not candidates:
         reason = "No candidates remain after filtering"
@@ -402,6 +423,11 @@ def _select_locked(args, prd_path, run_state_path, bot_dir):
             reason += (
                 f" ({len(claimed_elsewhere)} claimed by other runs: "
                 f"{', '.join(sorted(claimed_elsewhere))})"
+            )
+        if blocked_issues:
+            reason += (
+                f" ({len(blocked_issues)} in progress on another machine: "
+                f"{', '.join('#' + str(n) for n in sorted(blocked_issues))})"
             )
         print(json.dumps({"selected": False, "reason": reason}))
         return 1
@@ -442,41 +468,43 @@ def _select_locked(args, prd_path, run_state_path, bot_dir):
         selected = candidates[0]
 
     now = datetime.now(timezone.utc)
+
+    # Claim it while we still hold the lock, so no other run can select it, and
+    # label the issue so a run on another machine filters it out. Filtering
+    # excluded both already, so a refusal here means the state changed under us:
+    # a run here claimed the story, or a machine elsewhere labelled the issue
+    # inside the seconds its label takes to reach the index filtering searched.
+    # Either way take the next candidate rather than working somebody's story.
+    order = [selected] + [c for c in candidates if c.get("id") != selected.get("id")]
+    selected = None
+    for candidate in order:
+        candidate_id = candidate.get("id", "?")
+        if not claims_lib.claim(
+            bot_dir,
+            candidate_id,
+            args.slot,
+            args.run_pid,
+            args.run_id or None,
+            locked=True,
+        ):
+            continue
+        if not issue_lock.acquire(issue_number(candidate), bot_dir=bot_dir):
+            claims_lib.release(
+                bot_dir, story_id=candidate_id, slot=args.slot, locked=True
+            )
+            continue
+        selected = candidate
+        break
+
+    if selected is None:
+        print(
+            json.dumps({"selected": False, "reason": "Could not claim any candidate"})
+        )
+        return 1
+
     story_id = selected.get("id", "?")
     status = selected.get("status", "pending")
     tier = assign_tier(selected, now)
-
-    # Claim it while we still hold the lock, so no other run can select it.
-    # Filtering already excluded stories held elsewhere; a refusal here means
-    # the state changed under us, so take the next candidate rather than
-    # working a story someone else is on.
-    if not claims_lib.claim(
-        bot_dir, story_id, args.slot, args.run_pid, args.run_id or None, locked=True
-    ):
-        remaining = [c for c in candidates if c.get("id") != story_id]
-        if not remaining:
-            print(
-                json.dumps(
-                    {
-                        "selected": False,
-                        "reason": f"{story_id} was claimed by another run",
-                    }
-                )
-            )
-            return 1
-        selected = remaining[0]
-        story_id = selected.get("id", "?")
-        status = selected.get("status", "pending")
-        tier = assign_tier(selected, now)
-        if not claims_lib.claim(
-            bot_dir, story_id, args.slot, args.run_pid, args.run_id or None, locked=True
-        ):
-            print(
-                json.dumps(
-                    {"selected": False, "reason": "Could not claim any candidate"}
-                )
-            )
-            return 1
 
     # Update run-state.json
     update_run_state(run_state_path, run_state, story_id)

@@ -23,6 +23,7 @@ import tempfile
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib import issue_lock
 from lib.load_config import load_config, require_config
 from lib.prd_store import prd_lock
 
@@ -341,6 +342,7 @@ def main():
         or os.path.join(bot_dir, "data", "run-state.json")
     )
 
+    finished_issue = None
     try:
         with prd_lock(prd_path):
             # Load prd.json
@@ -371,9 +373,21 @@ def main():
 
             # Write prd.json atomically
             atomic_write_json(prd_path, prd)
+            finished_issue = (
+                issue_lock.issue_number(story)
+                if args.subcommand in TERMINAL_STATUSES
+                else None
+            )
     except TimeoutError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
+
+    # A story that is finished with releases its issue now rather than waiting
+    # for a run to sweep the label hours from now, so another machine can pick
+    # the issue up while this one moves on. Outside the lock: it is a network
+    # call, and every other update queues behind that lock.
+    if finished_issue:
+        issue_lock.release(finished_issue, bot_dir=bot_dir)
 
     # Update run-state.json if this was a state change
     if is_state_change(args.subcommand, args):
