@@ -23,16 +23,21 @@ PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap
 
 # Review PRs — skip if no recent open PRs
 # Gate check runs before git sync to avoid wasted fetches
+# Three slots, the same count the review-request poll below asks for: a
+# sweep asking for one would take slot 1 only, and exit doing nothing
+# every time a poll happened to be holding it.
 # Weekdays: 3x/day
-0 13,20 * * 1-5 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- /usr/bin/claude -p '/review-prs 1d open auto reviewer-priority' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' >> {BOT}/logs/review-prs-cron.log 2>&1
+0 13,20 * * 1-5 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs --slots 3 -- /usr/bin/claude -p '/review-prs 1d open auto reviewer-priority' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' >> {BOT}/logs/review-prs-cron.log 2>&1
 # Weekends: once/day at noon
-0 12 * * 0,6 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- /usr/bin/claude -p '/review-prs 1d open auto reviewer-priority' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' >> {BOT}/logs/review-prs-cron.log 2>&1
+0 12 * * 0,6 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh && git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs --slots 3 -- /usr/bin/claude -p '/review-prs 1d open auto reviewer-priority' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' >> {BOT}/logs/review-prs-cron.log 2>&1
 
 # Review requested from the bot — skip unless someone asked
-# Gate check runs before git sync to avoid wasted fetches (96 runs/day, most exit early)
-# Every 15 min, on minutes no other job here uses. Shares the review-prs
-# lock with the sweep above, so the two never review at once.
-3,18,33,48 * * * * cd {BOT} && source .envrc && ./scripts/check-review-requests.sh && git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- ./scripts/review-requested.sh >> {BOT}/logs/review-requested-cron.log 2>&1
+# Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)
+# Every 5 min, on minutes no other job here uses. A review runs for far
+# longer than the gap between polls, so runs overlap rather than waiting:
+# three review-prs slots, shared with the sweep above, and a lock per PR
+# inside the job so two runs never review the same one.
+4,9,14,19,24,29,34,39,44,49,54,59 * * * * cd {BOT} && source .envrc && ./scripts/check-review-requests.sh && git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh >> {BOT}/logs/review-requested-cron.log 2>&1
 
 # Learnable pattern search — skip if no recent merged PRs
 # Gate check runs before git sync to avoid wasted fetches

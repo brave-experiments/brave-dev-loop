@@ -32,11 +32,13 @@ bot_cron_job "45 13 * * *" "./scripts/check-has-work.sh" \
 
 echo ""
 echo "# Review requested from the bot — skip unless someone asked"
-echo "# Gate check runs before git sync to avoid wasted fetches (96 runs/day, most exit early)"
+echo "# Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)"
 echo "# This project schedules no unsolicited best-practices sweep: the bot reviews"
 echo "# a bravebot PR when a human clicks Request review on it, and not otherwise."
+echo "# Every 5 min, and runs overlap — a review is much longer than the gap —"
+echo "# bounded by three review-prs slots, with a lock per PR inside the job."
 echo "# Minutes are offset from brave-core's copy of this job, which can be"
 echo "# deployed on the same machine."
-bot_cron_job "8,23,38,53 * * * *" "./scripts/check-review-requests.sh" \
-  "./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs -- ./scripts/review-requested.sh" \
+bot_cron_job "3,8,13,18,23,28,33,38,43,48,53,58 * * * *" "./scripts/check-review-requests.sh" \
+  "./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh" \
   "review-requested-cron.log"

@@ -139,7 +139,40 @@ which takes a lock so two agents' entries cannot interleave mid-block.
 **The shared `.git`** of a worktree checkout is guarded by
 `scripts/git-repo-lock.sh` for operations against the repository itself
 (`fetch`, `worktree add`) — git's own ref locks fail under concurrency. Work
-inside a worktree needs no lock.
+inside a worktree needs no lock. `scripts/lib/repo_lock.py` is the same lock
+for Python callers, on the same file: it derives the name the way the shell
+does, because two mechanisms guarding one repository serialize nothing. The
+review-prs skill takes it for its PR-head fetches, and `sync-target-repo.sh`
+for its `fetch`/`reset`.
+
+## Reviews that overlap
+
+Run slots are not the only concurrency here. The **review-request poll** runs
+every 5 minutes and does not wait for the previous poll: a review takes far
+longer than the interval, so a single exclusive lock would drain the queue at
+one PR per session however often it polled. It is bounded two ways instead.
+
+`with-lock.sh <name> --slots N` turns a named lock into a counting semaphore.
+Slot 1 is the bare lock file the name always used, so a caller that does not
+ask for more than one contends exactly as it did before the flag existed.
+Every job sharing a name must pass the same count — a job asking for one takes
+slot 1 only, and exits doing nothing whenever a job asking for three happens
+to hold it, which is how a sweep gets starved by a poll.
+
+Inside the job, `review-requested.sh` takes a lock per PR
+(`.ignore/.review-pr-<n>.lock`) for the life of that PR's session. The queue
+is GitHub's own and a PR leaves it only when the review is submitted, so an
+overlapping run sees the PR being reviewed right now at the front of its
+queue; the lock makes it walk down the queue instead of posting a second
+review of the same PR. A PR skipped that way does not count against the run's
+`REVIEW_REQUESTED_MAX_PRS` cap, or an overlapping run would shrink the one
+behind it.
+
+The review cache (`.ignore/review-prs-cache.json`) is read, changed and
+written under one lock and replaced atomically, by
+`lib/file_lock.locked_json_update`. Two runs finishing moments apart would
+otherwise each save the snapshot they read, and a lost entry means a PR
+reviewed twice.
 
 **The exit trap** does not touch the main checkout under a worktree profile.
 It still stashes and returns to the default branch for a non-worktree profile,

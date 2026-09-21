@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -41,6 +40,7 @@ from lib.load_config import (
     resolve_docs_dir,
     resolve_target_repo,
 )
+from lib.repo_lock import repo_lock
 
 # Import fetch-prs functions (the module uses if __name__ guard)
 _fp_spec = importlib.util.spec_from_file_location(
@@ -142,7 +142,17 @@ def prune_stale_work_dirs():
 
 
 # Serializes concurrent git fetches to the same repo (git locks packed-refs).
-_git_fetch_lock = threading.Lock()
+#
+# A cross-process lock and not a threading.Lock: the review-request poll is
+# allowed to overlap itself, so two prepare-review.py processes fetch into this
+# one repository at the same time, and an in-process lock does not serialize a
+# fetch against one in another process. lib/repo_lock holds the file
+# git-repo-lock.sh holds, so a run.sh worktree operation counts as contention
+# too. A fresh descriptor per acquisition means it still serializes this
+# process's own threads, which is what the threading.Lock was here for.
+def _git_fetch_lock():
+    return repo_lock(TARGET_REPO_PATH)
+
 
 # A worktree add checks out the whole target repo — 63k files and over a GB for
 # brave-core — and five run at once, so the wall time is disk throughput, not a
@@ -152,7 +162,9 @@ _git_fetch_lock = threading.Lock()
 WORKTREE_ADD_TIMEOUT_S = 900
 
 # Fetching one PR head is a few MB against a warm repo, but the fetches are
-# serialized, so a slow remote makes every later PR wait behind this one.
+# serialized across every run sharing the repo, so a slow remote makes every
+# later PR — in this run and in any overlapping one — wait behind this one.
+# Measured from acquiring the lock, not from asking for it.
 PR_HEAD_FETCH_TIMEOUT_S = 180
 
 
@@ -191,7 +203,7 @@ def fetch_and_create_worktree(pr_number, head_sha, worktree_path):
     TARGET_REPO_PATH so validation still runs, just against master).
     """
     # Serialize fetches — git fetch takes a pack-refs lock.
-    with _git_fetch_lock:
+    with _git_fetch_lock():
         try:
             result = subprocess.run(
                 [

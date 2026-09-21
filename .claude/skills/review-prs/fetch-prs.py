@@ -31,12 +31,18 @@ from datetime import datetime, timedelta, timezone
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.join(_script_dir, "..", "..", "..")
 sys.path.insert(0, os.path.join(_bot_dir, "scripts"))
+from lib.file_lock import locked_json_update
 from lib.load_config import load_config, require_config
 
 _config = load_config()
 PR_REPO = require_config(_config, "project.prRepository")
 
-CACHE_PATH = ".ignore/review-prs-cache.json"
+# Absolute, not relative to the caller's cwd: one cache per bot directory, and
+# it is shared with post-review.py and update-cache.py, which have always
+# addressed it this way.
+CACHE_PATH = os.path.normpath(
+    os.path.join(_bot_dir, ".ignore", "review-prs-cache.json")
+)
 ORG_MEMBERS_PATH = ".ignore/org-members.txt"
 SKIP_PREFIXES = ["CI run for", "Backport", "Update l10n"]
 SKIP_CONTAINS = ["uplift to", "Just to test CI"]
@@ -99,9 +105,24 @@ def has_any_approval(pr):
     return False
 
 
-def save_cache(cache):
-    with open(CACHE_PATH, "w") as f:
-        json.dump(cache, f, indent=2)
+def save_cache(updates, approved_removals=()):
+    """Merge this run's cache changes into the stored cache.
+
+    A merge and not a write of the whole dict, because review sessions overlap:
+    the review-request poll runs every five minutes without waiting for the
+    previous one, so another run — or update-cache.py at the end of one — will
+    have added entries since this run read the file. Writing back the snapshot
+    it read would drop those, and a dropped entry means a PR reviewed twice.
+
+    Only what filter_prs actually changed is applied: the head SHAs it learned
+    and the approvals it decided are stale. It never removes another key.
+    """
+    with locked_json_update(CACHE_PATH) as stored:
+        stored.update(updates)
+        if approved_removals:
+            stored["_approved"] = sorted(
+                set(stored.get("_approved", [])) - set(approved_removals)
+            )
 
 
 def fetch_single_pr(pr_number):
@@ -237,7 +258,10 @@ def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):
     skipped_cached = 0
     skipped_approved = 0
     skipped_external = 0
-    cache_dirty = False
+    # What to persist, kept apart from the in-memory `cache` so the write can
+    # merge rather than overwrite. See save_cache.
+    cache_updates = {}
+    approved_removals = set()
 
     for pr in prs:
         pr_num = str(pr["number"])
@@ -256,7 +280,7 @@ def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):
         if re.match(VERSION_BRANCH_RE, base_ref or ""):
             if cache.get(pr_num) != head_sha:
                 cache[pr_num] = head_sha
-                cache_dirty = True
+                cache_updates[pr_num] = head_sha
             skipped_filtered += 1
             continue
 
@@ -293,7 +317,7 @@ def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):
             if is_rerequest_on_new_sha:
                 approved.discard(pr_num)
                 cache["_approved"] = sorted(approved)
-                cache_dirty = True
+                approved_removals.add(pr_num)
             else:
                 skipped_approved += 1
                 continue
@@ -310,8 +334,8 @@ def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):
 
         to_review.append(pr)
 
-    if cache_dirty:
-        save_cache(cache)
+    if cache_updates or approved_removals:
+        save_cache(cache_updates, approved_removals)
 
     return (
         to_review,

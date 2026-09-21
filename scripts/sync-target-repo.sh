@@ -26,9 +26,23 @@ fi
 echo "Syncing $TARGET_DIR ($BRANCH) to upstream/$BRANCH"
 
 cd "$TARGET_DIR"
-git checkout "$BRANCH"
-git fetch upstream
-git reset --hard "upstream/$BRANCH"
+
+# Under the repo lock, not bare. A review builds a worktree per PR out of this
+# same .git, reviews overlap each other, and two runs fetching into one
+# repository collide on its ref locks — one of them fails with "cannot lock
+# ref" and `set -e` then cancels the whole cron chain behind it. The lock is
+# the one git-repo-lock.sh and lib/repo_lock.py take, so a concurrent PR-head
+# fetch counts as contention too.
+#
+# One critical section for all three: a reset to a ref another process is
+# mid-fetch on is the race, not each command on its own. git-repo-lock.sh does
+# not cd, so this inherits the working directory set above.
+"$SCRIPT_DIR/git-repo-lock.sh" "$TARGET_DIR" -- bash -c '
+  set -e
+  git checkout "$1"
+  git fetch upstream
+  git reset --hard "upstream/$1"
+' bash "$BRANCH"
 
 echo "$BRANCH synced to upstream/$BRANCH"
 
