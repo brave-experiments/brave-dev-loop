@@ -667,6 +667,212 @@ class TestSelectTaskUpdatePrd:
         ]
 
 
+class TestSelectTaskExplicitTarget:
+    """What counts as naming a story outright, and what stays a hint."""
+
+    def test_issue_url(self, select_task):
+        target = select_task.explicit_target(
+            "https://github.com/brave/bravebot/issues/613"
+        )
+        assert target == ("ref", 613)
+
+    def test_hash_number(self, select_task):
+        assert select_task.explicit_target("please do #613") == ("ref", 613)
+
+    def test_pull_request_url(self, select_task):
+        target = select_task.explicit_target("https://github.com/o/r/pull/617")
+        assert target == ("ref", 617)
+
+    def test_story_id_any_case(self, select_task):
+        assert select_task.explicit_target("work us-212") == ("story", "US-212")
+
+    def test_a_story_id_outranks_a_number_beside_it(self, select_task):
+        assert select_task.explicit_target("US-212, the #613 one") == (
+            "story",
+            "US-212",
+        )
+
+    def test_prose_with_a_bare_number_names_nothing(self, select_task):
+        """A number the operator did not mark as a reference is not a target:
+        guessing wrong is the whole thing this exists to prevent."""
+        assert select_task.explicit_target("work 2 small ones") is None
+
+    def test_a_description_names_nothing(self, select_task):
+        assert select_task.explicit_target("the urgent ones") is None
+
+
+class TestSelectTaskMatchTarget:
+    def test_matches_on_the_issue_in_the_description(self, select_task):
+        story = make_story("pending", description="Resolve issue #613: a thing")
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert (found, error) == (story, None)
+
+    def test_matches_on_the_pr_number(self, select_task):
+        story = make_story("pushed", prNumber=617)
+        found, error = select_task.match_target([story], ("ref", 617))
+        assert (found, error) == (story, None)
+
+    def test_refuses_a_skipped_story_with_the_reason_it_was_skipped(self, select_task):
+        """The case that sent an iteration to the wrong story. The skip holds,
+        because its reason is the answer the request was really after — here a
+        blocker and the condition that clears it."""
+        story = make_story(
+            "skipped",
+            description="Resolve issue #613: a thing",
+            skipReason="Blocked on PR #590. Requeue once #590 is merged.",
+        )
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None
+        assert "US-001 is skipped" in error
+        assert "Requeue once #590 is merged" in error
+
+    def test_refuses_an_invalid_story_the_same_way(self, select_task):
+        story = make_story(
+            "invalid", description="Resolve issue #613: a thing", skipReason="duplicate"
+        )
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None and "US-001 is invalid: duplicate" in error
+
+    def test_a_skip_with_no_reason_recorded_still_says_so(self, select_task):
+        story = make_story("skipped", description="Resolve issue #613: a thing")
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None and "no reason recorded" in error
+
+    def test_refuses_a_merged_story(self, select_task):
+        story = make_story("merged", description="Resolve issue #613: a thing")
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None and "already merged" in error
+
+    def test_refuses_what_no_story_works(self, select_task):
+        story = make_story("pending", description="Resolve issue #101: a thing")
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None and "no story in the PRD works it" in error
+
+    def test_refuses_a_story_another_run_holds(self, select_task):
+        story = make_story("pending", description="Resolve issue #613: a thing")
+        found, error = select_task.match_target(
+            [story], ("ref", 613), claimed={"US-001"}
+        )
+        assert found is None and "another run holds US-001" in error
+
+    def test_refuses_an_ambiguous_number(self, select_task):
+        stories = [
+            make_story("pending", id="US-001", description="Resolve issue #613: one"),
+            make_story("pushed", id="US-002", prNumber=613),
+        ]
+        found, error = select_task.match_target(stories, ("ref", 613))
+        assert found is None and "US-001, US-002" in error
+
+
+class TestSelectTaskNamedStoryIsNotSubstituted:
+    """A story named outright is worked or nothing is.
+
+    Selecting a different story burns the iteration on work nobody asked for,
+    and the JSON says `selected` either way — so the run looks like it honoured
+    the request. These drive the real selection path, including its output.
+    """
+
+    def _args(self, tmp_dir, stories, extra_prompt, checked=()):
+        os.makedirs(os.path.join(tmp_dir, "data"), exist_ok=True)
+        prd_path = os.path.join(tmp_dir, "data", "prd.json")
+        with open(prd_path, "w") as f:
+            json.dump({"stories": stories}, f)
+        run_state_path = os.path.join(tmp_dir, "data", "run-state.json")
+        with open(run_state_path, "w") as f:
+            json.dump({"runId": "test", "storiesCheckedThisRun": list(checked)}, f)
+        return Namespace(
+            prd=prd_path,
+            run_state=run_state_path,
+            iteration_log=None,
+            extra_prompt=extra_prompt,
+            # Nothing on this path may reach the model, so a binary that does
+            # not exist stands in for one: llm_select treats it as no answer.
+            claude_bin=os.path.join(tmp_dir, "no-such-claude"),
+            slot=1,
+            run_pid=os.getpid(),
+            run_id="test",
+        )
+
+    def _select(self, select_task, tmp_dir, stories, extra_prompt, capsys, checked=()):
+        args = self._args(tmp_dir, stories, extra_prompt, checked)
+        code = select_task._select_locked(
+            args, args.prd, args.run_state, tmp_dir, in_progress=set()
+        )
+        return code, json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+    def _backlog(self):
+        return [
+            make_story(
+                "skipped",
+                id="US-212",
+                priority=212,
+                description="issue #613",
+                skipReason="Blocked on PR #590.",
+            ),
+            make_story("pending", id="US-217", priority=217, description="issue #620"),
+        ]
+
+    def test_a_named_skipped_story_reports_its_skip(self, select_task, tmp_dir, capsys):
+        """The run this came from: naming #613 worked #620 for an hour."""
+        code, out = self._select(
+            select_task,
+            tmp_dir,
+            self._backlog(),
+            "https://github.com/brave/bravebot/issues/613",
+            capsys,
+        )
+        assert code == 2
+        assert "US-212 is skipped: Blocked on PR #590." in out["reason"]
+        assert "US-217" not in json.dumps(out), "picked a story nobody asked for"
+
+    def test_a_named_story_already_worked_this_run_is_still_selected(
+        self, select_task, tmp_dir, capsys
+    ):
+        """Naming a story reaches past the filters the ordinary queue applies —
+        the reason matching runs over the whole PRD and not the candidates."""
+        code, out = self._select(
+            select_task,
+            tmp_dir,
+            self._backlog(),
+            "US-217",
+            capsys,
+            checked=["US-217"],
+        )
+        assert code == 0
+        assert out["storyId"] == "US-217", out
+
+    def test_an_unmatched_issue_does_not_fall_back(self, select_task, tmp_dir, capsys):
+        code, out = self._select(
+            select_task,
+            tmp_dir,
+            [self._backlog()[1]],
+            "https://github.com/brave/bravebot/issues/613",
+            capsys,
+        )
+        assert code == 2
+        assert out["selected"] is False
+        assert "#613" in out["reason"]
+        assert "US-217" not in json.dumps(out), "picked a story nobody asked for"
+
+    def test_a_refusal_claims_nothing(self, select_task, tmp_dir, capsys):
+        """Nothing may be left holding a story the run never took."""
+        self._select(select_task, tmp_dir, [self._backlog()[1]], "#613", capsys)
+        claims = os.path.join(tmp_dir, "data", "claims.json")
+        assert not os.path.exists(claims) or json.load(open(claims)) == {}
+
+    def test_a_hint_that_matches_nothing_still_falls_back(
+        self, select_task, tmp_dir, capsys
+    ):
+        """The control. A request that names no story is a preference, so an
+        unusable answer from the model leaves the deterministic queue in
+        charge rather than stopping the run."""
+        code, out = self._select(
+            select_task, tmp_dir, self._backlog(), "something small", capsys
+        )
+        assert code == 0
+        assert out["storyId"] == "US-217", out
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # business-hours-elapsed.py
 # ═══════════════════════════════════════════════════════════════════════════

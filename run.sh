@@ -6,6 +6,15 @@
 #                 [--comparison-branch name]] [extra_prompt_info...]
 #        ./run.sh --status     # what is running in this bot directory
 #
+# Choosing the story (extra_prompt_info, anything after `tui`):
+#   An issue or pull request URL, a "#613", or a story id names one story
+#   outright — including one this run already worked, which the automatic
+#   selection passes over. That story is worked or the run stops naming it and
+#   the reason; it is never quietly swapped for another. A skipped story reports
+#   the reason it was skipped rather than being worked, since the workflow for
+#   one is to stop. Any other wording is a hint the model reads instead, and a
+#   hint it cannot use leaves the deterministic queue in charge.
+#
 # Several runs can share one bot directory when bot.maxConcurrentRuns is above
 # 1: each takes a numbered *run slot* and keeps its own lock, run state, logs
 # and story claim. See docs/concurrent-runs.md. At the default of 1 this is
@@ -526,6 +535,7 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
 
   # Select next task — this is the gate check; exit early if no candidates
   TASK_JSON=""
+  SELECT_RC=0
   if [ -n "$EXTRA_PROMPT" ]; then
     TASK_JSON=$(python3 "$SCRIPT_DIR/scripts/select-task.py" \
       --prd "$PRD_FILE" \
@@ -533,18 +543,26 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
       --iteration-log "$ITERATION_LOG" \
       --claude-bin "$BOT_CLAUDE_BIN" \
       --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" --run-id "$RUN_ID" \
-      --extra-prompt "$EXTRA_PROMPT") || true
+      --extra-prompt "$EXTRA_PROMPT") || SELECT_RC=$?
   else
     TASK_JSON=$(python3 "$SCRIPT_DIR/scripts/select-task.py" \
       --prd "$PRD_FILE" \
       --run-state "$RUN_STATE_FILE" \
       --iteration-log "$ITERATION_LOG" \
-      --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" --run-id "$RUN_ID") || true
+      --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" --run-id "$RUN_ID") || SELECT_RC=$?
   fi
 
   TASK_SELECTED=$(echo "$TASK_JSON" | jq -r '.selected // false' 2>/dev/null || echo "false")
   if [ "$TASK_SELECTED" != "true" ]; then
     REASON=$(echo "$TASK_JSON" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown")
+    # Exit 2 is a request that cannot be honoured — usually a story named
+    # outright that is not selectable — and not a backlog that is finished.
+    # Every remaining iteration would refuse the same request the same way, so
+    # say so and stop instead of reporting the run complete.
+    if [ "$SELECT_RC" = 2 ]; then
+      echo "Error: $REASON" >&2
+      exit 1
+    fi
     echo "No more tasks to process: $REASON"
     break
   fi
