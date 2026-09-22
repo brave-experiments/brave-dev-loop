@@ -24,7 +24,10 @@ import argparse
 import fnmatch
 import os
 import re
-import subprocess
+
+# Only git, with argument lists and no shell, so the ref a caller names is an
+# argument to `git` and can never be a command.
+import subprocess  # nosemgrep
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
