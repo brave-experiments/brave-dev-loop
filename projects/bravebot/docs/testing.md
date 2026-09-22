@@ -43,14 +43,22 @@ plus the organization-level security scan.
 ```sh
 make check           # fmt --check, clippy -D warnings, tests, toolchain age
 make check-spec      # the mechanical docs/specs check
+make check-locales   # every catalog against the reference, and the gap file
 make check-npm       # npm ci --ignore-scripts and the lockfile lint
 make check-msrv      # build against the declared minimum Rust (Docker)
 make check-reviewdog # the brave/security-action scan (this branch's changes)
-make check-all       # all five, in that order
+make check-all       # every check CI enforces, not only the ones listed here
 make check-linux     # the same fmt/clippy/tests on Linux stable (Docker)
 ```
 
 `make check` is the inner loop. Run the rest before pushing.
+
+`check-locales` reads the catalogs against each other — every message the
+reference has, the arguments each one takes, the recorded gaps — and nothing
+else. A sentence written in the Rust source is invisible to it, because from the
+catalog's side that message does not exist. `$BOT_DIR/scripts/check-untranslated.py`
+is the half that looks at the source; both are needed and neither implies the
+other.
 
 ### Waiting for them
 
