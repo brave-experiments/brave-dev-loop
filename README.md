@@ -77,6 +77,10 @@ and each story works in a `../brave-dev-loop-<issue>` worktree of it. See
 ./run.sh --agent bravebot --agent-bin ~/bravebot/target/release/bravebot
 ./run.sh --model opus
 
+./run.sh 1 tui https://github.com/o/r/issues/613   # work that issue's story
+./run.sh 1 tui US-212                              # or name the story itself
+./run.sh 1 tui something small                     # a hint, not an instruction
+
 ./run.sh 1 --agent bravebot --comparison-run   # do the story twice and critique the first
 
 ./run.sh --status     # what is running in this directory
@@ -86,6 +90,12 @@ Agent precedence is `--agent` flag > `BOT_AGENT` env var > `bot.agent` in
 config. `--model` overrides the model for whichever agent is selected, and
 `--agent-bin` overrides the binary it runs from — which is how bravebot is
 pointed at a local build, since it has no config keys of its own.
+
+Anything after `tui` chooses the story. An issue URL, a pull request URL, a
+`#613` or a story id names one outright: that story is worked, even one already
+worked this run or one that was skipped, and if it cannot be it is refused by
+name rather than swapped for another. Any other wording is a hint the model
+reads, and a hint it cannot use leaves the ordinary queue in charge.
 
 ```bash
 tail -f data/progress.txt        # watch progress

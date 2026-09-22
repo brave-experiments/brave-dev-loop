@@ -224,6 +224,84 @@ def filter_stories(stories, run_state, claimed=None, in_progress=None):
     return candidates
 
 
+# A story, issue or pull request named outright in --extra-prompt. An issue URL
+# or a "#613" is data, not a hint: the operator has already decided which story
+# they want, so finding it is a lookup rather than something to ask a model.
+_TARGET_REF_RE = re.compile(r"(?:issues?|pull)/(\d+)\b|#(\d+)\b")
+_TARGET_STORY_RE = re.compile(r"\bUS-\d+\b", re.IGNORECASE)
+
+
+def explicit_target(extra_prompt):
+    """What --extra-prompt names outright, as a (kind, value) pair, or None.
+
+    ``("story", "US-212")`` for a story id, ``("ref", 613)`` for an issue or
+    pull request number — the two are one kind because "#613" does not say
+    which it is, and a story records both.
+
+    A bare number is deliberately not a target: "./run.sh tui 2 small ones"
+    names nothing, and guessing wrong is exactly what this exists to avoid.
+    """
+    story = _TARGET_STORY_RE.search(extra_prompt)
+    if story:
+        return ("story", story.group(0).upper())
+    ref = _TARGET_REF_RE.search(extra_prompt)
+    if ref:
+        return ("ref", int(ref.group(1) or ref.group(2)))
+    return None
+
+
+def describe_target(target):
+    """A target as the operator typed it, for an error message."""
+    kind, value = target
+    return value if kind == "story" else f"#{value}"
+
+
+def match_target(stories, target, claimed=None):
+    """The one story a target names, as (story, error): exactly one is None.
+
+    Matches against every story except merged ones, so naming a story outright
+    reaches work the automatic selection will not: one already worked this run,
+    and one that was skipped or marked invalid — reversing either is an
+    operator's call, and typing its issue URL is how they make it.
+    """
+    kind, value = target
+    claimed = set(claimed or ())
+    named = describe_target(target)
+
+    if kind == "story":
+        matches = [s for s in stories if (s.get("id") or "").upper() == value]
+    else:
+        matches = [
+            s for s in stories if issue_number(s) == value or s.get("prNumber") == value
+        ]
+
+    if not matches:
+        return (
+            None,
+            f"{named} is named in the request, but no story in the PRD works it",
+        )
+    if len(matches) > 1:
+        ids = ", ".join(sorted(s.get("id", "?") for s in matches))
+        return (
+            None,
+            f"{named} is named in the request, but several stories work it: {ids}",
+        )
+
+    story = matches[0]
+    story_id = story.get("id", "?")
+    if story.get("status") == "merged":
+        return (
+            None,
+            f"{named} is named in the request, but {story_id} is already merged",
+        )
+    if story_id in claimed:
+        return (
+            None,
+            f"{named} is named in the request, but another run holds {story_id}",
+        )
+    return story, None
+
+
 def candidate_summary(candidates):
     """One line per candidate for the LLM selector.
 
@@ -434,9 +512,20 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
 
     # Selection
     selected = None
+    # A story named outright is a requirement, not a preference. Nothing may
+    # fall back off it: an iteration spent on a story the operator did not ask
+    # for is an hour of work thrown away, and it reads as if the request was
+    # honoured. Refusing to select is the only honest answer.
+    target = explicit_target(args.extra_prompt)
 
-    # Try LLM-assisted selection if extra prompt provided
-    if args.extra_prompt.strip():
+    if target:
+        selected, error = match_target(stories, target, claimed=claimed_elsewhere)
+        if error:
+            print(f"Error: {error}", file=sys.stderr)
+            print(json.dumps({"selected": False, "reason": error}))
+            return 2
+    elif args.extra_prompt.strip():
+        # A request that names nothing outright is a hint, so the model reads it.
         # Use all non-terminal stories for LLM selection so the user can
         # override run-state filters (e.g. pick an already-checked story)
         all_active = [
@@ -475,7 +564,14 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
     # a run here claimed the story, or a machine elsewhere labelled the issue
     # inside the seconds its label takes to reach the index filtering searched.
     # Either way take the next candidate rather than working somebody's story.
-    order = [selected] + [c for c in candidates if c.get("id") != selected.get("id")]
+    # Unless the story was named outright, where there is no next candidate to
+    # take: the request was for that story alone.
+    named = selected
+    order = (
+        [selected]
+        if target
+        else [selected] + [c for c in candidates if c.get("id") != selected.get("id")]
+    )
     selected = None
     for candidate in order:
         candidate_id = candidate.get("id", "?")
@@ -497,6 +593,14 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
         break
 
     if selected is None:
+        if target:
+            reason = (
+                f"{describe_target(target)} is named in the request, but "
+                f"{named.get('id', '?')} was claimed by another run just now"
+            )
+            print(f"Error: {reason}", file=sys.stderr)
+            print(json.dumps({"selected": False, "reason": reason}))
+            return 2
         print(
             json.dumps({"selected": False, "reason": "Could not claim any candidate"})
         )
