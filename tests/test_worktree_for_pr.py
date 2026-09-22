@@ -57,7 +57,8 @@ class World:
         self.main = tmp_path / "bravebot"
         # The remote URL has to carry the head repository's owner: that is how
         # the script picks which remote to fetch a pull request branch from.
-        origin = tmp_path / "netzenbot" / "bravebot.git"
+        self.origin = tmp_path / "netzenbot" / "bravebot.git"
+        origin = self.origin
         origin.parent.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
 
@@ -129,6 +130,28 @@ class World:
     def sibling(self, suffix):
         return self.tmp / f"bravebot-{suffix}"
 
+    def push_from_elsewhere(self):
+        """Advance the fork's branch from another clone, and answer the new head.
+
+        Pushed from somewhere the main checkout cannot see, so the checkout is
+        left genuinely stale: it has neither the commit nor a remote-tracking ref
+        that mentions it, which is the state a branch pushed from another machine
+        arrives in.
+        """
+        clone = self.tmp / "elsewhere"
+        subprocess.run(
+            ["git", "clone", "-q", "-b", BRANCH, str(self.origin), str(clone)],
+            check=True,
+        )
+        git(clone, "config", "user.name", "testbot")
+        git(clone, "config", "user.email", "testbot@example.com")
+        git(clone, "config", "commit.gpgsign", "false")
+        (clone / "more").write_text("more work\n")
+        git(clone, "add", "more")
+        git(clone, "commit", "-q", "-m", "more work")
+        git(clone, "push", "-q", "origin", BRANCH)
+        return git(clone, "rev-parse", "HEAD")
+
 
 @pytest.fixture
 def world(tmp_path):
@@ -173,16 +196,72 @@ def test_warns_when_the_branch_sits_in_the_main_checkout(world):
     assert "main checkout" in result.stderr
 
 
-def test_warns_when_the_worktree_is_not_at_the_pull_requests_head(world):
-    """A reused worktree may have been rebased or force-pushed past."""
+def test_warns_when_the_worktree_holds_what_the_head_does_not(world):
+    """A tree rebased or committed to locally is somebody's work, so it stays."""
     existing = world.sibling("105")
     git(world.main, "worktree", "add", "-q", str(existing), BRANCH)
     behind = git(world.main, "rev-parse", "HEAD")  # the base commit, on main
+    was = git(existing, "rev-parse", "HEAD")
 
     result = world.run("351", gh_json=pr_json(behind))
 
     assert result.stdout.strip() == str(existing)
     assert "not what the pull request shows" in result.stderr
+    assert git(existing, "rev-parse", "HEAD") == was
+
+
+# ── Catching the worktree up to the pull request ─────────────────────────────
+
+
+def test_fast_forwards_a_reused_worktree_onto_the_head(world):
+    """A branch pushed from another machine leaves every worktree here behind."""
+    existing = world.sibling("105")
+    git(world.main, "worktree", "add", "-q", str(existing), BRANCH)
+    was = git(existing, "rev-parse", "HEAD")
+    head = world.push_from_elsewhere()
+
+    result = world.run("351", gh_json=pr_json(head))
+
+    assert result.stdout.strip() == str(existing)
+    assert git(existing, "rev-parse", "HEAD") == head
+    assert (existing / "more").read_text() == "more work\n"
+    assert f"fast-forwarding {was[:9]} -> {head[:9]}" in result.stderr
+
+
+def test_a_new_worktree_starts_at_the_head_not_a_stale_local_branch(world):
+    """`worktree add <dest> <branch>` lands on whatever the branch was last at."""
+    git(world.main, "branch", BRANCH, f"origin/{BRANCH}")
+    head = world.push_from_elsewhere()
+
+    result = world.run("351", gh_json=pr_json(head))
+
+    created = result.stdout.strip()
+    assert git(created, "rev-parse", "HEAD") == head
+
+
+def test_a_tree_with_uncommitted_changes_is_left_where_it_is(world):
+    """Work in progress outranks being on the head: moving it could lose it."""
+    existing = world.sibling("105")
+    git(world.main, "worktree", "add", "-q", str(existing), BRANCH)
+    (existing / "feature").write_text("half a thought\n")
+    was = git(existing, "rev-parse", "HEAD")
+    head = world.push_from_elsewhere()
+
+    result = world.run("351", gh_json=pr_json(head))
+
+    assert git(existing, "rev-parse", "HEAD") == was
+    assert "uncommitted changes" in result.stderr
+    assert (existing / "feature").read_text() == "half a thought\n"
+
+
+def test_a_worktree_already_on_the_head_says_nothing(world):
+    existing = world.sibling("105")
+    git(world.main, "worktree", "add", "-q", str(existing), BRANCH)
+
+    result = world.run("351")
+
+    assert "Warning" not in result.stderr
+    assert "fast-forwarding" not in result.stderr
 
 
 # ── Creating one ─────────────────────────────────────────────────────────────

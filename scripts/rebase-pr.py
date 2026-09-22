@@ -37,7 +37,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.load_config import bot_dir, get_config, load_config
 from lib.pr_worktree import (
+    align_with_remote,
     die,
+    is_ancestor,
     locked,
     main_checkout,
     read_pr,
@@ -45,6 +47,7 @@ from lib.pr_worktree import (
     remotes,
     run,
     say,
+    uncommitted,
     worktree_for,
 )
 
@@ -72,48 +75,32 @@ def base_remote(main, repo):
     return remote_for_owner(main, repo.partition("/")[0]) or "origin"
 
 
-def is_ancestor(work, earlier, later):
-    return (
-        subprocess.run(
-            ["git", "-C", work, "merge-base", "--is-ancestor", earlier, later],
-            capture_output=True,
-        ).returncode
-        == 0
-    )
-
-
 def require_clean(work):
     """Refuse to move a tree with uncommitted changes to tracked files in it.
 
     A rebase of a dirty tree stops halfway through anyway, and this worktree may
-    be a story's: a session could be mid-edit in it right now. Untracked files
-    are not counted -- a build directory and a screenshot are what a worktree is
-    full of, and a rebase only minds one it would have to overwrite.
+    be a story's: a session could be mid-edit in it right now.
     """
-    if run("git", "-C", work, "status", "--porcelain", "-uno"):
+    if uncommitted(work):
         die(f"{work} has uncommitted changes -- commit them before rebasing")
 
 
-def align_with_remote(work, branch, remote_head):
-    """Put the worktree on the commit the pull request's branch was fetched at.
+def refuse_to_leave_commits(work, branch):
+    """`align_with_remote`'s answer here to a tree ahead of the pushed branch.
 
-    A worktree is wherever its last session left it. Behind the branch -- every
-    commit in it already contained in `remote_head` -- is a fast-forward and
-    loses nothing. Ahead of it is different: force-pushing a rebase of commits
-    the pull request has never had would add work to it under the name of a
-    rebase, so stop and let whoever made them decide.
+    Rebasing it and force-pushing would put commits the pull request has never
+    had into it under the name of a rebase, so stop and let whoever made them
+    decide.
     """
-    local = run("git", "-C", work, "rev-parse", "HEAD")
-    if local == remote_head:
-        return
-    if not is_ancestor(work, local, remote_head):
+
+    def refuse(local, remote_head):
         die(
             f"{work} is at {local[:9]} and {branch} was pushed at "
             f"{remote_head[:9]}, so this tree holds commits the pull request "
             f"does not. Push or drop them before rebasing."
         )
-    say(f"  fast-forwarding {local[:9]} -> {remote_head[:9]}")
-    run("git", "-C", work, "reset", "--hard", remote_head)
+
+    return refuse
 
 
 def rebase(work, base):
@@ -202,7 +189,7 @@ def main_entry():
 
     require_clean(work)
     remote_head = run("git", "-C", work, "rev-parse", f"{push_remote}/{branch}")
-    align_with_remote(work, branch, remote_head)
+    align_with_remote(work, branch, remote_head, refuse_to_leave_commits(work, branch))
 
     if is_ancestor(work, base, "HEAD"):
         say(f"  already on top of {base}; nothing to push")

@@ -193,6 +193,85 @@ def branch_exists(main, branch):
     )
 
 
+def is_ancestor(work, earlier, later):
+    return (
+        subprocess.run(
+            ["git", "-C", work, "merge-base", "--is-ancestor", earlier, later],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def have_commit(main, oid):
+    """Whether this repository holds the commit `oid` at all.
+
+    A pull request's head comes from gh, so it names a commit GitHub has and this
+    checkout may never have fetched -- and nothing can be said about a commit
+    that is not here, let alone moved onto it.
+    """
+    return (
+        subprocess.run(
+            ["git", "-C", main, "cat-file", "-e", f"{oid}^{{commit}}"],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def uncommitted(work):
+    """Changes to tracked files in `work` that nobody has committed.
+
+    Untracked files are not counted -- a build directory and a screenshot are
+    what a worktree is full of, and moving a tree only minds a file it would
+    have to overwrite.
+    """
+    return run("git", "-C", work, "status", "--porcelain", "-uno")
+
+
+def fetch_head(bot, main, repo, number, branch, owner):
+    """Fetch the pull request's branch, from wherever this repository can see it.
+
+    Forced, because the interesting case is a branch that was rewritten: an
+    unforced fetch of one is refused, which is exactly when the ref here is
+    furthest from the pull request. A fork nothing here has a remote for is read
+    through the pull request itself, which GitHub serves from the base
+    repository -- enough to have the commit, which is all this is for.
+    """
+    remote = remote_for_owner(main, owner)
+    if remote:
+        say(f"  fetching {branch} from {remote}")
+        refspec = f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}"
+        locked(bot, main, "fetch", remote, refspec)
+        return
+
+    base = "upstream" if "upstream" in remotes(main) else "origin"
+    say(f"  {owner} has no remote here; fetching {repo}#{number} head from {base}")
+    locked(bot, main, "fetch", base, f"+refs/pull/{number}/head")
+
+
+def align_with_remote(work, branch, remote_head, on_refuse):
+    """Put the worktree on the commit the pull request's branch was pushed at.
+
+    A worktree is wherever its last session left it. Behind the branch -- every
+    commit in it already contained in `remote_head` -- is a fast-forward and
+    loses nothing. Ahead of it is different: the tree holds a commit the pull
+    request has never had, which is what a local rebase or an unpushed fix looks
+    like, and what that means belongs to the caller. `make rebase` stops, because
+    force-pushing would add the commit to the pull request under the name of a
+    rebase; `make worktree` says so and reads the tree where it stands. A dirty
+    tree is the caller's to rule out first, with `uncommitted`.
+    """
+    local = run("git", "-C", work, "rev-parse", "HEAD")
+    if local == remote_head:
+        return
+    if not is_ancestor(work, local, remote_head):
+        on_refuse(local, remote_head)
+        return
+    say(f"  fast-forwarding {local[:9]} -> {remote_head[:9]}")
+    run("git", "-C", work, "reset", "--hard", remote_head)
+
+
 def issue_number(pr):
     """The issue this pull request belongs to, or None.
 
