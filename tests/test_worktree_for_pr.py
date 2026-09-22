@@ -280,8 +280,8 @@ def test_no_envrc_in_the_main_checkout_copies_nothing(world):
 # ── Reading the pull request off the command line ────────────────────────────
 
 
-def test_accepts_a_url_a_hash_and_a_bare_number(world, worktree_for_pr):
-    parse = worktree_for_pr.parse_pr
+def test_accepts_a_url_a_hash_and_a_bare_number(world, pr_worktree):
+    parse = pr_worktree.parse_pr
     assert parse("https://github.com/brave/bravebot/pull/351", None) == (
         "brave/bravebot",
         "351",
@@ -290,9 +290,9 @@ def test_accepts_a_url_a_hash_and_a_bare_number(world, worktree_for_pr):
     assert parse("351", "brave/bravebot") == ("brave/bravebot", "351")
 
 
-def test_rejects_something_that_is_neither(worktree_for_pr):
+def test_rejects_something_that_is_neither(pr_worktree):
     with pytest.raises(SystemExit):
-        worktree_for_pr.parse_pr("not-a-pull-request", "brave/bravebot")
+        pr_worktree.parse_pr("not-a-pull-request", "brave/bravebot")
 
 
 def test_asking_is_refused_when_there_is_no_one_to_ask(world):
