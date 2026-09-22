@@ -49,6 +49,15 @@ from lib.pr_worktree import (
 )
 
 
+def streamed(*args):
+    """Run a command with its output left on the terminal, returning its code.
+
+    A rebase and a push both report as they go, and it is the conflict message
+    that names the files, which is what the reader has to act on.
+    """
+    return subprocess.run(args).returncode
+
+
 def base_remote(main, repo):
     """The remote whose default branch a reviewer merges this pull request into.
 
@@ -109,13 +118,11 @@ def align_with_remote(work, branch, remote_head):
 def rebase(work, base):
     """Rebase onto `base`, aborting rather than leaving a half-done one behind.
 
-    git's own output is left uncaptured: a rebase reports as it goes, and it is
-    the conflict message that names the files, which is what the reader has to
-    act on. An abandoned rebase would strand the next session that uses this
-    worktree, so it is cleaned up here and finished by hand afterwards.
+    An abandoned rebase would strand the next session that uses this worktree,
+    so it is cleaned up here and finished by hand afterwards.
     """
     say(f"  rebasing onto {base}")
-    if subprocess.run(["git", "-C", work, "rebase", base]).returncode == 0:
+    if streamed("git", "-C", work, "rebase", base) == 0:
         return
     subprocess.run(["git", "-C", work, "rebase", "--abort"], capture_output=True)
     die(
@@ -133,18 +140,8 @@ def force_push(work, remote, branch, lease):
     protects nothing.
     """
     say(f"  force-pushing {branch} to {remote}")
-    push = subprocess.run(
-        [
-            "git",
-            "-C",
-            work,
-            "push",
-            f"--force-with-lease={branch}:{lease}",
-            remote,
-            branch,
-        ]
-    )
-    if push.returncode != 0:
+    lease_flag = f"--force-with-lease={branch}:{lease}"
+    if streamed("git", "-C", work, "push", lease_flag, remote, branch) != 0:
         die(f"the push to {remote} failed; {remote}/{branch} still has the old commits")
 
 
