@@ -12,7 +12,30 @@
       "crates/i18n/*"
     ],
     "catalog": "crates/i18n/locales/en-US.ftl",
-    "how": "add it to crates/i18n/locales/en-US.ftl and read it back with t!(message-name), then run make check-locales. docs/specs/localization.md draws the line between the two audiences; a crate too low to reach the catalog names the condition instead and leaves the words to the layer that prints them."
+    "how": "add it to crates/i18n/locales/en-US.ftl and read it back with t!(message-name), then run make check-locales. docs/specs/localization.md draws the line between the two audiences; a crate too low to reach the catalog names the condition instead and leaves the words to the layer that prints them.",
+    "quotes": [
+      "\""
+    ],
+    "comments": [
+      "//",
+      "#[",
+      "#!"
+    ],
+    "developer": [
+      "expect*",
+      "assert*",
+      "debug_assert*",
+      "panic!",
+      "unreachable!",
+      "todo!",
+      "unimplemented!",
+      "dbg!",
+      "env!",
+      "cfg!",
+      "include_str!",
+      "include_bytes!"
+    ],
+    "testsBegin": "^\\s*(?:#\\[cfg\\(test\\)\\]|mod tests\\b)"
   },
   "research": [
     "Create or re-enter this story's git worktree at {targetRepo}-<issue-number> and do all of the work there — every git, build, test, edit and file read below, including paths written as {targetRepo}/..., means the worktree and never {targetRepo} itself (see projects/bravebot/docs/repo.md)",
