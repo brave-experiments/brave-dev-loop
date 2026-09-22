@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 
 import pytest
@@ -149,8 +150,21 @@ def repair_config_paths():
 
 
 @pytest.fixture
-def worktree_for_pr():
+def rebase_pr():
     return _load_module(
-        "worktree_for_pr",
-        os.path.join(SCRIPTS_DIR, "worktree-for-pr.py"),
+        "rebase_pr",
+        os.path.join(SCRIPTS_DIR, "rebase-pr.py"),
     )
+
+
+@pytest.fixture
+def pr_worktree():
+    """lib/pr_worktree.py -- imported as a package member, not by path.
+
+    It imports lib.load_config relatively, which only resolves when `lib` is a
+    real package on sys.path rather than a file loaded under its own name.
+    """
+    sys.path.insert(0, os.path.abspath(SCRIPTS_DIR))
+    from lib import pr_worktree
+
+    return pr_worktree
