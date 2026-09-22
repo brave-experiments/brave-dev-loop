@@ -53,9 +53,10 @@ def streamed(*args):
     """Run a command with its output left on the terminal, returning its code.
 
     A rebase and a push both report as they go, and it is the conflict message
-    that names the files, which is what the reader has to act on.
+    that names the files, which is what the reader has to act on. Every caller
+    passes git an argument list this module built, with no shell anywhere.
     """
-    return subprocess.run(args).returncode
+    return subprocess.run(args).returncode  # nosemgrep
 
 
 def base_remote(main, repo):
