@@ -112,8 +112,9 @@ with `worktree add`. What follows from that:
 
 Nothing to do: `run.sh` collects worktrees itself, at the end of a session and
 again at the start of the next one, and `scripts/clean-worktrees.py` decides. It
-removes only a worktree holding nothing — no uncommitted changes, no commit
-missing from every remote — and never one a live run claims.
+removes only a worktree holding nothing of its own — no uncommitted changes — and
+never one a live run claims. Commits do not count: your branch survives the
+removal, so an unpushed one is still there to check out.
 
 So leave the directory where it is, and do not `--force` past a `worktree
 remove` that refuses: the changes it refused over are the reason.

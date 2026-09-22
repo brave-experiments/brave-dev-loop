@@ -237,9 +237,56 @@ def test_uncommitted_changes_keep_a_worktree(repo, bot_dir):
     assert "uncommitted changes" in report["kept"][0]["reason"]
 
 
-def test_commits_no_remote_has_keep_a_worktree(repo, bot_dir):
-    """A story mid-development: committed in the worktree, not yet pushed."""
+def test_commits_no_remote_has_do_not_keep_a_worktree(repo, bot_dir):
+    """A story committed but not pushed: the worktree goes, the commits do not.
+
+    The branch is the repository's rather than the worktree's, so removal parks
+    the work under the same name instead of losing it, and the report says which
+    name so it can be found again.
+    """
     worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    (worktree / "fix.txt").write_text("the fix\n")
+    git("add", "fix.txt", cwd=worktree)
+    git("commit", "-qm", "the fix", cwd=worktree)
+    head = git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+
+    report = clean(repo, bot_dir)
+
+    assert report["removed"] == [str(worktree)]
+    assert not worktree.exists()
+    assert git("rev-parse", "fix-133", cwd=repo).stdout.strip() == head
+    assert report["unpushed"] == [{"path": str(worktree), "branch": "fix-133"}]
+
+
+def test_a_squash_merged_worktree_is_collected(repo, bot_dir):
+    """The shape that used to make every finished worktree permanent.
+
+    A squash merge puts the change on the base branch as a new commit and the
+    head branch is deleted with it, so the worktree's own commits are on no
+    remote and are ancestors of nothing. That is what every landed story looks
+    like, and asking whether a remote held them kept the lot.
+    """
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    (worktree / "fix.txt").write_text("the fix\n")
+    git("add", "fix.txt", cwd=worktree)
+    git("commit", "-qm", "the fix", cwd=worktree)
+    git("push", "-q", "origin", "fix-133", cwd=worktree)
+
+    git("merge", "-q", "--squash", "fix-133", cwd=repo)
+    git("commit", "-qm", "the fix (#1)", cwd=repo)
+    git("push", "-q", "origin", "main", cwd=repo)
+    git("push", "-q", "origin", "--delete", "fix-133", cwd=repo)
+    git("fetch", "-q", "--prune", "origin", cwd=repo)
+
+    report = clean(repo, bot_dir)
+
+    assert report["removed"] == [str(worktree)]
+    assert not worktree.exists()
+
+
+def test_a_detached_worktree_holding_commits_nothing_names_is_kept(repo, bot_dir):
+    """No branch to park them on, so pruning the entry is what loses them."""
+    worktree = add_worktree(repo, "repo-133")
     (worktree / "fix.txt").write_text("the fix\n")
     git("add", "fix.txt", cwd=worktree)
     git("commit", "-qm", "the fix", cwd=worktree)
@@ -248,7 +295,17 @@ def test_commits_no_remote_has_keep_a_worktree(repo, bot_dir):
 
     assert report["removed"] == []
     assert worktree.exists()
-    assert "on no remote branch" in report["kept"][0]["reason"]
+    assert "detached and no ref keeps its commits" in report["kept"][0]["reason"]
+
+
+def test_a_detached_worktree_a_ref_still_covers_is_collected(repo, bot_dir):
+    """The control: detached is not itself the thing worth keeping a worktree for."""
+    worktree = add_worktree(repo, "repo-133")
+
+    report = clean(repo, bot_dir)
+
+    assert report["removed"] == [str(worktree)]
+    assert not worktree.exists()
 
 
 def test_a_worktree_a_live_run_claims_is_kept(repo, bot_dir, live_run):

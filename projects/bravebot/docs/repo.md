@@ -113,9 +113,10 @@ that is the thing to fix (`cp .envrc.example .envrc`), in the main checkout.
 
 Nothing to do: `run.sh` collects worktrees itself, at the end of a session and
 again at the start of the next one, and `scripts/clean-worktrees.py` is what
-decides. It removes only a worktree that holds nothing — no uncommitted changes,
-and no commit that is missing from every remote — and never one a live run
-claims. A story whose worktree it removed reuses its branch from
+decides. It removes only a worktree that holds nothing of its own — no
+uncommitted changes — and never one a live run claims. Commits do not count: the
+branch is the repository's and outlives the worktree, so an unpushed one is still
+there to check out. A story whose worktree it removed reuses its branch from
 `origin/<branch-name>` on the next iteration, which is the case above.
 
 So leave the directory where it is. Do not remove one to tidy up, and do not
