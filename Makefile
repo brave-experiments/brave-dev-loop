@@ -1,4 +1,4 @@
-.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree unmount-worktrees
+.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase unmount-worktrees
 
 # Prefer .venv when it exists so no target needs an activated shell. PEP 668
 # interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
@@ -112,6 +112,29 @@ worktree:
 	@dir=$$(python3 scripts/worktree-for-pr.py $(if $(PR),"$(PR)")) || exit $$?; \
 	 echo "--> $$dir" >&2; \
 	 cd "$$dir" && { $(or $(USER_SHELL),/bin/sh) -i || true; }
+
+# Rebase a pull request onto the branch it will be merged into, and force-push:
+#
+#   make rebase PR=https://github.com/brave/bravebot/pull/351
+#   make rebase PR=351
+#   make rebase                # asks which pull request
+#
+# The same worktree `make worktree` opens does the rebase, and nothing checks a
+# branch out anywhere, so the main checkout keeps the default branch every other
+# worktree borrows from. Where the project works through a fork, `upstream` is
+# the pull request's repository and the base is `upstream/<project.defaultBranch>`,
+# while the push goes back to the fork the branch came from; with no fork both
+# halves are the one remote.
+#
+# A conflict aborts the rebase and pushes nothing, so the worktree is left where
+# the next session can use it. A tree with uncommitted changes, or with commits
+# the pull request has never had, stops the command instead of force-pushing
+# work nobody reviewed. Where the repository signs commits, the rebase writes
+# new ones and needs the signing key -- for this bot, an ssh-agent holding it.
+#
+# No model is involved.
+rebase:
+	@python3 scripts/rebase-pr.py $(if $(PR),"$(PR)")
 
 # Remove the target repository's story worktrees and the directories they live
 # in -- the `../<repo>-<issue>` checkouts a worktree profile leaves behind, each

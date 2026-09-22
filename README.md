@@ -121,6 +121,27 @@ shared between worktrees and a fresh one would otherwise have no environment.
 Exit the shell to come back. No model is involved, and nothing is committed or
 pushed.
 
+To bring a stale pull request up to date with the branch it will be merged into:
+
+```bash
+make rebase PR=https://github.com/brave/bravebot/pull/351
+make rebase PR=351               # the repo comes from config.json
+make rebase                      # asks which pull request
+```
+
+That rebases in the same worktree, so the main checkout is never moved off the
+default branch every other worktree borrows from. Where the project works
+through a fork, the base is `upstream/<project.defaultBranch>` — the branch a
+reviewer merges into, which is not where the pull request was pushed — and the
+force-push goes back to the fork the branch came from. The push carries a lease
+on the commit the branch was fetched at, so a race with someone else's push is
+rejected instead of overwriting it.
+
+It stops rather than pushing when the worktree has uncommitted changes, or holds
+commits the pull request has never had, and a conflict aborts the rebase and
+leaves the worktree usable. Where the repository signs commits, the rebase
+writes new ones and needs the signing key available. No model is involved.
+
 Scheduled jobs are per-project: `make schedules` installs one crontab block for
 the project in `config.json` and leaves any other deployment's block alone, and
 what goes in it comes from `projects/<profile>/schedules.sh` — see

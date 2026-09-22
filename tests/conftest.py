@@ -150,6 +150,14 @@ def repair_config_paths():
 
 
 @pytest.fixture
+def rebase_pr():
+    return _load_module(
+        "rebase_pr",
+        os.path.join(SCRIPTS_DIR, "rebase-pr.py"),
+    )
+
+
+@pytest.fixture
 def pr_worktree():
     """lib/pr_worktree.py -- imported as a package member, not by path.
 

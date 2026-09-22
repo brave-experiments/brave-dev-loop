@@ -32,7 +32,10 @@ ISSUE_LINE = re.compile(
 )
 PR_URL = re.compile(r"github\.com/([^/]+/[^/]+)/pull/(\d+)")
 
-PR_FIELDS = "headRefName,headRefOid,headRepositoryOwner,state,title,body"
+PR_FIELDS = (
+    "headRefName,headRefOid,headRepositoryOwner,baseRefName,"
+    "state,title,body,reviewDecision"
+)
 
 # `gh pr view --json closingIssuesReferences` only exists from gh 2.46, and an
 # unknown field fails the whole read, so the link comes from GraphQL instead --
