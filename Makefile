@@ -148,11 +148,11 @@ rebase:
 #   make unmount-worktrees DRY_RUN=1
 #
 # The default is the pass run.sh makes at the start of a run, so it keeps what
-# that keeps: anything used in the last day, and anything holding work no remote
-# has. ALL=1 drops both -- for emptying the directory rather than collecting
+# that keeps: anything used in the last day, and anything holding uncommitted
+# changes. ALL=1 drops both -- for emptying the directory rather than collecting
 # after a run. Uncommitted changes are what that loses and it names each one as
 # it goes; the branches are the repository's, not the worktrees', so unpushed
-# commits survive and `git checkout <branch>` still finds them.
+# commits survive either way and `git checkout <branch>` still finds them.
 #
 # Either way a worktree a live run claims, or one git has locked, stays: pulling
 # the directory out from under a running session breaks it. No model is involved.

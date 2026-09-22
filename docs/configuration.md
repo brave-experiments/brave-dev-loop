@@ -106,11 +106,14 @@ with the build output of work that has already landed:
   another run may be mid-iteration in one it used minutes ago
 
 `scripts/clean-worktrees.py` decides, and keeps anything that would lose work:
-uncommitted changes, a commit no remote has, a worktree a live run claims, or one
-git has locked. Idleness is measured from the last git command run in the
+uncommitted changes, a detached worktree whose commits no ref keeps, a worktree a
+live run claims, or one git has locked. Commits on a branch are none of those —
+the branch is the repository's, so it outlives the worktree and the report names
+it as the worktree goes. Idleness is measured from the last git command run in the
 worktree, not from when it was added — a long-lived story's worktree is days old
 and still in use. `--dry-run` reports without removing. A story whose worktree
-was collected re-creates it from `origin/<branch>` on its next iteration.
+was collected re-creates it from `origin/<branch>` on its next iteration, or from
+the local branch where nothing was pushed.
 
 To empty the directory by hand rather than wait for a run to collect:
 

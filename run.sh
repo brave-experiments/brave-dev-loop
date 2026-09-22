@@ -492,7 +492,7 @@ fi
 # worktree behind, so they accumulate until the disk fills. A day is the age
 # limit here: another run may be mid-iteration in a worktree it created minutes
 # ago, and while clean-worktrees.py checks that too — a live run's claim, or
-# work no remote has — the age bound means a fresh worktree is never a
+# uncommitted changes — the age bound means a fresh worktree is never a
 # candidate in the first place. Python and git only; nothing here costs tokens.
 if [ "$BOT_PROFILE_WORKTREES" = true ]; then
   python3 "$SCRIPT_DIR/scripts/clean-worktrees.py" --max-age-hours 24 >/dev/null \

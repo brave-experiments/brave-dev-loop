@@ -9,21 +9,24 @@ behind for good: a story that was skipped, a run that was killed, a PR merged
 before that sync existed. Twenty-seven had piled up in the directory this was
 written for, a hundred gigabytes of build output for work that had all landed.
 
+A worktree's branch belongs to the repository, not to the worktree checked out on
+it, so removal leaves the branch where it was and `git worktree add <path>
+<branch>` brings the work back. Uncommitted changes are the only thing a worktree
+holds alone, and so the only thing removing one can lose.
+
 What it will not touch:
   - the main checkout
   - a worktree a live run claims (by its branch, or by the `-<issue>` in its path)
   - a worktree git has locked
-  - anything holding work no remote has: uncommitted changes, or commits that
-    exist on no remote-tracking branch
+  - a worktree with uncommitted changes, or a detached one whose commits no ref
+    keeps
   - with --max-age-hours, anything used more recently than that
 
---all drops the third and fourth of those, for the operator emptying a directory
+--all drops the fourth and fifth of those, for the operator emptying a directory
 rather than a run collecting after itself: every worktree goes, however recently
-it was used and whatever it holds. Uncommitted changes are the only thing that
-can be lost even then — a worktree's branch belongs to the repository, not to the
-worktree, so commits no remote has survive its removal and the branch is still
-there to check out. A live run's worktree and a locked one are kept regardless,
-because deleting the directory out from under a running session breaks it.
+it was used and whatever it holds. A live run's worktree and a locked one are
+kept regardless, because deleting the directory out from under a running session
+breaks it.
 
 Removal renames the directory, prunes the administrative entries under the
 repository lock, and deletes the contents afterwards. Deleting 4 GB takes long
@@ -160,13 +163,24 @@ def idle_hours(path):
     return (time.time() - newest) / 3600.0
 
 
-def local_work_reason(path):
+def local_work_reason(path, branch):
     """What removing this worktree would lose, or None when nothing would be.
 
-    Two things can be lost: changes that were never committed, and commits that
-    exist on no remote. The second is what makes this safe to run while a story
-    is mid-development — a branch the bot has committed to but not pushed has no
-    remote-tracking ref containing its HEAD, so it is kept.
+    Uncommitted changes are the one thing that goes. A branch is not: it is the
+    repository's, so the commits stay reachable under the same name and the
+    story's next iteration checks it out again.
+
+    Whether a remote has those commits is therefore not asked. It used to be,
+    and it meant no finished worktree was ever collected: the target
+    squash-merges, so a branch's own commits never become ancestors of the base
+    branch, and the head branch is deleted when the pull request merges. After
+    that nothing under refs/remotes/ contains HEAD, ever again — so a story that
+    landed months ago read exactly like one committed five minutes ago and every
+    worktree accumulated for good, which is the pile this script exists to stop.
+
+    A detached worktree is the case where commits really do go, since no branch
+    names them: once the administrative entry is pruned, the reflog and gc are
+    all that stand between them and collection.
 
     A reason is also returned when git cannot answer, so a worktree in a state
     this does not understand stays where it is.
@@ -180,14 +194,32 @@ def local_work_reason(path):
         return "git could not read its status"
     if status.strip():
         return "it has uncommitted changes"
+    if branch:
+        return None
+    kept_by = run_git(["-C", path, "for-each-ref", "--contains", "HEAD", "--count=1"])
+    if kept_by is None:
+        return "git could not say whether any ref keeps its commits"
+    if not kept_by.strip():
+        return "it is detached and no ref keeps its commits"
+    return None
+
+
+def unpushed_branch(path, branch):
+    """The branch keeping this worktree's commits when no remote has them.
+
+    Said as the worktree goes. Removal is silent about what it took, and a story
+    committed but never pushed leaves the only copy of that work on a branch
+    nobody is looking at; naming it is the difference between work parked and
+    work presumed pushed.
+    """
+    if not branch:
+        return None
     on_remote = run_git(
         ["-C", path, "for-each-ref", "--contains", "HEAD", "--count=1", "refs/remotes/"]
     )
-    if on_remote is None:
-        return "git could not say whether its HEAD is on a remote"
-    if not on_remote.strip():
-        return "its HEAD is on no remote branch"
-    return None
+    if on_remote is None or on_remote.strip():
+        return None
+    return branch
 
 
 def issue_number(story):
@@ -265,13 +297,16 @@ def prune(repo):
 def select(repo, bot_dir, prd_path, max_age_hours, all_worktrees=False):
     """Split the worktrees into the ones to remove and why the rest are kept.
 
-    Returns (remove, kept, prunable, lost) — `lost` naming the worktrees that
-    hold work `--all` is about to take, so the operator sees what went.
+    Returns (remove, kept, prunable, lost, unpushed) — `lost` naming the
+    worktrees that hold work `--all` is about to take, so the operator sees what
+    went, and `unpushed` the ones whose commits no remote has. Those go either
+    way, because their branch keeps the commits; they are named rather than kept.
     """
     branches, paths = claimed_worktrees(repo, bot_dir, prd_path)
     remove = []
     kept = []
     lost = []
+    unpushed = []
     prunable = False
     for tree in list_worktrees(repo):
         path = tree["path"]
@@ -292,14 +327,18 @@ def select(repo, bot_dir, prd_path, max_age_hours, all_worktrees=False):
             if idle is None or idle < max_age_hours:
                 kept.append({"path": path, "reason": "it was used too recently"})
                 continue
-        reason = local_work_reason(path)
+        reason = local_work_reason(path, tree["branch"])
         if reason:
             if not all_worktrees:
                 kept.append({"path": path, "reason": reason})
                 continue
             lost.append({"path": path, "reason": reason, "branch": tree["branch"]})
+        else:
+            parked = unpushed_branch(path, tree["branch"])
+            if parked:
+                unpushed.append({"path": path, "branch": parked})
         remove.append(path)
-    return remove, kept, prunable, lost
+    return remove, kept, prunable, lost, unpushed
 
 
 def remove_worktrees(paths, dry_run):
@@ -351,7 +390,7 @@ def main():
         return 2
 
     swept = [] if args.dry_run else sweep_leftovers(repo)
-    remove, kept, prunable, lost = select(
+    remove, kept, prunable, lost, unpushed = select(
         repo,
         bot_dir_for(args.prd, _bot_dir),
         args.prd,
@@ -370,6 +409,7 @@ def main():
     print(f"{verb} {len(renamed)} worktree(s), kept {len(kept)}", file=sys.stderr)
     gone = [path for path, _ in renamed]
     held = {tree["path"]: tree for tree in lost}
+    parked = {tree["path"]: tree["branch"] for tree in unpushed}
     for path in gone:
         note = ""
         if path in held:
@@ -380,6 +420,8 @@ def main():
                 else "detached, nothing points at its commits"
             )
             note = f" — {held[path]['reason']} ({where})"
+        elif path in parked:
+            note = f" — no remote has its commits; branch {parked[path]} keeps them"
         print(f"  {path}: removed{note}", file=sys.stderr)
     for tree in kept:
         print(f"  {tree['path']}: kept — {tree['reason']}", file=sys.stderr)
@@ -390,6 +432,7 @@ def main():
                 "removed": gone,
                 "kept": kept,
                 "lostWork": [tree for tree in lost if tree["path"] in gone],
+                "unpushed": [tree for tree in unpushed if tree["path"] in gone],
                 "swept": swept,
                 "dryRun": args.dry_run,
             }
