@@ -120,11 +120,11 @@ worktree:
 #   make rebase                # asks which pull request
 #
 # The same worktree `make worktree` opens does the rebase, and nothing checks a
-# branch out anywhere, so the main checkout keeps the default branch every other
-# worktree borrows from. Where the project works through a fork, `upstream` is
-# the pull request's repository and the base is `upstream/<project.defaultBranch>`,
-# while the push goes back to the fork the branch came from; with no fork both
-# halves are the one remote.
+# branch out anywhere, so the main checkout stays on the branch it is already on
+# -- normally the default branch every other worktree borrows from. Where the
+# project works through a fork, `upstream` is the pull request's repository and
+# the base is `upstream/<project.defaultBranch>`, while the push goes back to the
+# fork the branch came from; with no fork both halves are the one remote.
 #
 # A conflict aborts the rebase and pushes nothing, so the worktree is left where
 # the next session can use it. A tree with uncommitted changes, or with commits

@@ -129,9 +129,10 @@ make rebase PR=351               # the repo comes from config.json
 make rebase                      # asks which pull request
 ```
 
-That rebases in the same worktree, so the main checkout is never moved off the
-default branch every other worktree borrows from. Where the project works
-through a fork, the base is `upstream/<project.defaultBranch>` — the branch a
+That rebases in the same worktree and checks out no branch anywhere, so the main
+checkout stays on the branch it is already on — normally the default branch
+every other worktree borrows from. Where the project works through a fork, the
+base is `upstream/<project.defaultBranch>` — the branch a
 reviewer merges into, which is not where the pull request was pushed — and the
 force-push goes back to the fork the branch came from. The push carries a lease
 on the commit the branch was fetched at, so a race with someone else's push is
