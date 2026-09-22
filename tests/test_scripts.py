@@ -711,13 +711,31 @@ class TestSelectTaskMatchTarget:
         found, error = select_task.match_target([story], ("ref", 617))
         assert (found, error) == (story, None)
 
-    def test_matches_a_skipped_story(self, select_task):
-        """The case that sent an iteration to the wrong story: a skipped story
-        is never selected automatically, but naming its issue is how an
-        operator reverses the skip."""
+    def test_refuses_a_skipped_story_with_the_reason_it_was_skipped(self, select_task):
+        """The case that sent an iteration to the wrong story. The skip holds,
+        because its reason is the answer the request was really after — here a
+        blocker and the condition that clears it."""
+        story = make_story(
+            "skipped",
+            description="Resolve issue #613: a thing",
+            skipReason="Blocked on PR #590. Requeue once #590 is merged.",
+        )
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None
+        assert "US-001 is skipped" in error
+        assert "Requeue once #590 is merged" in error
+
+    def test_refuses_an_invalid_story_the_same_way(self, select_task):
+        story = make_story(
+            "invalid", description="Resolve issue #613: a thing", skipReason="duplicate"
+        )
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None and "US-001 is invalid: duplicate" in error
+
+    def test_a_skip_with_no_reason_recorded_still_says_so(self, select_task):
         story = make_story("skipped", description="Resolve issue #613: a thing")
-        found, _ = select_task.match_target([story], ("ref", 613))
-        assert found is story
+        found, error = select_task.match_target([story], ("ref", 613))
+        assert found is None and "no reason recorded" in error
 
     def test_refuses_a_merged_story(self, select_task):
         story = make_story("merged", description="Resolve issue #613: a thing")
@@ -753,14 +771,14 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
     the request. These drive the real selection path, including its output.
     """
 
-    def _args(self, tmp_dir, stories, extra_prompt):
+    def _args(self, tmp_dir, stories, extra_prompt, checked=()):
         os.makedirs(os.path.join(tmp_dir, "data"), exist_ok=True)
         prd_path = os.path.join(tmp_dir, "data", "prd.json")
         with open(prd_path, "w") as f:
             json.dump({"stories": stories}, f)
         run_state_path = os.path.join(tmp_dir, "data", "run-state.json")
         with open(run_state_path, "w") as f:
-            json.dump({"runId": "test", "storiesCheckedThisRun": []}, f)
+            json.dump({"runId": "test", "storiesCheckedThisRun": list(checked)}, f)
         return Namespace(
             prd=prd_path,
             run_state=run_state_path,
@@ -774,8 +792,8 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
             run_id="test",
         )
 
-    def _select(self, select_task, tmp_dir, stories, extra_prompt, capsys):
-        args = self._args(tmp_dir, stories, extra_prompt)
+    def _select(self, select_task, tmp_dir, stories, extra_prompt, capsys, checked=()):
+        args = self._args(tmp_dir, stories, extra_prompt, checked)
         code = select_task._select_locked(
             args, args.prd, args.run_state, tmp_dir, in_progress=set()
         )
@@ -783,11 +801,18 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
 
     def _backlog(self):
         return [
-            make_story("skipped", id="US-212", priority=212, description="issue #613"),
+            make_story(
+                "skipped",
+                id="US-212",
+                priority=212,
+                description="issue #613",
+                skipReason="Blocked on PR #590.",
+            ),
             make_story("pending", id="US-217", priority=217, description="issue #620"),
         ]
 
-    def test_a_named_skipped_story_is_worked(self, select_task, tmp_dir, capsys):
+    def test_a_named_skipped_story_reports_its_skip(self, select_task, tmp_dir, capsys):
+        """The run this came from: naming #613 worked #620 for an hour."""
         code, out = self._select(
             select_task,
             tmp_dir,
@@ -795,8 +820,25 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
             "https://github.com/brave/bravebot/issues/613",
             capsys,
         )
+        assert code == 2
+        assert "US-212 is skipped: Blocked on PR #590." in out["reason"]
+        assert "US-217" not in json.dumps(out), "picked a story nobody asked for"
+
+    def test_a_named_story_already_worked_this_run_is_still_selected(
+        self, select_task, tmp_dir, capsys
+    ):
+        """Naming a story reaches past the filters the ordinary queue applies —
+        the reason matching runs over the whole PRD and not the candidates."""
+        code, out = self._select(
+            select_task,
+            tmp_dir,
+            self._backlog(),
+            "US-217",
+            capsys,
+            checked=["US-217"],
+        )
         assert code == 0
-        assert out["storyId"] == "US-212", out
+        assert out["storyId"] == "US-217", out
 
     def test_an_unmatched_issue_does_not_fall_back(self, select_task, tmp_dir, capsys):
         code, out = self._select(

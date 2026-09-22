@@ -259,10 +259,13 @@ def describe_target(target):
 def match_target(stories, target, claimed=None):
     """The one story a target names, as (story, error): exactly one is None.
 
-    Matches against every story except merged ones, so naming a story outright
-    reaches work the automatic selection will not: one already worked this run,
-    and one that was skipped or marked invalid — reversing either is an
-    operator's call, and typing its issue URL is how they make it.
+    Matches against every story, including the terminal ones, so that naming a
+    story that is finished with answers with what it is rather than "no story
+    works that". Reaching a story the automatic selection would pass over is
+    the point of naming one: one already worked this run is selected, where a
+    skipped story instead reports the reason it was skipped — the workflow for
+    a skipped story is to do nothing, so selecting it would spend an iteration
+    arriving at the reason this returns straight away.
     """
     kind, value = target
     claimed = set(claimed or ())
@@ -289,10 +292,23 @@ def match_target(stories, target, claimed=None):
 
     story = matches[0]
     story_id = story.get("id", "?")
-    if story.get("status") == "merged":
+    status = story.get("status", "pending")
+    if status == "merged":
         return (
             None,
             f"{named} is named in the request, but {story_id} is already merged",
+        )
+    if status in TERMINAL_STATUSES:
+        # Reversing a considered skip is the operator's call and not this
+        # script's, so the reason goes back to whoever asked instead. The
+        # reasons carry a requeue condition ("once #590 is merged"), which is
+        # the answer they were after and is worth more than an iteration spent
+        # on a workflow whose only instruction is to stop.
+        reason = story.get("skipReason") or "no reason recorded"
+        return (
+            None,
+            f"{named} is named in the request, but {story_id} is {status}: {reason}"
+            f" — set it back to pending in data/prd.json to work it anyway",
         )
     if story_id in claimed:
         return (
@@ -495,7 +511,26 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
         stories, run_state, claimed=claimed_elsewhere, in_progress=blocked_issues
     )
 
-    if not candidates:
+    # Selection
+    selected = None
+    # A story named outright is a requirement, not a preference. Nothing may
+    # fall back off it: an iteration spent on a story the operator did not ask
+    # for is an hour of work thrown away, and it reads as if the request was
+    # honoured. Refusing to select is the only honest answer.
+    #
+    # Matched before the filters are allowed to end the run, because they are
+    # what it overrides: the story it names is regularly one they removed, and
+    # answering "nothing to do" to a request that names a story is the same
+    # wrong answer in a quieter voice.
+    target = explicit_target(args.extra_prompt)
+
+    if target:
+        selected, error = match_target(stories, target, claimed=claimed_elsewhere)
+        if error:
+            print(f"Error: {error}", file=sys.stderr)
+            print(json.dumps({"selected": False, "reason": error}))
+            return 2
+    elif not candidates:
         reason = "No candidates remain after filtering"
         if claimed_elsewhere:
             reason += (
@@ -509,21 +544,6 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
             )
         print(json.dumps({"selected": False, "reason": reason}))
         return 1
-
-    # Selection
-    selected = None
-    # A story named outright is a requirement, not a preference. Nothing may
-    # fall back off it: an iteration spent on a story the operator did not ask
-    # for is an hour of work thrown away, and it reads as if the request was
-    # honoured. Refusing to select is the only honest answer.
-    target = explicit_target(args.extra_prompt)
-
-    if target:
-        selected, error = match_target(stories, target, claimed=claimed_elsewhere)
-        if error:
-            print(f"Error: {error}", file=sys.stderr)
-            print(json.dumps({"selected": False, "reason": error}))
-            return 2
     elif args.extra_prompt.strip():
         # A request that names nothing outright is a hint, so the model reads it.
         # Use all non-terminal stories for LLM selection so the user can

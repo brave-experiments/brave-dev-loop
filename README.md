@@ -92,10 +92,13 @@ config. `--model` overrides the model for whichever agent is selected, and
 pointed at a local build, since it has no config keys of its own.
 
 Anything after `tui` chooses the story. An issue URL, a pull request URL, a
-`#613` or a story id names one outright: that story is worked, even one already
-worked this run or one that was skipped, and if it cannot be it is refused by
-name rather than swapped for another. Any other wording is a hint the model
-reads, and a hint it cannot use leaves the ordinary queue in charge.
+`#613` or a story id names one outright: that story is worked and no other,
+including one the ordinary queue passes over because this run already worked it.
+Where it cannot be worked the run stops and says which story and why — a skipped
+story reports the reason it was skipped, which is usually a blocker and the
+condition that clears it. Reversing a skip is a hand edit to `data/prd.json`, on
+purpose. Any other wording is a hint the model reads, and a hint it cannot use
+leaves the ordinary queue in charge.
 
 ```bash
 tail -f data/progress.txt        # watch progress

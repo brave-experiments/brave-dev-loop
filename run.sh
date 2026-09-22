@@ -8,11 +8,12 @@
 #
 # Choosing the story (extra_prompt_info, anything after `tui`):
 #   An issue or pull request URL, a "#613", or a story id names one story
-#   outright — including one already worked this run, and one that was skipped
-#   or marked invalid, which the automatic selection never picks. That story is
-#   worked or the run stops saying why; it is never quietly swapped for
-#   another. Any other wording is a hint the model reads instead, and a hint it
-#   cannot use leaves the deterministic queue in charge.
+#   outright — including one this run already worked, which the automatic
+#   selection passes over. That story is worked or the run stops naming it and
+#   the reason; it is never quietly swapped for another. A skipped story reports
+#   the reason it was skipped rather than being worked, since the workflow for
+#   one is to stop. Any other wording is a hint the model reads instead, and a
+#   hint it cannot use leaves the deterministic queue in charge.
 #
 # Several runs can share one bot directory when bot.maxConcurrentRuns is above
 # 1: each takes a numbered *run slot* and keeps its own lock, run state, logs
