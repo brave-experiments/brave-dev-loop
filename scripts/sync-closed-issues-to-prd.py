@@ -53,7 +53,16 @@ from lib.prd_store import load_prd, prd_lock, save_prd  # noqa: E402
 _config = load_config()
 _issue_repo = require_config(_config, "project.issueRepository")
 
-ISSUE_FIELDS = "state,stateReason,closedAt"
+# `gh issue view --json stateReason` only exists from gh 2.46, and an unknown
+# field fails the whole read, so the state comes from GraphQL instead -- every
+# gh version can reach it, and it names the fields the same way.
+ISSUE_STATE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) { state stateReason closedAt }
+  }
+}
+"""
 
 
 def fetch_issue(number):
@@ -63,17 +72,21 @@ def fetch_issue(number):
     run's first iteration, and reconciling the other stories is still worth
     doing.
     """
+    owner, _, name = _issue_repo.partition("/")
     try:
         result = subprocess.run(
             [
                 "gh",
-                "issue",
-                "view",
-                str(number),
-                "--repo",
-                _issue_repo,
-                "--json",
-                ISSUE_FIELDS,
+                "api",
+                "graphql",
+                "-f",
+                f"query={ISSUE_STATE_QUERY}",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"name={name}",
+                "-F",
+                f"number={number}",
             ],
             capture_output=True,
             text=True,
@@ -89,10 +102,13 @@ def fetch_issue(number):
         )
         return None
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as e:
+        issue = json.loads(result.stdout)["data"]["repository"]["issue"]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
         print(f"  issue #{number}: unreadable response ({e})", file=sys.stderr)
         return None
+    if issue is None:
+        print(f"  issue #{number}: no such issue", file=sys.stderr)
+    return issue
 
 
 def story_issue_number(story):

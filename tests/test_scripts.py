@@ -14,6 +14,7 @@ import sys
 import time
 from argparse import Namespace
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -1662,6 +1663,54 @@ def story_for_issue(number, **overrides):
 
 def closed_issue(state_reason="COMPLETED", closed_at="2026-09-16T16:36:00Z"):
     return {"state": "CLOSED", "stateReason": state_reason, "closedAt": closed_at}
+
+
+class TestSyncClosedFetch:
+    """The gh call itself. The rest of these tests stand in for fetch_issue."""
+
+    def _gh(self, sync_closed_issues, monkeypatch, returncode=0, stdout="", stderr=""):
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+        monkeypatch.setattr(sync_closed_issues.subprocess, "run", fake_run)
+        return calls
+
+    def test_it_asks_graphql_rather_than_for_a_json_field(
+        self, sync_closed_issues, monkeypatch
+    ):
+        # `gh issue view --json stateReason` needs gh >= 2.46, and an unknown
+        # field fails the whole read, so every issue in the pass errored out.
+        calls = self._gh(
+            sync_closed_issues,
+            monkeypatch,
+            stdout=json.dumps({"data": {"repository": {"issue": closed_issue()}}}),
+        )
+        assert sync_closed_issues.fetch_issue(116) == closed_issue()
+        assert calls[0][:3] == ["gh", "api", "graphql"]
+        assert "--json" not in calls[0]
+
+    def test_an_issue_that_does_not_exist_reads_as_unknown(
+        self, sync_closed_issues, monkeypatch
+    ):
+        # GraphQL answers a bad number with a null issue and a non-zero exit;
+        # either way the story keeps its place rather than being retired.
+        self._gh(
+            sync_closed_issues,
+            monkeypatch,
+            stdout=json.dumps({"data": {"repository": {"issue": None}}}),
+        )
+        assert sync_closed_issues.fetch_issue(999999) is None
+
+    def test_a_failed_read_is_not_fatal(self, sync_closed_issues, monkeypatch):
+        self._gh(sync_closed_issues, monkeypatch, returncode=1, stderr="no auth")
+        assert sync_closed_issues.fetch_issue(116) is None
+
+    def test_an_unreadable_response_is_not_fatal(self, sync_closed_issues, monkeypatch):
+        self._gh(sync_closed_issues, monkeypatch, stdout="not json")
+        assert sync_closed_issues.fetch_issue(116) is None
 
 
 class TestSyncClosedCandidates:
