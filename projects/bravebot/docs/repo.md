@@ -45,9 +45,10 @@ git -C "$MAIN" worktree list
 
 A person going the other way — from a pull request to the tree that produced it
 — has `make worktree PR=<url>` in the bot directory, which does the same search
-by branch and opens a shell in the result. It is for reading a pull request by
-hand, not part of an iteration: an agent works in absolute paths and cannot use
-the shell it opens.
+by branch, brings the tree up to the pull request's head where that is a
+fast-forward, and opens a shell in the result. It is for reading a pull request
+by hand, not part of an iteration: an agent works in absolute paths and cannot
+use the shell it opens.
 
 Another run may be doing the same thing in the same `.git` at the same moment,
 so every command that touches the *shared* repository — `fetch`, `worktree

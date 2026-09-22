@@ -97,9 +97,12 @@ archive: archive-progress archive-prd
 # An existing worktree for the pull request's branch is reused -- the branch is
 # what identifies it, since a worktree's directory name follows the story's
 # issue and not the branch. Otherwise one is created from the pull request's
-# head. Either way the main checkout's .envrc is copied in and allowed, because
-# untracked files are not shared between worktrees and a fresh one would
-# otherwise have no environment at all. No model is involved.
+# head. Either way the tree is brought up to that head when doing so is a
+# fast-forward of a clean tree, so what you land on is what the pull request
+# shows; a tree holding uncommitted changes or a commit the head does not have
+# stays where it is and says so. Either way the main checkout's .envrc is copied
+# in and allowed, because untracked files are not shared between worktrees and a
+# fresh one would otherwise have no environment at all. No model is involved.
 #
 # The cd happens here rather than in the script because a child process cannot
 # change its parent's directory: the only way to leave you somewhere is to open
