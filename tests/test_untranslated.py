@@ -11,6 +11,7 @@ line, a path and a test fixture are not.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -25,6 +26,20 @@ BRAVEBOT = {
     "exempt": ["crates/i18n/*"],
     "catalog": "crates/i18n/locales/en-US.ftl",
     "how": "put it in the catalog",
+    "quotes": ['"'],
+    "comments": ["//", "#[", "#!"],
+    "developer": ["expect*", "assert*", "debug_assert*", "panic!", "dbg!"],
+    "testsBegin": r"^\s*(?:#\[cfg\(test\)\]|mod tests\b)",
+}
+
+# What the same check has to be told for a Chromium-shaped codebase: the string
+# is quoted the same way, and nothing else is. Written out here because the four
+# findings a run over brave-core produced were all of them this shape.
+CHROMIUM = {
+    "paths": ["browser/*", "components/*"],
+    "exempt": ["*_unittest.cc", "*_browsertest.cc"],
+    "comments": ["//"],
+    "developer": ["LOG", "DLOG", "VLOG", "DVLOG", "CHECK*", "DCHECK*", "NOTREACHED"],
 }
 
 
@@ -118,7 +133,8 @@ def test_it_reads_the_sentence_and_nothing_around_it(checker):
     """The comments, the doc comment, the message name, the string written for
     whoever is debugging, and the whole test module: a finding in any of them is
     a finding nobody can act on."""
-    assert checker.prose_lines(SOURCE) == {7: ["this rule has no closing bracket"]}
+    found = checker.prose_lines(SOURCE, checker.Lexer(BRAVEBOT))
+    assert found == {7: ["this rule has no closing bracket"]}
 
 
 def test_the_line_number_is_the_file_as_it_stands(checker):
@@ -130,9 +146,103 @@ def test_the_line_number_is_the_file_as_it_stands(checker):
 def test_a_display_impl_is_read_like_any_other_line(checker):
     """`write!(f, ...)` is where the reasons in the branch that prompted this
     lived. Skipping formatting macros as developer output would have skipped the
-    defect."""
-    found = checker.prose_lines('write!(f, "this rule is empty")\n')
+    defect, so no profile may list one."""
+    found = checker.prose_lines(
+        'write!(f, "this rule is empty")\n', checker.Lexer(BRAVEBOT)
+    )
     assert found == {1: ["this rule is empty"]}
+
+
+# ── The language, which the profile owns ──────────────────────────────────────
+
+
+def _lines(checker, source, rules):
+    return checker.prose_lines(source, checker.Lexer(rules))
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'panic!("this rule is empty")',
+        'dbg!("this rule is empty")',
+        'x.expect("this rule is empty")',
+        'assert_eq!(x, "this rule is empty")',
+        'debug_assert!(x, "this rule is empty")',
+    ],
+)
+def test_a_name_ending_in_punctuation_is_matched_as_written(checker, line):
+    """A word boundary after `!` never holds, so the built-in list this replaced
+    named `panic!`, `dbg!`, `todo!`, `cfg!` and four more it could not match --
+    every one of them reported the string it was listed to suppress. `*` is what
+    reaches `assert_eq!` from `assert`, and `debug_assert*` has to be listed on
+    its own because a name is never matched mid-identifier."""
+    assert _lines(checker, line + "\n", BRAVEBOT) == {}
+
+
+def test_a_wrapped_macro_owns_the_string_below_it(checker):
+    """Chromium's commonest logging call puts the string on a later line than the
+    macro. Deciding per line reported all four findings a run over brave-core
+    produced, and all four were this."""
+    source = (
+        "  CHECK(tx.v6_part().legacy_orchard.inputs.empty() ||\n"
+        "        tx.v6_part().ironwood.inputs.empty())\n"
+        '      << "ZecTxData can represent only one source shielded pool";\n'
+        '  LOG(ERROR) << "Failed to read logins for password import, result="\n'
+        "             << static_cast<int>(retrieval_result);\n"
+    )
+    assert _lines(checker, source, CHROMIUM) == {}
+
+
+def test_a_statement_that_never_ends_does_not_silence_the_file(checker):
+    """Where a language ends a statement with a newline rather than a `;`, the
+    line a macro is on is the only thing bounding it. Without the cap one logging
+    call would suppress every message below it, and the check would go quiet
+    exactly where it is most needed."""
+    source = 'console.log("a debug line")\n' + "  <Thing />\n" * 8
+    source += 'const label = "this rule is empty"\n'
+    found = _lines(checker, source, {**CHROMIUM, "developer": ["console.log"]})
+    assert found == {10: ["this rule is empty"]}
+
+
+def test_a_message_is_not_suppressed_by_the_words_it_contains(checker):
+    """`expect*` reaches `expect_err`, and it also reaches `expects` -- which is
+    an ordinary English word, so searching the line as written let a message
+    suppress itself for containing one. Found by running the check over bravebot
+    and reading what stopped being reported: this line, a real finding."""
+    source = 'policy.release("what the planner expects a slot to hold");\n'
+    assert _lines(checker, source, BRAVEBOT) == {
+        1: ["what the planner expects a slot to hold"]
+    }
+
+
+def test_the_quote_styles_read_are_the_ones_the_profile_names(checker):
+    """A project that quotes with `'` is invisible to a check that reads `"`, and
+    that is most of a React interface. bravebot declares `"` only, so a Rust
+    lifetime is never read as a string."""
+    source = "const label = 'this rule is empty'\n"
+    assert _lines(checker, source, CHROMIUM) == {}
+    assert _lines(checker, source, {**CHROMIUM, "quotes": ['"', "'"]}) == {
+        1: ["this rule is empty"]
+    }
+
+
+def test_a_profile_that_names_no_language_still_reads_a_string(checker):
+    """`"` and `//` are every language this bot targets. A profile that declares
+    only where it localizes gets those two and no exemptions it did not ask
+    for -- including no test boundary, so nothing is skipped silently."""
+    source = '// this rule is empty, in a comment\nlet m = "this rule is empty";\n'
+    assert _lines(checker, source, {"paths": ["x"]}) == {2: ["this rule is empty"]}
+
+
+def test_where_the_tests_begin_is_the_profiles_to_say(checker):
+    """Rust keeps its tests in the file. A project that does not gets no break,
+    and says so by declaring no `testsBegin` -- guessing one would stop the scan
+    at the first line that happened to match."""
+    source = '#[cfg(test)]\nmod tests {\n    let m = "this rule is empty";\n}\n'
+    assert _lines(checker, source, BRAVEBOT) == {}
+    assert _lines(checker, source, {**BRAVEBOT, "testsBegin": None}) == {
+        3: ["this rule is empty"]
+    }
 
 
 # ── Which files, and which lines of them ──────────────────────────────────────
@@ -233,6 +343,17 @@ def test_the_bravebot_profile_declares_where_its_messages_live():
     assert rules["paths"] == ["crates/*/src/*.rs"]
     assert rules["catalog"] == "crates/i18n/locales/en-US.ftl"
     assert "t!" in rules["how"]
+    # The language too, since the check holds none of it. The test boundary is
+    # matched against the line it has to find rather than read as text: an
+    # over-escaped regex is still a valid string and would pass a substring test.
+    assert rules["quotes"] == ['"']
+    assert re.match(rules["testsBegin"], "#[cfg(test)]")
+    assert re.match(rules["testsBegin"], "mod tests {")
+    assert not re.match(rules["testsBegin"], 'let m = "mod tests are below";')
+    assert "panic!" in rules["developer"]
+    # The macro the messages that prompted this check were printed by. Listing it
+    # would suppress the defect the check exists to find.
+    assert not any(name.startswith("write") for name in rules["developer"])
 
 
 def _repo(tmp_path):

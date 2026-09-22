@@ -13,6 +13,12 @@ added, committed or not, and prints the sentence-shaped literals among them in
 the source the project's profile says it localizes. A project whose profile
 declares no `localization` block has nothing checked here.
 
+Nothing about any one language is written down here. The profile says how the
+project quotes a string, what starts a comment, which calls take a developer's
+words and where its tests begin, because a check built around Rust's spelling
+would report noise on a codebase that writes `LOG(ERROR) << "..."` and see
+nothing at all in one that quotes with `'`.
+
 Which of them is a defect is not something a pattern can decide: a program says
 things to a person, which belong in a catalog, and things to a machine, which
 must not be translated at all. So these print as warnings and exit 0 unless
@@ -39,23 +45,18 @@ from lib.load_config import load_config, load_profile
 EVERY_LINE = object()
 
 
-# A double-quoted literal, escapes included. Rust raw strings and C++ raw
-# literals are not matched: both are overwhelmingly test fixtures and JSON, and
-# missing one is cheaper here than a finding on every fixture.
-LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)+)"')
+# How much of a wrapped statement is kept when deciding whether a string belongs
+# to whoever is debugging. Chromium writes `LOG(ERROR) << "..."` over two or
+# three lines, so the macro is not on the line the string is on. The cap is what
+# makes this safe where a language ends a statement with a newline rather than a
+# `;`: without it one logging call would silence every line after it.
+STATEMENT_LINES = 6
 
-# Strings written for whoever is debugging, not for anyone using the program. A
-# line holding one of these is skipped whole: the message and the condition it
-# reports are usually on it together.
-DEVELOPER = re.compile(
-    r"\b(?:expect|expect_err|panic!|unreachable!|todo!|unimplemented!|"
-    r"assert\w*|debug_assert\w*|env!|include_str!|include_bytes!|cfg!|dbg!|"
-    r"NOTREACHED|NOTIMPLEMENTED|DCHECK\w*|CHECK\w*|DLOG|DVLOG|VLOG)\b"
-)
-
-# Where the unit tests start, in a Rust file. Everything from here down is test
-# code, which says what it likes in whatever language the assertions are in.
-TESTS_BEGIN = re.compile(r"^\s*(?:#\[cfg\(test\)\]|mod tests\b)")
+# Block comments are the one piece of syntax not left to the profile: Rust, C++,
+# Objective-C, Java, Swift and TypeScript -- every language this bot localizes --
+# all spell them this way.
+BLOCK_COMMENT_OPEN = "/*"
+BLOCK_COMMENT_CLOSE = "*/"
 
 # The words English glues sentences together with. A literal holding one of
 # these is prose; one holding none is a path, a command, a key or an identifier.
@@ -88,7 +89,78 @@ def is_prose(text):
     return bool({word.lower().strip("'") for word in words} & FUNCTION_WORDS)
 
 
-def prose_lines(source):
+def literal_pattern(quotes):
+    """A regex matching a string literal in each quote style a profile declares.
+
+    Escapes are consumed, so a quote inside a string does not end it. A literal
+    spanning a newline is not matched, which loses a wrapped template literal and
+    keeps the scan line-oriented -- the line number is what a finding is read at.
+    """
+    return re.compile(
+        "|".join(
+            rf"{re.escape(q)}((?:[^{re.escape(q)}\\\n]|\\.)+){re.escape(q)}"
+            for q in quotes
+        )
+    )
+
+
+def developer_pattern(names):
+    """A regex matching a call that takes a developer's words, not a reader's.
+
+    A name ending in `*` is a prefix, so `assert*` covers `assert_eq!` and
+    `assert_ne!` -- the same reading `uiPaths` gives a bare path. A name ending in
+    punctuation is matched as written, because a word boundary after `!` never
+    holds: the built-in list this replaced named eight macros it could not match.
+    A name is never matched mid-identifier, so `assert*` leaves `debug_assert!`
+    to a profile that lists it.
+    """
+    if not names:
+        return None
+    parts = []
+    for name in names:
+        if name.endswith("*"):
+            parts.append(re.escape(name[:-1]) + r"\w*")
+        elif name[-1:].isalnum() or name.endswith("_"):
+            parts.append(re.escape(name) + r"\b")
+        else:
+            parts.append(re.escape(name))
+    return re.compile(r"(?<!\w)(?:" + "|".join(parts) + ")")
+
+
+class Lexer:
+    """The language facts a profile declares, compiled.
+
+    None of this is built into the check. bravebot quotes with `"`, comments with
+    `//` and ends a statement with `;`; the next project spells all three
+    differently, and a check that assumed one of them would read exactly one
+    codebase. A profile that declares only where it localizes gets `"` and `//`,
+    which is every language this bot targets, and no exemptions it did not ask
+    for.
+    """
+
+    def __init__(self, rules):
+        self.literal = literal_pattern(rules.get("quotes") or ['"'])
+        self.comments = tuple(rules.get("comments") or ["//"])
+        self.developer = developer_pattern(rules.get("developer") or ())
+        begin = rules.get("testsBegin")
+        self.tests_begin = re.compile(begin) if begin else None
+
+    def literals(self, line):
+        """Every string literal on one line, whichever declared quote holds it."""
+        return [found.group(found.lastindex) for found in self.literal.finditer(line)]
+
+    def code(self, line):
+        """The line with its string literals removed.
+
+        A name is looked for in the code and never in the words being checked, or
+        the message `what the planner expects a slot to hold` suppresses itself:
+        `expect*` matches `expects` in the prose, and the finding disappears for
+        containing an English word.
+        """
+        return self.literal.sub("", line)
+
+
+def prose_lines(source, lex):
     """The prose literals in one file, as {line number: [text, ...]}.
 
     Read from the whole file rather than from the diff's added lines, because
@@ -97,22 +169,30 @@ def prose_lines(source):
     """
     found = {}
     in_block_comment = False
+    statement = []
     for number, line in enumerate(source.splitlines(), 1):
         stripped = line.strip()
         if in_block_comment:
-            if "*/" in stripped:
+            if BLOCK_COMMENT_CLOSE in stripped:
                 in_block_comment = False
             continue
-        if stripped.startswith("/*"):
-            in_block_comment = "*/" not in stripped
+        if stripped.startswith(BLOCK_COMMENT_OPEN):
+            in_block_comment = BLOCK_COMMENT_CLOSE not in stripped
             continue
-        if TESTS_BEGIN.match(line):
+        if lex.tests_begin and lex.tests_begin.match(line):
             break
-        if stripped.startswith(("//", "#[", "#!")) or DEVELOPER.search(line):
+        if stripped.startswith(lex.comments):
             continue
-        prose = [text for text in LITERAL.findall(line) if is_prose(text)]
-        if prose:
+
+        # The statement so far, not the line: the macro that owns a string is
+        # often above it.
+        statement.append(lex.code(line))
+        del statement[:-STATEMENT_LINES]
+        prose = [text for text in lex.literals(line) if is_prose(text)]
+        if prose and not (lex.developer and lex.developer.search("\n".join(statement))):
             found[number] = prose
+        if not stripped or stripped[-1] in ";{}":
+            statement = []
     return found
 
 
@@ -197,6 +277,7 @@ def findings(added, rules, read):
     """
     claimed = matching(sorted(added), rules.get("paths") or [])
     exempt = set(matching(claimed, rules.get("exempt") or []))
+    lex = Lexer(rules)
     out = []
     for path in claimed:
         if path in exempt:
@@ -204,7 +285,7 @@ def findings(added, rules, read):
         source = read(path)
         if source is None:
             continue
-        prose = prose_lines(source)
+        prose = prose_lines(source, lex)
         lines = (
             prose.keys() if added[path] is EVERY_LINE else added[path] & prose.keys()
         )
