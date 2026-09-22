@@ -62,6 +62,36 @@ if [ -f "$WORKTREE/.envrc" ] && command -v direnv >/dev/null 2>&1; then
   fi
 fi
 
+# The hooks themselves, where a relative core.hooksPath puts them inside the working tree.
+#
+# Git resolves such a path against each tree's own top level, and `git worktree add` writes no
+# untracked file — so a fresh worktree looks for hooks in a directory holding only what the repo
+# committed. Every hook installed by setup is untracked by design, which means a worktree pushes
+# with none of them. That is how an unsigned commit reached brave/bravebot#641: pre-push is resolved
+# from the tree being pushed, so it was simply absent, while this hook is resolved from the tree
+# being left and ran anyway — which is why the gap stayed invisible.
+#
+# An absolute path, or one outside the tree, is already shared by every worktree and is left alone.
+HOOKS_PATH=$(git config --path core.hooksPath 2>/dev/null || true)
+case "$HOOKS_PATH" in
+  "" | /* | ../*) HOOKS_PATH="" ;;
+esac
+
+if [ -n "$HOOKS_PATH" ] && [ -d "$MAIN_CHECKOUT/$HOOKS_PATH" ]; then
+  mkdir -p "$WORKTREE/$HOOKS_PATH"
+  for HOOK in "$MAIN_CHECKOUT/$HOOKS_PATH"/*; do
+    [ -f "$HOOK" ] || continue
+    NAME=$(basename "$HOOK")
+    # Only what the main checkout holds and this tree does not track: a hook the repo commits is
+    # already in the worktree, is the version its author intended, and is not ours to replace.
+    git ls-files --error-unmatch -- "$HOOKS_PATH/$NAME" >/dev/null 2>&1 && continue
+    if cp "$HOOK" "$WORKTREE/$HOOKS_PATH/$NAME"; then
+      chmod +x "$WORKTREE/$HOOKS_PATH/$NAME"
+      echo "  ✓ $HOOKS_PATH/$NAME copied from $MAIN_CHECKOUT"
+    fi
+  done
+fi
+
 # A worktree without an environment is still a usable worktree: never fail the
 # checkout that created it.
 exit 0
