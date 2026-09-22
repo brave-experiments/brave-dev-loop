@@ -301,7 +301,18 @@
    once the gate is done, a guess that was short costs another turn, and the
    guess is wrong in one direction or the other every time.
 
-   Then, while they run, review the diff.
+   Then, while they run, review the diff. Start with the one part of that review
+   a script does, since a string it finds is cheapest to move before the gates
+   have compiled it:
+
+   ```bash
+   python3 $BOT_DIR/scripts/check-untranslated.py --diff-base <the ref 9a rebased onto>
+   ```
+
+   It prints the sentences this branch wrote into the source rather than into the
+   project's message catalog, uncommitted ones included. Workflow-committed.md
+   step 5 says what to do with each; a project whose profile declares no
+   `localization` block has nothing to check and the command says so.
 
    **CRITICAL: Do NOT read best practices docs in the main context — they are 1000+ lines each and will fill the context window, causing compaction. A review skill handles this via chunked parallel subagents.**
 

@@ -129,6 +129,26 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
    goes in a `<details>` block, which the checker does not count against the
    length budget.
 
+   **Then account for the sentences this branch wrote into the source.** A string
+   in the source ships in one language whatever the reader's is, and beside text
+   that does come from a catalog it leaves them half a sentence in their own:
+
+   ```bash
+   python3 $BOT_DIR/scripts/check-untranslated.py \
+     --diff-base <the same ref as above>
+   ```
+
+   Every line it prints is one of two things and only the author can tell which:
+   something **a person reads**, which belongs in the project's message catalog —
+   the output says where and how — or something **a machine reads**, a prompt or
+   a tool description, which has to stay in the source because translating it
+   would change what the program does. Move the first. For the second, say in the
+   body which strings stayed in the source and why. This one exits 0 either way:
+   it cannot tell the two apart, which is exactly why leaving a finding
+   unaccounted for is how an interface reaches the reviewer half in English. A
+   project whose profile declares no `localization` block has nothing to check
+   here, and the command says so.
+
    **CRITICAL: Always include labels when creating the PR.** Determine which labels apply (see label rules below) and pass them directly to `gh pr create` using `--label` flags.
 
    **IMPORTANT**: Always create PRs in draft state using the `--draft` flag. This allows for human review before marking ready.
