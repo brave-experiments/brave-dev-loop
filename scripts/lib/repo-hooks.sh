@@ -10,6 +10,21 @@
 # inside the working tree and holds the version-controlled hooks it was set for, so a hook
 # installed by name can land on top of one the repo tracks. Hence both halves here -- find where
 # git looks, and refuse to overwrite what somebody committed there.
+#
+# A *relative* core.hooksPath adds a third hazard, and it is the one that let an unsigned commit
+# reach a pull request. Git resolves it against each working tree's own top level, so a story's
+# worktree looks for hooks in its own copy of that directory -- which holds only what the repo
+# tracks, since `git worktree add` writes no untracked file. Every hook installed here is untracked
+# by design, so a worktree pushed with exactly the checks the repo committed and none of ours. The
+# signature guard was the one that mattered: brave/bravebot#641 was pushed unsigned from a worktree
+# while the same push from the main checkout would have been blocked.
+#
+# post-checkout hid it. Git resolves that hook from the checkout being *left* and runs it with the
+# new worktree as its cwd, so it fires on `git worktree add` and appears to prove the hooks are in
+# force there. pre-push is resolved from the tree being pushed, and is not.
+#
+# So the path is anchored: made absolute in the repo's config, pointing at the main checkout's
+# directory, which is the one setup wrote into. See repo_anchor_hooks_path.
 
 # Echo an absolute path, given one git reported that may be relative to the repo.
 repo_abs_git_path() {
@@ -155,11 +170,49 @@ repo_refresh_bot_hooks() {
     case "$name" in
       pre-commit) note="blocks $bot_user from modifying dependencies" ;;
       pre-push) note="blocks a push whose commits are not $bot_user's, or unsigned" ;;
-      post-checkout) note="gives a new worktree the main checkout's .envrc" ;;
+      post-checkout) note="gives a new worktree the main checkout's .envrc and hooks" ;;
     esac
     if repo_install_hook "$repo" "$hooks_src/$name" "$name" "$bot_user"; then
       echo "  ✓ $name hook installed ($note)"
     fi
   done
+
+  repo_refresh_worktree_hooks "$repo" "$bot_user" "$hooks_src"
+  return 0
+}
+
+# The same hooks in every existing worktree, where a relative core.hooksPath gives each its own
+# directory to look in.
+#
+# hooks/post-checkout covers a worktree being created. It cannot cover one that already exists: it
+# fires on the checkout that makes a worktree and never again, so a worktree added before this
+# landed -- or before the hook it is missing was written -- keeps pushing without it. Stories are
+# long-lived and their worktrees are re-entered across runs, so that is the common case rather than
+# an edge one, and it is the case brave/bravebot#641 was pushed from.
+#
+# Only for a relative path. An absolute one, or an unset one, already resolves to a single directory
+# for the whole repo, so installing into the main checkout was enough.
+repo_refresh_worktree_hooks() {
+  local repo="$1" bot_user="$2" hooks_src="$3" configured worktree name
+  configured=$(git -C "$repo" config --path core.hooksPath 2>/dev/null || true)
+  [ -n "$configured" ] || return 0
+  case "$configured" in
+    /* | ../*) return 0 ;;
+  esac
+
+  while read -r worktree; do
+    [ -n "$worktree" ] || continue
+    [ -d "$worktree" ] || continue
+    # The main checkout is what the caller just did.
+    [ "$(git -C "$worktree" rev-parse --git-dir)" = "$(git -C "$worktree" rev-parse --git-common-dir)" ] && continue
+    for name in $REPO_BOT_HOOKS; do
+      [ -f "$hooks_src/$name" ] || continue
+      [ -n "$(repo_tracked_hook "$worktree" "$name")" ] && continue
+      repo_hook_current "$worktree" "$hooks_src/$name" "$name" "$bot_user" && continue
+      if repo_install_hook "$worktree" "$hooks_src/$name" "$name" "$bot_user"; then
+        echo "  ✓ $name hook installed in $(basename "$worktree")"
+      fi
+    done
+  done <<<"$(git -C "$repo" worktree list --porcelain | sed -n 's/^worktree //p')"
   return 0
 }

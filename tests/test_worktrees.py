@@ -120,8 +120,19 @@ def backdate(repo, worktree, hours):
 
 
 def install_post_checkout(repo, user=BOT_USER):
-    """Install the hook the way scripts/setup.sh does, substitution included."""
-    hooks = repo / ".git" / "hooks"
+    """Install the hook the way scripts/setup.sh does, substitution included.
+
+    Into the directory core.hooksPath names where the repo sets one, because that setting replaces
+    .git/hooks rather than adding to it — a hook written to .git/hooks in such a repo never runs.
+    """
+    # `git config` of an unset key exits 1, which is an answer here rather than a failure.
+    configured = subprocess.run(
+        ["git", "config", "--path", "core.hooksPath"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    hooks = repo / configured if configured else repo / ".git" / "hooks"
     hooks.mkdir(parents=True, exist_ok=True)
     dest = hooks / "post-checkout"
     body = open(POST_CHECKOUT).read().replace("__BOT_USERNAME__", user)
@@ -200,6 +211,129 @@ def test_a_clone_belonging_to_a_person_is_untouched(repo):
     worktree = add_worktree(repo, "repo-133", branch="fix-133")
 
     assert not (worktree / ".envrc").exists()
+
+
+# ── Provisioning: the hooks a relative core.hooksPath hides from a worktree ───
+
+
+def use_relative_hooks_path(repo, name=".githooks"):
+    """Configure the repo the way a target repo with its own checked-in hooks does.
+
+    `git config core.hooksPath .githooks` is the spelling that matters, because git resolves a
+    relative path against each working tree's own top level rather than once for the repo.
+    """
+    (repo / name).mkdir(exist_ok=True)
+    git("config", "core.hooksPath", name, cwd=repo)
+    return repo / name
+
+
+def test_a_worktree_gets_the_untracked_hooks_a_relative_path_would_hide(repo):
+    """The gap that let an unsigned commit reach a pull request.
+
+    `git worktree add` writes only what the repo tracks, and every hook setup installs is
+    untracked — so with a relative core.hooksPath the new tree looks for hooks in its own empty
+    copy of that directory and pushes with none of them.
+    """
+    hooks = use_relative_hooks_path(repo)
+    (hooks / "pre-push").write_text("#!/bin/bash\nexit 1\n")
+    (hooks / "pre-push").chmod(0o755)
+    install_post_checkout(repo)
+
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+
+    assert (worktree / ".githooks" / "pre-push").exists()
+    assert os.access(worktree / ".githooks" / "pre-push", os.X_OK)
+
+
+def test_a_hook_the_repo_tracks_is_left_as_its_author_committed_it(repo):
+    """A committed hook is already in the worktree and is not ours to replace."""
+    hooks = use_relative_hooks_path(repo)
+    (hooks / "pre-commit").write_text("#!/bin/bash\n# theirs\nexit 0\n")
+    (hooks / "pre-commit").chmod(0o755)
+    git("add", "-f", ".githooks/pre-commit", cwd=repo)
+    git("commit", "-qm", "their hook", cwd=repo)
+    # What the main checkout happens to hold now differs from what it committed.
+    (hooks / "pre-commit").write_text("#!/bin/bash\n# local edit\nexit 0\n")
+    install_post_checkout(repo)
+
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+
+    assert "theirs" in (worktree / ".githooks" / "pre-commit").read_text()
+
+
+def test_an_absolute_hooks_path_is_left_alone(repo):
+    """Already shared by every worktree, so there is nothing to copy and no directory to make."""
+    hooks = repo / "shared-hooks"
+    hooks.mkdir()
+    (hooks / "pre-push").write_text("#!/bin/bash\nexit 1\n")
+    git("config", "core.hooksPath", str(hooks), cwd=repo)
+    install_post_checkout(repo)
+
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+
+    assert not (worktree / "shared-hooks").exists()
+
+
+def test_a_repo_that_never_moved_its_hooks_grows_no_directory(repo):
+    """Unset means .git/hooks, which a worktree already shares. Copying would invent a tree file."""
+    install_post_checkout(repo)
+
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+
+    assert git("status", "--porcelain", cwd=worktree).stdout.strip() == ""
+
+
+def refresh_hooks(repo, hooks_src, user=BOT_USER):
+    """Run the refresh a run does at start, returning what it reported."""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{LIB}/repo-hooks.sh"\n'
+            f'repo_refresh_bot_hooks "{repo}" "{user}" "{hooks_src}"\n',
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_a_worktree_that_already_existed_gets_a_hook_added_later(tmp_path, repo):
+    """post-checkout fires once, so a worktree predating a hook never sees it without this.
+
+    Stories outlive a run and their worktrees are re-entered, so this is the ordinary case: the
+    worktree brave/bravebot#641 was pushed unsigned from was made before the guard reached it.
+    """
+    use_relative_hooks_path(repo)
+    install_post_checkout(repo)
+    worktree = add_worktree(repo, "repo-133", branch="fix-133")
+    (worktree / ".githooks" / "pre-push").unlink(missing_ok=True)
+
+    hooks_src = tmp_path / "bot-hooks"
+    hooks_src.mkdir()
+    (hooks_src / "pre-push").write_text("#!/bin/bash\n# __BOT_USERNAME__\nexit 1\n")
+
+    refresh_hooks(repo, hooks_src)
+
+    installed = worktree / ".githooks" / "pre-push"
+    assert installed.exists()
+    assert BOT_USER in installed.read_text()
+
+
+def test_refreshing_a_worktree_that_is_current_reports_nothing(tmp_path, repo):
+    """Run at every start, so anything it says on a healthy repo is noise nobody reads."""
+    use_relative_hooks_path(repo)
+    install_post_checkout(repo)
+    add_worktree(repo, "repo-133", branch="fix-133")
+
+    hooks_src = tmp_path / "bot-hooks"
+    hooks_src.mkdir()
+    (hooks_src / "pre-push").write_text("#!/bin/bash\n# __BOT_USERNAME__\nexit 1\n")
+
+    refresh_hooks(repo, hooks_src)
+
+    assert refresh_hooks(repo, hooks_src) == ""
 
 
 # ── Collection: scripts/clean-worktrees.py ───────────────────────────────────
