@@ -107,6 +107,16 @@ Rules:
 - **A user-visible bug gets user-visible steps.** Numbered, in the running
   product, and specific enough to follow without guessing: the screen or URL,
   the setting, the input. Not "enable the feature and use it".
+- **Name the front end the steps run in, and how the screen is reached inside
+  it.** Where a project ships more than one — a desktop app and a terminal
+  client, a CLI and a web console — "start a turn" does not say which of them to
+  open, and the screen being fixed usually exists in only one. Say it again in
+  the body when a file or setting the steps touch is shared with the other front
+  end, so nobody reads the shared thing as belonging to the front end you
+  changed.
+  - **Bad:** "2. Start a turn. 3. Open Agent settings, then the Hooks tab."
+  - **Good:** "2. In the desktop app, type anything into the message box and
+    press Enter. 3. Click Agent settings in the sidebar, then the Hooks tab."
 - **State both sides.** What you observed, and what you should have observed. A
   reproduction with no observed-vs-expected is a command, not evidence.
 - **Paste-able beats descriptive** wherever a command is part of it: the exact
