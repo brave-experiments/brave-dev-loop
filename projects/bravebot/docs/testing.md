@@ -150,11 +150,23 @@ Two Docker specifics worth knowing before you spend twelve minutes:
   mount source is your own worktree and not another slot's, then recover the result
   with `docker logs -f <name>` and `docker wait <name>` instead of starting over.
 
+## Which front end a change is in
+
+bravebot ships two: the terminal client in `crates/tui`, and the desktop
+application under `ui/`, whose Rust side is `crates/ui-bridge` and
+`crates/ui-files`. Both run turns, and both read the files under `~/.bravebot`, so
+a reproduction has to say which of them its steps are in and how the screen is
+reached inside it. In the desktop application a turn starts from the message box
+at the bottom of the transcript, with Enter or the Send button, and Agent settings
+opens from the button in the sidebar; in the terminal client it starts from the
+session prompt. Where the steps write a file the other front end reads, say so:
+otherwise a shared file reads as belonging to the one being changed.
+
 ## Screenshotting the interface
 
-The interface is `crates/tui`, which the profile lists under `uiPaths`: a change
-there has to show the screen it produces, or `check-pr-body.py --diff-base
-upstream/main` fails. See
+`uiPaths` lists `crates/tui` alone: a change there has to show the screen it
+produces, or `check-pr-body.py --diff-base upstream/main` fails. A change under
+`ui/` is asked for no screen — paste one anyway. See
 [pr-descriptions.md](../../../docs/pr-descriptions.md#showing-a-terminal-screen)
 for what the body needs.
 
