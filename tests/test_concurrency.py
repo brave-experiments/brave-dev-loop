@@ -449,6 +449,14 @@ class TestConcurrentSelection:
         picked = [json.loads(p.communicate()[0])["storyId"] for p in with_pool]
         assert len(set(picked)) == 3, f"overlapping selections: {picked}"
 
+    def test_count_leaves_out_a_story_another_run_holds(self, bot_dir, holders):
+        first = holders(bot_dir, max_slots=2)
+        second = holders(bot_dir, max_slots=2)
+        select(bot_dir, first.slot, first.pid)
+        count = select(bot_dir, second.slot, second.pid, extra=["--count"])["count"]
+        assert count == 4
+        assert len(claims_lib.active(bot_dir)) == 1, "counting claimed a story"
+
     def test_story_becomes_available_again_when_its_run_dies(self, bot_dir, holders):
         first = holders(bot_dir, max_slots=2)
         picked = select(bot_dir, first.slot, first.pid)["storyId"]

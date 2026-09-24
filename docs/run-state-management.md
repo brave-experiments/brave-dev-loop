@@ -9,11 +9,12 @@
 
 ## When run-state.json Gets Reset
 
-The `run-state.json` file tracks which stories have been checked in the current run. It gets reset automatically in these situations:
+The `run-state.json` file tracks which stories have been checked in the current run. A story is selected at most once per run unless it is named outright. It gets reset in these situations:
 
-1. **First iteration ever**: When `runId` is `null`, a new run is initialized
-2. **All stories processed**: When all remaining stories are either merged, skipped, or already checked in `storiesCheckedThisRun`, the run state resets automatically
-3. **Manual reset**: You can manually reset by setting `runId: null` and `storiesCheckedThisRun: []` in the file
+1. **Run start**: `run.sh` resets it, and the first iteration initializes `runId`
+2. **Manual reset**: You can manually reset by setting `runId: null` and `storiesCheckedThisRun: []` in the file
+
+Once every story is merged, skipped, invalid, or already checked, the run ends rather than starting over. `run.sh` counts the selectable stories at start and lowers the iteration count to match, so `./run.sh 30` against 10 selectable stories runs 10 iterations.
 
 ## Manual Reset Script
 

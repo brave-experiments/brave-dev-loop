@@ -764,6 +764,30 @@ class TestSelectTaskMatchTarget:
         assert found is None and "US-001, US-002" in error
 
 
+def select_task_args(tmp_dir, stories, extra_prompt, checked=(), count=False):
+    """A PRD and run state on disk, and the arguments select-task.py parses."""
+    os.makedirs(os.path.join(tmp_dir, "data"), exist_ok=True)
+    prd_path = os.path.join(tmp_dir, "data", "prd.json")
+    with open(prd_path, "w") as f:
+        json.dump({"stories": stories}, f)
+    run_state_path = os.path.join(tmp_dir, "data", "run-state.json")
+    with open(run_state_path, "w") as f:
+        json.dump({"runId": "test", "storiesCheckedThisRun": list(checked)}, f)
+    return Namespace(
+        prd=prd_path,
+        run_state=run_state_path,
+        iteration_log=None,
+        extra_prompt=extra_prompt,
+        # Nothing on this path may reach the model, so a binary that does
+        # not exist stands in for one: llm_select treats it as no answer.
+        claude_bin=os.path.join(tmp_dir, "no-such-claude"),
+        slot=1,
+        run_pid=os.getpid(),
+        run_id="test",
+        count=count,
+    )
+
+
 class TestSelectTaskNamedStoryIsNotSubstituted:
     """A story named outright is worked or nothing is.
 
@@ -772,29 +796,8 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
     the request. These drive the real selection path, including its output.
     """
 
-    def _args(self, tmp_dir, stories, extra_prompt, checked=()):
-        os.makedirs(os.path.join(tmp_dir, "data"), exist_ok=True)
-        prd_path = os.path.join(tmp_dir, "data", "prd.json")
-        with open(prd_path, "w") as f:
-            json.dump({"stories": stories}, f)
-        run_state_path = os.path.join(tmp_dir, "data", "run-state.json")
-        with open(run_state_path, "w") as f:
-            json.dump({"runId": "test", "storiesCheckedThisRun": list(checked)}, f)
-        return Namespace(
-            prd=prd_path,
-            run_state=run_state_path,
-            iteration_log=None,
-            extra_prompt=extra_prompt,
-            # Nothing on this path may reach the model, so a binary that does
-            # not exist stands in for one: llm_select treats it as no answer.
-            claude_bin=os.path.join(tmp_dir, "no-such-claude"),
-            slot=1,
-            run_pid=os.getpid(),
-            run_id="test",
-        )
-
     def _select(self, select_task, tmp_dir, stories, extra_prompt, capsys, checked=()):
-        args = self._args(tmp_dir, stories, extra_prompt, checked)
+        args = select_task_args(tmp_dir, stories, extra_prompt, checked)
         code = select_task._select_locked(
             args, args.prd, args.run_state, tmp_dir, in_progress=set()
         )
@@ -871,6 +874,64 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
         )
         assert code == 0
         assert out["storyId"] == "US-217", out
+
+
+class TestSelectTaskCount:
+    """run.sh caps its iterations at this count, so it has to be the number the
+    loop can select, and asking for it must not take anything."""
+
+    def _backlog(self):
+        return [
+            make_story("pending", id="US-001", description="issue #601"),
+            make_story("pushed", id="US-002", prNumber=602),
+            make_story("committed", id="US-003"),
+            make_story("merged", id="US-004"),
+            make_story("skipped", id="US-005"),
+            make_story("invalid", id="US-006"),
+        ]
+
+    def _count(self, select_task, tmp_dir, capsys, extra_prompt="", checked=()):
+        args = select_task_args(
+            tmp_dir, self._backlog(), extra_prompt, checked, count=True
+        )
+        code = select_task._select_locked(
+            args, args.prd, args.run_state, tmp_dir, in_progress=set()
+        )
+        assert code == 0
+        return json.loads(capsys.readouterr().out.strip().splitlines()[-1])["count"]
+
+    def test_counts_the_stories_left_to_select(self, select_task, tmp_dir, capsys):
+        assert self._count(select_task, tmp_dir, capsys) == 3
+        assert self._count(select_task, tmp_dir, capsys, checked=["US-001"]) == 2
+
+    def test_a_hint_is_bounded_by_the_same_count(self, select_task, tmp_dir, capsys):
+        assert self._count(select_task, tmp_dir, capsys, "something small") == 3
+
+    def test_a_named_story_sets_no_bound(self, select_task, tmp_dir, capsys):
+        """A named story is selected again every loop, taking it from pending
+        to pushed, so the count of the ordinary queue says nothing about it."""
+        assert self._count(select_task, tmp_dir, capsys, "#601") is None
+
+    def test_counting_claims_and_records_nothing(self, select_task, tmp_dir, capsys):
+        self._count(select_task, tmp_dir, capsys)
+        data = os.path.join(tmp_dir, "data")
+        claims = os.path.join(data, "claims.json")
+        assert not os.path.exists(claims) or json.load(open(claims)) == {}
+        with open(os.path.join(data, "run-state.json")) as f:
+            assert json.load(f)["storiesCheckedThisRun"] == []
+        with open(os.path.join(data, "prd.json")) as f:
+            stories = json.load(f)["stories"]
+        assert all("iterationLogs" not in s for s in stories)
+        assert all("lastProcessedDate" not in s for s in stories)
+
+    def test_run_counts_after_the_prd_is_synced(self):
+        """In auto mode the sync decides the backlog; a count taken before it
+        caps the run at what the stale cache held."""
+        with open(os.path.join(SCRIPT_DIR, os.pardir, "run.sh")) as f:
+            body = f.read()
+        count = body.index('select-task.py" --count')
+        assert body.index("scripts/sync-prd.sh") < count
+        assert count < body.index("while [ $loop_count -lt $MAX_ITERATIONS ]")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

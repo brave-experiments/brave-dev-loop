@@ -13,7 +13,7 @@ story it is working is filtered by the in-progress label it left on the issue
 instead (lib/issue_lock.py).
 
 Exit codes:
-  0 - Story selected (JSON output on stdout)
+  0 - Story selected (JSON output on stdout), or --count answered
   1 - No candidates remain (run complete)
   2 - Error
 """
@@ -433,6 +433,13 @@ def main():
         help="pid of the run.sh that owns the slot (default: $BOT_RUN_PID)",
     )
     parser.add_argument("--run-id", default=os.environ.get("BOT_RUN_ID", ""))
+    parser.add_argument(
+        "--count",
+        action="store_true",
+        help='Print {"count": N}, the stories the automatic selection could pick, '
+        "and change nothing. A story named in --extra-prompt bounds nothing, so "
+        "the count is null then.",
+    )
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -523,6 +530,11 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
     # answering "nothing to do" to a request that names a story is the same
     # wrong answer in a quieter voice.
     target = explicit_target(args.extra_prompt)
+
+    if args.count:
+        # A named story is selected again every loop, so it sets no bound.
+        print(json.dumps({"count": None if target else len(candidates)}))
+        return 0
 
     if target:
         selected, error = match_target(stories, target, claimed=claimed_elsewhere)
