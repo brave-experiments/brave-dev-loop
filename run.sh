@@ -508,9 +508,24 @@ if [ "$BOT_PROFILE_WORKTREES" = true ]; then
     || echo "WARNING: worktree cleanup failed — continuing." >&2
 fi
 
+# Counted after the sync, which is what decides the backlog in auto mode. A
+# story another run holds now is left out: by the time it is released, that run
+# has worked it.
+CAPPED=false
+SELECTABLE=$(python3 "$SCRIPT_DIR/scripts/select-task.py" --count \
+  --prd "$PRD_FILE" --run-state "$RUN_STATE_FILE" \
+  --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" \
+  --extra-prompt "$EXTRA_PROMPT" 2>/dev/null | jq -r '.count // empty' 2>/dev/null || true)
+if [ -n "$SELECTABLE" ] && [ "$SELECTABLE" -gt 0 ] && [ "$SELECTABLE" -lt "$MAX_ITERATIONS" ]; then
+  echo "Only $SELECTABLE stories are selectable: capping this run at $SELECTABLE iterations (asked for $MAX_ITERATIONS)."
+  MAX_ITERATIONS=$SELECTABLE
+  CAPPED=true
+fi
+
 # Track both loop count (for max iterations) and work iterations (actual state changes)
 loop_count=0
 work_iteration=0
+OUT_OF_WORK=false
 
 while [ $loop_count -lt $MAX_ITERATIONS ]; do
   ((++loop_count))
@@ -564,6 +579,7 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
       exit 1
     fi
     echo "No more tasks to process: $REASON"
+    OUT_OF_WORK=true
     break
   fi
 
@@ -991,7 +1007,11 @@ Additional context: $EXTRA_PROMPT"
 done
 
 echo ""
-echo "Agent reached max loop iterations ($MAX_ITERATIONS) without completing all tasks."
+if [ "$OUT_OF_WORK" = true ] || [ "$CAPPED" = true ]; then
+  echo "Every story this run could select has had an iteration."
+else
+  echo "Agent reached max loop iterations ($MAX_ITERATIONS) without completing all tasks."
+fi
 echo "Work iterations completed: $work_iteration"
 echo "Check $PROGRESS_FILE for status."
 exit 1

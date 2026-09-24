@@ -67,8 +67,8 @@ and each story works in a `../brave-dev-loop-<issue>` worktree of it. See
 `run.sh` works from any directory; it resolves paths from its own location.
 
 ```bash
-./run.sh              # 10 iterations (default)
-./run.sh 20           # 20 iterations
+./run.sh              # up to 10 iterations (default)
+./run.sh 20           # up to 20; fewer if fewer stories are selectable
 ./run.sh 10 tui       # interactive terminal UI
 
 ./run.sh --agent codex --model gpt-5
