@@ -8,12 +8,12 @@
 #
 # Choosing the story (extra_prompt_info, anything after `tui`):
 #   An issue or pull request URL, a "#613", or a story id names one story
-#   outright — including one this run already worked, which the automatic
-#   selection passes over. That story is worked or the run stops naming it and
-#   the reason; it is never quietly swapped for another. A skipped story reports
-#   the reason it was skipped rather than being worked, since the workflow for
-#   one is to stop. Any other wording is a hint the model reads instead, and a
-#   hint it cannot use leaves the deterministic queue in charge.
+#   outright, whatever the queue thinks of it: one this run already worked, and
+#   one that is skipped, invalid or merged, which goes back to pending with its
+#   old status and reason kept in requeuedFrom. That story is worked or the run
+#   stops naming it and the reason; it is never quietly swapped for another. Any
+#   other wording is a hint the model reads instead, and a hint it cannot use
+#   leaves the deterministic queue in charge.
 #
 # Several runs can share one bot directory when bot.maxConcurrentRuns is above
 # 1: each takes a numbered *run slot* and keeps its own lock, run state, logs
@@ -718,6 +718,17 @@ $STORY_DETAILS
 
 Bot config (from config.json — do NOT read this file):
 $BOT_CONFIG"
+
+  # Without this the session reads requeuedFrom's reason as a live blocker and
+  # skips the story again, which is the judgment the operator just overruled.
+  REQUEUED_FROM=$(echo "$TASK_JSON" | jq -r '.requeuedFrom.status // empty')
+  if [ -n "$REQUEUED_FROM" ]; then
+    AGENT_PROMPT="$AGENT_PROMPT
+
+The request named this story outright while it was $REQUEUED_FROM, so it is back to pending at the
+operator's request (storyDetails.requeuedFrom has the old status and reason). Work it. Do not set it
+back to $REQUEUED_FROM for the reason recorded there; the operator has overruled it."
+  fi
 
   # Only said when it is true: a single-run deployment's prompt is unchanged.
   if [ "$BOT_MAX_CONCURRENT_RUNS" -gt 1 ]; then
