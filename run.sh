@@ -328,6 +328,8 @@ fi
 PRD_FILE="$SCRIPT_DIR/data/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/data/progress.txt"
 LOGS_DIR="$SCRIPT_DIR/logs"
+# What one iteration may spend on its agent, a resumed session included.
+ITERATION_SECONDS=7200
 # Slot 1 uses data/run-state.json, as it always has; further slots get their
 # own file so two runs never share iteration bookkeeping. The agent reads
 # BOT_RUN_STATE_FILE, so its update-prd-status.py calls land in the right one.
@@ -766,6 +768,10 @@ Additional context: $EXTRA_PROMPT"
   # other agent's session has to be found afterwards, and the search needs to
   # know how far back to look (scripts/find-agent-session.py).
   BASE_STARTED_AT=$(date +%s)
+  # Where the progress log ends now, so an entry the session writes can be told
+  # from the ones already there (scripts/iteration-stopped-short.py).
+  PROGRESS_OFFSET=0
+  [ -f "$PROGRESS_FILE" ] && PROGRESS_OFFSET=$(wc -c < "$PROGRESS_FILE" | tr -d ' ')
 
   # Run the agent from the bot directory so it picks up project instructions.
   #
@@ -783,11 +789,11 @@ Additional context: $EXTRA_PROMPT"
     fi
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let codex own the terminal directly (no piping).
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CODEX_BIN $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CODEX_BIN $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox "$AGENT_PROMPT" || true
     else
       # Non-interactive: stream JSONL events to the iteration log; capture the
       # final agent message separately for the completion check.
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CODEX_BIN exec $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check --output-last-message "$TEMP_LAST_MSG" "$AGENT_PROMPT" </dev/null 2>&1 \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CODEX_BIN exec $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check --output-last-message "$TEMP_LAST_MSG" "$AGENT_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
     fi
   elif [ "$BOT_AGENT" = "bravebot" ]; then
@@ -799,13 +805,13 @@ Additional context: $EXTRA_PROMPT"
     # start an interactive session with the prompt already in it. So TUI mode differs
     # only in owning the terminal, which is what lets it be watched and interrupted.
     if [ "$USE_TUI" = true ]; then
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" || true
     else
       # bravebot keeps stdout to the final reply alone and puts progress on stderr,
       # previews of quarantined content included. Since a preview can quote a file
       # that documents <promise>COMPLETE</promise>, stderr goes straight to the log
       # and only the reply reaches the file the completion check reads.
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" </dev/null 2>>"$ITERATION_LOG" \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" </dev/null 2>>"$ITERATION_LOG" \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_LAST_MSG" || true
     fi
   elif [ "$BOT_AGENT" = "cursor" ]; then
@@ -816,12 +822,12 @@ Additional context: $EXTRA_PROMPT"
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let cursor-agent own the terminal directly (no piping).
       # --force bypasses approvals (headless autonomy).
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CURSOR_BIN $CURSOR_MODEL_FLAG --force "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CURSOR_BIN $CURSOR_MODEL_FLAG --force "$AGENT_PROMPT" || true
     else
       # Non-interactive: -p/--print with plain-text output. --force bypasses approvals,
       # --trust trusts the workspace (headless only). cursor-agent has no --output-last-message,
       # so the completion check greps the full captured output (see below).
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CURSOR_BIN -p --output-format text $CURSOR_MODEL_FLAG --force --trust "$AGENT_PROMPT" </dev/null 2>&1 \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CURSOR_BIN -p --output-format text $CURSOR_MODEL_FLAG --force --trust "$AGENT_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
     fi
   else
@@ -831,11 +837,51 @@ Additional context: $EXTRA_PROMPT"
     fi
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let Claude own the terminal directly (no piping)
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --session-id "$SESSION_ID" "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --session-id "$SESSION_ID" "$AGENT_PROMPT" || true
     else
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" 7200 $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
     fi
+  fi
+
+  # A pending story's iteration ends when update-prd-status.py moves the story or
+  # a progress entry says why it stayed. A session that ends its turn to wait on a
+  # gate, or answers a "continue" as if nothing was asked, does neither, and in a
+  # --print run that turn was the session: the checks it was waiting on stop with
+  # it, and its unpushed work sits in a worktree the next sweep can take. So the
+  # session is resumed and told, within what is left of the iteration's time.
+  # Only Claude is given its session id, so only Claude is resumed; for any agent,
+  # a story that still stopped short gets its entry written from what git shows.
+  if [ "$USE_TUI" != true ]; then
+    RESUMED=0
+    while true; do
+      END_CHECK=$(python3 "$SCRIPT_DIR/scripts/iteration-stopped-short.py" \
+        --prd "$PRD_FILE" --story-id "$STORY_ID" --start-status "$STORY_STATUS" \
+        --start-branch "$STORY_BRANCH" --repo "$GIT_REPO" \
+        --progress-file "$PROGRESS_FILE" --progress-offset "$PROGRESS_OFFSET" \
+        --resumed "$RESUMED" --session-id "$SESSION_ID" --log "$ITERATION_LOG") || break
+      [ "$(echo "$END_CHECK" | jq -r '.stoppedShort')" = true ] || break
+      LEFT=$((ITERATION_SECONDS - ($(date +%s) - BASE_STARTED_AT)))
+      if [ "$BOT_AGENT" != claude ] || [ "$RESUMED" -ge 2 ] || [ "$LEFT" -lt 600 ]; then
+        echo "$STORY_ID: the session ended with the story pending and nothing recorded; writing its progress entry."
+        echo "$END_CHECK" | jq -r '.entry' | "$SCRIPT_DIR/scripts/append-progress.sh" --progress-file "$PROGRESS_FILE" || true
+        break
+      fi
+      RESUMED=$((RESUMED + 1))
+      WORK=$(echo "$END_CHECK" | jq -r '.work')
+      echo ""
+      echo "$STORY_ID: the session ended with the story pending and nothing recorded. Resuming it ($RESUMED of 2, ${LEFT}s left)."
+      echo "  $WORK"
+      RESUME_PROMPT="Your turn ended with story $STORY_ID still pending and no progress entry for it. This iteration runs with --print, so ending a turn ended the session: nothing you were waiting on will report back, and every background task, gates included, was stopped with it.
+$WORK
+
+Carry on with ./$BOT_DIRNAME/docs/workflow-pending.md from where you stopped, re-running any check that had not finished, and take the story to the status the workflow gives it. If it cannot get there in this iteration, append the entry ./$BOT_DIRNAME/docs/progress-reporting.md describes for an iteration that ends without a transition, then end. Do not end your turn for any other reason."
+      jq -nc --arg storyId "$STORY_ID" --argjson resumed "$RESUMED" --arg prompt "$RESUME_PROMPT" \
+        '{"type":"resume","storyId":$storyId,"resumed":$resumed,"prompt":$prompt}' >> "$ITERATION_LOG"
+      bot_slot_heartbeat
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --resume "$SESSION_ID" "$RESUME_PROMPT" </dev/null 2>&1 \
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" >> "$TEMP_OUTPUT" || true
+    done
   fi
 
   stop_title_watch

@@ -65,7 +65,10 @@ Write this before you stop — see
 ```
 
 Read the newest such entry for the story **before** re-running anything: it is the
-difference between finishing a story and starting it again.
+difference between finishing a story and starting it again. An entry whose "Why it
+stopped" says run.sh wrote it came from git alone, after the session ended without
+one: it says where the work is, not which gates passed, so read the iteration log
+it names for those.
 
 ## For status: "committed" → "pushed"
 
