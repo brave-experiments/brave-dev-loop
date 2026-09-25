@@ -33,10 +33,16 @@ from lib.issue_lock import issue_number
 from lib.load_config import build_research, load_config, load_profile
 from lib.prd_store import bot_dir_for, load_prd, prd_lock, save_prd
 
-# Nothing is ever selected in these: the story is finished with. "merged" is one
-# of them because a merged PR is done — the loop does not revisit it, and
-# archive-prd.py moves it out of the PRD entirely.
+# The queue never selects these: the story is finished with. "merged" is one of
+# them because a merged PR is done — the loop does not revisit it, and
+# archive-prd.py moves it out of the PRD entirely. Only a request that names the
+# story outright reaches one, and that requeues it (see requeue()).
 TERMINAL_STATUSES = ("merged", "skipped", "invalid")
+
+# What a merged story's PR left on it. That PR is finished, so the next pass
+# opens its own; keeping them would send the pending workflow back onto a
+# branch that already merged.
+_MERGED_PR_FIELDS = ("prNumber", "prUrl", "branchName")
 
 TIER_URGENT = 1  # pushed + lastActivityBy == "reviewer"
 TIER_HIGH = 2  # committed
@@ -259,13 +265,16 @@ def describe_target(target):
 def match_target(stories, target, claimed=None):
     """The one story a target names, as (story, error): exactly one is None.
 
-    Matches against every story, including the terminal ones, so that naming a
-    story that is finished with answers with what it is rather than "no story
-    works that". Reaching a story the automatic selection would pass over is
-    the point of naming one: one already worked this run is selected, where a
-    skipped story instead reports the reason it was skipped — the workflow for
-    a skipped story is to do nothing, so selecting it would spend an iteration
-    arriving at the reason this returns straight away.
+    Matches against every story, including the terminal ones. Naming a story is
+    the operator overruling whatever state the queue left it in: one already
+    worked this run is selected, and so is a merged, skipped or invalid one,
+    which the caller requeues once it holds the claim. A skip reason records a
+    judgment made earlier, and the person naming the story is the one entitled
+    to reverse it.
+
+    Where an issue has several stories, the one still in flight is the one
+    meant; with none in flight, the newest. The refusal left is a story another
+    live run holds: two sessions on one branch undo each other's work.
     """
     kind, value = target
     claimed = set(claimed or ())
@@ -284,38 +293,50 @@ def match_target(stories, target, claimed=None):
             f"{named} is named in the request, but no story in the PRD works it",
         )
     if len(matches) > 1:
-        ids = ", ".join(sorted(s.get("id", "?") for s in matches))
-        return (
-            None,
-            f"{named} is named in the request, but several stories work it: {ids}",
-        )
+        live = [
+            s for s in matches if s.get("status", "pending") not in TERMINAL_STATUSES
+        ]
+        if len(live) > 1:
+            ids = ", ".join(sorted(s.get("id", "?") for s in live))
+            return (
+                None,
+                f"{named} is named in the request, but several stories work it: "
+                f"{ids} — name one of them",
+            )
+        matches = live or matches[-1:]
 
     story = matches[0]
     story_id = story.get("id", "?")
-    status = story.get("status", "pending")
-    if status == "merged":
-        return (
-            None,
-            f"{named} is named in the request, but {story_id} is already merged",
-        )
-    if status in TERMINAL_STATUSES:
-        # Reversing a considered skip is the operator's call and not this
-        # script's, so the reason goes back to whoever asked instead. The
-        # reasons carry a requeue condition ("once #590 is merged"), which is
-        # the answer they were after and is worth more than an iteration spent
-        # on a workflow whose only instruction is to stop.
-        reason = story.get("skipReason") or "no reason recorded"
-        return (
-            None,
-            f"{named} is named in the request, but {story_id} is {status}: {reason}"
-            f" — set it back to pending in data/prd.json to work it anyway",
-        )
     if story_id in claimed:
         return (
             None,
             f"{named} is named in the request, but another run holds {story_id}",
         )
     return story, None
+
+
+def requeue(story):
+    """Put a terminal story back to pending, and return what it was.
+
+    None for a story that is not terminal. The old status and reason move to
+    ``requeuedFrom`` rather than being dropped: they are the only record of why
+    the story stopped, and the session that works it next should read them.
+    """
+    status = story.get("status", "pending")
+    if status not in TERMINAL_STATUSES:
+        return None
+    was = {"status": status, "at": now_iso()}
+    reason = story.pop("skipReason", None)
+    if reason:
+        was["reason"] = reason
+    if status == "merged":
+        for key in _MERGED_PR_FIELDS:
+            if story.get(key) is not None:
+                was[key] = story[key]
+                story[key] = None
+    story["status"] = "pending"
+    story["requeuedFrom"] = was
+    return was
 
 
 def candidate_summary(candidates):
@@ -539,7 +560,8 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
     if target:
         selected, error = match_target(stories, target, claimed=claimed_elsewhere)
         if error:
-            print(f"Error: {error}", file=sys.stderr)
+            # stdout only: run.sh prints the reason itself, and a second copy
+            # on stderr is the same line twice on the operator's terminal.
             print(json.dumps({"selected": False, "reason": error}))
             return 2
     elif not candidates:
@@ -630,13 +652,16 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
                 f"{describe_target(target)} is named in the request, but "
                 f"{named.get('id', '?')} was claimed by another run just now"
             )
-            print(f"Error: {reason}", file=sys.stderr)
             print(json.dumps({"selected": False, "reason": reason}))
             return 2
         print(
             json.dumps({"selected": False, "reason": "Could not claim any candidate"})
         )
         return 1
+
+    # Only once the claim is held: a story another run took in the meantime
+    # must not have its status rewritten by a run that is not working it.
+    requeued = requeue(selected) if target else None
 
     story_id = selected.get("id", "?")
     status = selected.get("status", "pending")
@@ -664,6 +689,9 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
         "prNumber": selected.get("prNumber"),
         "prUrl": selected.get("prUrl"),
         "branchName": selected.get("branchName"),
+        # Set only on the iteration that requeued the story, so the prompt
+        # says so once; storyDetails keeps the record for later iterations.
+        "requeuedFrom": requeued,
         "candidateCount": len(candidates),
         "slot": args.slot,
         "storyDetails": selected,

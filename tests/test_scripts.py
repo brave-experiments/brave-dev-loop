@@ -712,36 +712,17 @@ class TestSelectTaskMatchTarget:
         found, error = select_task.match_target([story], ("ref", 617))
         assert (found, error) == (story, None)
 
-    def test_refuses_a_skipped_story_with_the_reason_it_was_skipped(self, select_task):
-        """The case that sent an iteration to the wrong story. The skip holds,
-        because its reason is the answer the request was really after — here a
-        blocker and the condition that clears it."""
+    @pytest.mark.parametrize("status", ["skipped", "invalid", "merged"])
+    def test_a_terminal_story_is_matched(self, select_task, status):
+        """Naming a story overrules the state the queue left it in. The case
+        this came from: #83's story was skipped on a blocker its maintainer
+        answered minutes later, and naming #83 stopped the run on the skip."""
         story = make_story(
-            "skipped",
-            description="Resolve issue #613: a thing",
-            skipReason="Blocked on PR #590. Requeue once #590 is merged.",
+            status, description="Resolve issue #613: a thing", skipReason="Blocked."
         )
         found, error = select_task.match_target([story], ("ref", 613))
-        assert found is None
-        assert "US-001 is skipped" in error
-        assert "Requeue once #590 is merged" in error
-
-    def test_refuses_an_invalid_story_the_same_way(self, select_task):
-        story = make_story(
-            "invalid", description="Resolve issue #613: a thing", skipReason="duplicate"
-        )
-        found, error = select_task.match_target([story], ("ref", 613))
-        assert found is None and "US-001 is invalid: duplicate" in error
-
-    def test_a_skip_with_no_reason_recorded_still_says_so(self, select_task):
-        story = make_story("skipped", description="Resolve issue #613: a thing")
-        found, error = select_task.match_target([story], ("ref", 613))
-        assert found is None and "no reason recorded" in error
-
-    def test_refuses_a_merged_story(self, select_task):
-        story = make_story("merged", description="Resolve issue #613: a thing")
-        found, error = select_task.match_target([story], ("ref", 613))
-        assert found is None and "already merged" in error
+        assert (found, error) == (story, None)
+        assert story["status"] == status, "matching alone must change nothing"
 
     def test_refuses_what_no_story_works(self, select_task):
         story = make_story("pending", description="Resolve issue #101: a thing")
@@ -755,13 +736,68 @@ class TestSelectTaskMatchTarget:
         )
         assert found is None and "another run holds US-001" in error
 
-    def test_refuses_an_ambiguous_number(self, select_task):
+    def test_refuses_a_number_two_live_stories_share(self, select_task):
         stories = [
             make_story("pending", id="US-001", description="Resolve issue #613: one"),
             make_story("pushed", id="US-002", prNumber=613),
         ]
         found, error = select_task.match_target(stories, ("ref", 613))
         assert found is None and "US-001, US-002" in error
+
+    def test_the_live_story_wins_over_a_finished_one(self, select_task):
+        """An issue worked in slices has a finished story beside the live one,
+        and the live one is what naming the issue means."""
+        stories = [
+            make_story("merged", id="US-001", description="Resolve issue #613: one"),
+            make_story("pending", id="US-002", description="Finish issue #613: two"),
+            make_story("skipped", id="US-003", description="Resolve issue #613: 3"),
+        ]
+        found, error = select_task.match_target(stories, ("ref", 613))
+        assert error is None and found["id"] == "US-002"
+
+    def test_with_nothing_live_the_newest_story_wins(self, select_task):
+        stories = [
+            make_story("merged", id="US-001", description="Resolve issue #613: one"),
+            make_story("skipped", id="US-002", description="Finish issue #613: two"),
+        ]
+        found, error = select_task.match_target(stories, ("ref", 613))
+        assert error is None and found["id"] == "US-002"
+
+
+class TestSelectTaskRequeue:
+    def test_a_skip_goes_back_to_pending_keeping_its_reason(self, select_task):
+        story = make_story(
+            "skipped", branchName="fix-a-thing", skipReason="Blocked on #590."
+        )
+        was = select_task.requeue(story)
+        assert story["status"] == "pending"
+        assert "skipReason" not in story
+        assert story["requeuedFrom"] == was
+        assert was["status"] == "skipped" and was["reason"] == "Blocked on #590."
+        assert story["branchName"] == "fix-a-thing", "unmerged work stays on it"
+
+    def test_a_merged_story_gives_up_its_finished_pr(self, select_task):
+        """The pending workflow checks out branchName, and that branch merged."""
+        story = make_story(
+            "merged",
+            branchName="fix-a-thing",
+            prNumber=617,
+            prUrl="https://github.com/o/r/pull/617",
+        )
+        was = select_task.requeue(story)
+        assert story["status"] == "pending"
+        assert (story["branchName"], story["prNumber"], story["prUrl"]) == (
+            None,
+            None,
+            None,
+        )
+        assert (was["branchName"], was["prNumber"]) == ("fix-a-thing", 617)
+
+    @pytest.mark.parametrize("status", ["pending", "committed", "pushed"])
+    def test_a_live_story_is_left_alone(self, select_task, status):
+        story = make_story(status, prNumber=617)
+        assert select_task.requeue(story) is None
+        assert story == make_story(status, prNumber=617)
 
 
 def select_task_args(tmp_dir, stories, extra_prompt, checked=(), count=False):
@@ -815,8 +851,11 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
             make_story("pending", id="US-217", priority=217, description="issue #620"),
         ]
 
-    def test_a_named_skipped_story_reports_its_skip(self, select_task, tmp_dir, capsys):
-        """The run this came from: naming #613 worked #620 for an hour."""
+    def test_a_named_skipped_story_is_requeued_and_worked(
+        self, select_task, tmp_dir, capsys
+    ):
+        """Naming #613 once worked #620 for an hour; the skip must neither
+        swap the story nor stop the run."""
         code, out = self._select(
             select_task,
             tmp_dir,
@@ -824,9 +863,38 @@ class TestSelectTaskNamedStoryIsNotSubstituted:
             "https://github.com/brave/bravebot/issues/613",
             capsys,
         )
-        assert code == 2
-        assert "US-212 is skipped: Blocked on PR #590." in out["reason"]
-        assert "US-217" not in json.dumps(out), "picked a story nobody asked for"
+        assert code == 0, out
+        assert out["storyId"] == "US-212"
+        assert out["status"] == "pending"
+        assert out["requeuedFrom"]["reason"] == "Blocked on PR #590."
+        with open(os.path.join(tmp_dir, "data", "prd.json")) as f:
+            [saved] = [s for s in json.load(f)["stories"] if s["id"] == "US-212"]
+        assert saved["status"] == "pending"
+        assert saved["requeuedFrom"]["status"] == "skipped"
+
+    def test_a_requeue_waits_for_the_claim(
+        self, select_task, tmp_dir, capsys, monkeypatch
+    ):
+        """A story another run took in the meantime is not this run's to
+        rewrite, so losing the claim race leaves the skip where it was."""
+        monkeypatch.setattr(select_task.claims_lib, "claim", lambda *a, **k: False)
+        args = select_task_args(tmp_dir, self._backlog(), "#613")
+        code = select_task._select_locked(
+            args, args.prd, args.run_state, tmp_dir, in_progress=set()
+        )
+        out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert code == 2 and "claimed by another run just now" in out["reason"]
+        with open(args.prd) as f:
+            [saved] = [s for s in json.load(f)["stories"] if s["id"] == "US-212"]
+        assert saved["status"] == "skipped"
+
+    def test_a_story_that_was_not_requeued_says_so(self, select_task, tmp_dir, capsys):
+        """run.sh tells the session about a requeue on this field alone, so a
+        live story must not carry one."""
+        code, out = self._select(
+            select_task, tmp_dir, self._backlog(), "US-217", capsys
+        )
+        assert code == 0 and out["requeuedFrom"] is None
 
     def test_a_named_story_already_worked_this_run_is_still_selected(
         self, select_task, tmp_dir, capsys

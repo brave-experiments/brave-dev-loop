@@ -6,6 +6,8 @@
 
 This story has been intentionally skipped and will not be worked on. During task selection, skipped stories should not be picked (they're in the SKIP priority category). If you encounter a skipped story, simply move to the next story in priority order during task selection.
 
+The one exception is a request that names the story outright (`./run.sh tui '#613'`): that puts it back to `pending` and records the old status and reason in `requeuedFrom`. A session working such a story does not skip it again for the reason recorded there.
+
 Stories can be manually set to "skipped" status when:
 - The story is blocked indefinitely and should be skipped
 - The story is intentionally deferred for later work

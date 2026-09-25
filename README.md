@@ -93,11 +93,12 @@ pointed at a local build, since it has no config keys of its own.
 
 Anything after `tui` chooses the story. An issue URL, a pull request URL, a
 `#613` or a story id names one outright: that story is worked and no other,
-including one the ordinary queue passes over because this run already worked it.
-Where it cannot be worked the run stops and says which story and why — a skipped
-story reports the reason it was skipped, which is usually a blocker and the
-condition that clears it. Reversing a skip is a hand edit to `data/prd.json`, on
-purpose. Any other wording is a hint the model reads, and a hint it cannot use
+whatever the ordinary queue thinks of it. That includes one this run already
+worked, and one that is skipped, invalid or merged: naming it puts it back to
+pending, keeping the old status and reason in the story's `requeuedFrom`, and a
+merged one starts a fresh branch and PR. Where it cannot be worked (no story
+works that issue, or another run holds it) the run stops and says which story
+and why. Any other wording is a hint the model reads, and a hint it cannot use
 leaves the ordinary queue in charge.
 
 ```bash
