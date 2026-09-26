@@ -2735,6 +2735,240 @@ class TestAddBacklogRetriage:
         assert {k: v for k, v in written.items() if k != "triage"} == story
 
 
+def rest_issue(number=882, state="open", assignees=(), pull_request=False):
+    """An issue as `gh api repos/<repo>/issues/<n>` returns it."""
+    issue = {
+        "number": number,
+        "title": "Run output waits",
+        "html_url": f"https://github.com/test-org/test-project/issues/{number}",
+        "state": state,
+        "labels": [{"name": "enhancement"}],
+        "assignees": [{"login": login} for login in assignees],
+    }
+    if pull_request:
+        issue["pull_request"] = {"url": "https://api.github.com/x"}
+    return issue
+
+
+class TestAddBacklogNamed:
+    """An issue named outright is work whoever it is assigned to. The case this
+    came from: `./run.sh 1 tui .../issues/882` stopped on "no story in the PRD
+    works it", because intake only reads issues assigned to the bot."""
+
+    @pytest.fixture
+    def github(self, add_backlog, monkeypatch):
+        """Stubs the two gh calls; `issue` is what GitHub has, `assigns` the
+        numbers the bot tried to assign itself, `accept` whether GitHub lets it."""
+        gh = Namespace(issue=rest_issue(), assigns=[], accept=True)
+        monkeypatch.setattr(add_backlog, "fetch_issue", lambda n: gh.issue)
+
+        def assign(number):
+            gh.assigns.append(number)
+            return gh.accept
+
+        monkeypatch.setattr(add_backlog, "assign_bot", assign)
+        return gh
+
+    def _import(self, add_backlog, write_json, request, stories=(), archived=None):
+        prd_path = write_json("prd.json", {"stories": list(stories)})
+        archived_path = write_json("prd.archived.json", {"stories": archived or []})
+        return prd_path, add_backlog.import_named(request, prd_path, archived_path)
+
+    def test_an_unassigned_issue_is_assigned_and_added(
+        self, add_backlog, github, write_json, read_json
+    ):
+        prd_path, summary = self._import(
+            add_backlog,
+            write_json,
+            "https://github.com/test-org/test-project/issues/882",
+            [make_story(id="US-044", priority=44, description="issue #101")],
+        )
+        assert github.assigns == [882]
+        assert summary["assigned"] is True
+        added = read_json(prd_path)["stories"][-1]
+        assert (added["id"], added["priority"], added["status"]) == (
+            "US-045",
+            45,
+            "pending",
+        )
+        assert added["description"] == "Resolve issue #882: Run output waits"
+        assert summary["added"][0]["id"] == "US-045"
+
+    def test_a_refused_assignment_still_adds_the_story(
+        self, add_backlog, github, write_json, read_json, capsys
+    ):
+        github.accept = False
+        prd_path, summary = self._import(add_backlog, write_json, "#882")
+        assert summary["assigned"] is False
+        assert "working it unassigned" in capsys.readouterr().err
+        assert [s["description"] for s in read_json(prd_path)["stories"]] == [
+            "Resolve issue #882: Run output waits"
+        ]
+
+    def test_an_issue_already_assigned_is_not_assigned_again(
+        self, add_backlog, github, write_json
+    ):
+        github.issue = rest_issue(assignees=("Test-Bot",))
+        _, summary = self._import(add_backlog, write_json, "#882")
+        assert github.assigns == []
+        assert summary["assigned"] is True and len(summary["added"]) == 1
+
+    def test_a_tracked_issue_is_assigned_but_not_added_twice(
+        self, add_backlog, github, write_json, read_json
+    ):
+        story = make_story("skipped", description="Resolve issue #882: x")
+        prd_path, summary = self._import(add_backlog, write_json, "#882", [story])
+        assert github.assigns == [882]
+        assert summary["added"] == []
+        assert read_json(prd_path)["stories"] == [story]
+
+    def test_a_named_story_id_assigns_its_issue(
+        self, add_backlog, github, write_json, read_json
+    ):
+        story = make_story(id="US-212", description="Resolve issue #882: x")
+        prd_path, summary = self._import(add_backlog, write_json, "us-212", [story])
+        assert github.assigns == [882] and summary["named"] == 882
+        assert read_json(prd_path)["stories"] == [story]
+
+    def test_a_pull_request_is_left_alone(self, add_backlog, github, write_json):
+        github.issue = rest_issue(number=523, pull_request=True)
+        prd_path, summary = self._import(add_backlog, write_json, "#523")
+        assert github.assigns == [] and summary["added"] == []
+
+    def test_a_hint_touches_nothing(self, add_backlog, monkeypatch, write_json):
+        def no_network(number):
+            raise AssertionError("a hint names no issue to fetch")
+
+        monkeypatch.setattr(add_backlog, "fetch_issue", no_network)
+        _, summary = self._import(add_backlog, write_json, "something small")
+        assert summary["named"] is None
+
+    def test_an_unreadable_issue_adds_nothing(
+        self, add_backlog, monkeypatch, write_json, read_json
+    ):
+        monkeypatch.setattr(add_backlog, "fetch_issue", lambda n: None)
+        prd_path, summary = self._import(add_backlog, write_json, "#882")
+        assert "could not read #882" in summary["error"]
+        assert read_json(prd_path)["stories"] == []
+
+    def test_a_dry_run_neither_assigns_nor_writes(
+        self, add_backlog, github, write_json, read_json
+    ):
+        prd_path = write_json("prd.json", {"stories": []})
+        summary = add_backlog.import_named(
+            "#882", prd_path, prd_path + ".missing", dry_run=True
+        )
+        assert github.assigns == []
+        assert len(summary["added"]) == 1
+        assert read_json(prd_path)["stories"] == []
+
+    def test_an_open_issue_whose_archived_stories_merged_is_finished(
+        self, add_backlog, github, write_json, read_json
+    ):
+        merged = make_story(
+            id="US-007", status="merged", prNumber=307, description="issue #882"
+        )
+        prd_path, _ = self._import(add_backlog, write_json, "#882", archived=[merged])
+        [added] = read_json(prd_path)["stories"]
+        assert added["description"].startswith("Finish issue #882")
+        assert "PR #307 (US-007)" in added["description"]
+
+    def test_a_closed_issue_is_not_described_as_left_open(
+        self, add_backlog, github, write_json, read_json
+    ):
+        github.issue = rest_issue(state="closed")
+        merged = make_story(status="merged", prNumber=307, description="issue #882")
+        prd_path, _ = self._import(add_backlog, write_json, "#882", archived=[merged])
+        [added] = read_json(prd_path)["stories"]
+        assert added["description"] == "Resolve issue #882: Run output waits"
+
+    def test_the_selector_then_works_the_named_issue(
+        self, add_backlog, github, select_task, tmp_dir, capsys
+    ):
+        """The point of the import: the same request now selects a story."""
+        request = "https://github.com/test-org/test-project/issues/882"
+        args = select_task_args(
+            tmp_dir,
+            [make_story("pending", id="US-217", description="issue #620")],
+            request,
+        )
+        add_backlog.import_named(request, args.prd, args.prd + ".missing")
+        capsys.readouterr()
+        code = select_task._select_locked(
+            args, args.prd, args.run_state, tmp_dir, in_progress=set()
+        )
+        out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert code == 0, out
+        assert (out["storyId"], out["issueNumber"]) == ("US-218", 882)
+
+
+class TestAddBacklogNamedCommand:
+    """--named end to end, through a stub gh that records what it was asked."""
+
+    def _gh(self, tmp_path, accept=True):
+        issue = json.dumps(rest_issue())
+        after = json.dumps(rest_issue(assignees=("test-bot",) if accept else ()))
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        (bindir / "gh").write_text(
+            "#!/bin/bash\n"
+            f'echo "$*" >> "{tmp_path}/gh.log"\n'
+            'case "$*" in\n'
+            f"  'api repos/test-org/test-project/issues/882') echo '{issue}' ;;\n"
+            "  'api --method POST repos/test-org/test-project/issues/882/assignees "
+            f"-f assignees[]=test-bot') echo '{after}' ;;\n"
+            "  *) exit 1 ;;\n"
+            "esac\n"
+        )
+        (bindir / "gh").chmod(0o755)
+        return bindir
+
+    def _run(self, tmp_path, bindir, request):
+        prd_path = tmp_path / "prd.json"
+        prd_path.write_text('{"stories": []}\n')
+        result = subprocess.run(
+            [
+                sys.executable,
+                ADD_BACKLOG_SCRIPT,
+                "--prd",
+                str(prd_path),
+                "--archived-prd",
+                str(tmp_path / "missing.json"),
+                "--named",
+                request,
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"},
+        )
+        return result, json.loads(prd_path.read_text())["stories"]
+
+    def test_assigns_then_adds(self, tmp_path):
+        bindir = self._gh(tmp_path)
+        result, stories = self._run(tmp_path, bindir, "#882")
+        assert result.returncode == 0, result.stderr
+        assert "Assigned #882 to test-bot" in result.stderr
+        assert json.loads(result.stdout)["assigned"] is True
+        assert [s["description"] for s in stories] == [
+            "Resolve issue #882: Run output waits"
+        ]
+        calls = (tmp_path / "gh.log").read_text().splitlines()
+        assert calls[1].startswith("api --method POST"), calls
+
+    def test_a_refused_assignment_exits_zero_with_the_story(self, tmp_path):
+        bindir = self._gh(tmp_path, accept=False)
+        result, stories = self._run(tmp_path, bindir, "#882")
+        assert result.returncode == 0, result.stderr
+        assert "working it unassigned" in result.stderr
+        assert len(stories) == 1
+
+    def test_an_unreadable_issue_exits_two(self, tmp_path):
+        bindir = self._gh(tmp_path)
+        result, stories = self._run(tmp_path, bindir, "#999")
+        assert result.returncode == 2
+        assert stories == []
+
+
 # ── scripts/lib/triage.py ────────────────────────────────────────────────────
 
 

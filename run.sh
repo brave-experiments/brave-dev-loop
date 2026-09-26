@@ -479,12 +479,20 @@ echo "Resetting run state for fresh start..."
 
 # In auto mode the PRD is a cache — rebuild it from GitHub before selecting a
 # task. Plain Python against the API; no agent is started, so this costs
-# nothing. A curated PRD is authored, so a run leaves it alone entirely; its
+# nothing. A curated PRD is authored, so a run leaves it alone; its
 # backlog top-up belongs to the scheduled job, at a time the operator picked.
 # with-lock keeps two runs starting together from syncing at the same time;
 # the second simply skips a refresh the first has just done.
 if [ "$BOT_PRD_MODE" = "auto" ]; then
   "$SCRIPT_DIR/scripts/with-lock.sh" prd-sync --timeout 900 -- "$SCRIPT_DIR/scripts/sync-prd.sh"
+fi
+
+# An issue named outright is work whoever it is assigned to, in either PRD mode:
+# naming it is the operator authoring the PRD. It is assigned to the bot, and
+# given a story when it has none, so the selector below has one to work.
+if [ -n "$EXTRA_PROMPT" ]; then
+  python3 "$SCRIPT_DIR/scripts/add-backlog-to-prd.py" --named "$EXTRA_PROMPT" >/dev/null \
+    || echo "WARNING: could not import the issue the request names — continuing." >&2
 fi
 
 # Hand back the issues a dead run is still holding. Runs on other machines share

@@ -12,10 +12,13 @@ labels; nothing else about an existing story is modified.
 This is the whole /add-backlog-to-prd sync — no LLM involved. The skill and
 `make backlog` both call this script so there is one implementation.
 
+`--named` handles the issue a run's request names, assigned or not.
+
 Usage:
   scripts/add-backlog-to-prd.py                     # update data/prd.json in place
   scripts/add-backlog-to-prd.py --dry-run           # report only, write nothing
   scripts/add-backlog-to-prd.py --issues-file -     # read issue JSON from stdin
+  scripts/add-backlog-to-prd.py --named '#613'      # the issue a request names
 
 Exit codes:
   0 - success (stories added, or nothing to add)
@@ -46,6 +49,7 @@ from lib.load_config import (
     test_binary,
     test_step,
 )
+from lib.named_target import explicit_target
 from lib.prd_store import prd_lock, save_prd
 
 _config = load_config()
@@ -444,40 +448,75 @@ def without_triage(story):
     return {key: value for key, value in story.items() if key != "triage"}
 
 
-def fetch_assigned_issues():
-    """Fetch open issues assigned to the bot in the issue repository."""
-    args = [
-        "issue",
-        "list",
-        "--repo",
-        _issue_repo,
-        "--assignee",
-        _bot_user,
-        "--state",
-        "open",
-        "--json",
-        ISSUE_FIELDS,
-        "--limit",
-        "100",
-    ]
+def gh_json(args):
+    """Run gh and parse what it prints, or None after saying why on stderr."""
     try:
         result = subprocess.run(
             ["gh"] + args, capture_output=True, text=True, timeout=120
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         print(f"Error running gh {' '.join(args)}: {e}", file=sys.stderr)
-        sys.exit(2)
+        return None
     if result.returncode != 0:
         print(
             f"Error running gh {' '.join(args)}: {result.stderr.strip()}",
             file=sys.stderr,
         )
-        sys.exit(2)
+        return None
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as e:
         print(f"Error parsing gh output: {e}", file=sys.stderr)
+        return None
+
+
+def fetch_assigned_issues():
+    """Fetch open issues assigned to the bot in the issue repository."""
+    issues = gh_json(
+        [
+            "issue",
+            "list",
+            "--repo",
+            _issue_repo,
+            "--assignee",
+            _bot_user,
+            "--state",
+            "open",
+            "--json",
+            ISSUE_FIELDS,
+            "--limit",
+            "100",
+        ]
+    )
+    if issues is None:
         sys.exit(2)
+    return issues
+
+
+def fetch_issue(number):
+    """One issue or pull request as the REST API has it, or None."""
+    return gh_json(["api", f"repos/{_issue_repo}/issues/{number}"])
+
+
+def is_assigned_to_bot(issue):
+    """True when the bot is among a REST issue's assignees."""
+    logins = {(a.get("login") or "").lower() for a in issue.get("assignees") or []}
+    return _bot_user.lower() in logins
+
+
+def assign_bot(number):
+    """Assign the bot; True only if GitHub's answer lists it (a drop still succeeds)."""
+    issue = gh_json(
+        [
+            "api",
+            "--method",
+            "POST",
+            f"repos/{_issue_repo}/issues/{number}/assignees",
+            "-f",
+            f"assignees[]={_bot_user}",
+        ]
+    )
+    return bool(issue) and is_assigned_to_bot(issue)
 
 
 def read_issues_file(path):
@@ -547,6 +586,118 @@ def empty_prd():
     }
 
 
+def highest_id_and_priority(stories):
+    """The largest story number and priority in use, for numbering new ones."""
+    max_id = 0
+    max_priority = 0
+    for story in stories:
+        try:
+            id_num = int(story["id"].split("-")[1])
+        except (KeyError, IndexError, ValueError):
+            id_num = 0
+        max_id = max(max_id, id_num)
+        max_priority = max(max_priority, story.get("priority") or 0)
+    return max_id, max_priority
+
+
+def added_entry(story):
+    """A new story as the JSON summary reports it."""
+    return {
+        "id": story["id"],
+        "issueNumber": story_issue_number(story),
+        "title": story["title"],
+        "status": story["status"],
+        "priority": story["priority"],
+        "triage": story.get("triage") or {},
+    }
+
+
+def works_ref(story, number):
+    """True when a story works this issue or PR, as select-task.py matches one."""
+    return story_issue_number(story) == number or story.get("prNumber") == number
+
+
+def import_named(request, prd_path, archived_path, dry_run=False):
+    """Assign the bot the issue a request names; add a story if the PRD has none."""
+    summary = {"named": None, "assigned": False, "added": [], "dryRun": dry_run}
+    target = explicit_target(request)
+    if target is None:
+        return summary
+    kind, value = target
+    number = value
+    if kind == "story":
+        prd = load_json(prd_path) or empty_prd()
+        story = next(
+            (s for s in prd["stories"] if (s.get("id") or "").upper() == value), None
+        )
+        number = story_issue_number(story) if story else None
+        if number is None:
+            return summary
+    summary["named"] = number
+
+    issue = fetch_issue(number)
+    if issue is None:
+        summary["error"] = f"could not read #{number} from {_issue_repo}"
+        return summary
+    # A pull request's story comes from the pull-request sync, not from here.
+    if issue.get("pull_request"):
+        return summary
+
+    # Best effort: the operator naming the issue is what makes it work, so a
+    # refused assignment still gets its story.
+    if is_assigned_to_bot(issue):
+        summary["assigned"] = True
+    elif dry_run:
+        print(f"Would assign #{number} to {_bot_user}", file=sys.stderr)
+    elif assign_bot(number):
+        summary["assigned"] = True
+        print(f"Assigned #{number} to {_bot_user}", file=sys.stderr)
+    else:
+        print(
+            f"WARNING: could not assign #{number} to {_bot_user} — working it "
+            f"unassigned",
+            file=sys.stderr,
+        )
+
+    if kind == "story":
+        return summary
+
+    # Checked again under the lock: another run naming the same issue may have
+    # added its story while this one was on the network.
+    with prd_lock(prd_path):
+        prd = load_json(prd_path) or empty_prd()
+        stories = prd.setdefault("stories", [])
+        if any(works_ref(s, number) for s in stories):
+            return summary
+        # An open issue whose archived stories all merged is a partial fix.
+        earlier = stories_by_issue(load_json(archived_path)).get(number, ())
+        landed = (
+            earlier
+            if issue.get("state") == "open" and only_partly_landed(earlier)
+            else ()
+        )
+        max_id, max_priority = highest_id_and_priority(stories)
+        story = build_story(
+            max_id + 1,
+            max_priority + 1,
+            {
+                "number": number,
+                "title": issue.get("title") or "",
+                "url": issue.get("html_url"),
+                "labels": issue.get("labels") or [],
+            },
+            landed,
+        )
+        summary["added"] = [added_entry(story)]
+        if not dry_run:
+            stories.append(story)
+            save_prd(prd_path, prd)
+
+    verb = "Would add" if dry_run else "Added"
+    print(f"{verb} {story['id']} for #{number}, named in the request", file=sys.stderr)
+    return summary
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Add stories for open issues assigned to the bot"
@@ -570,11 +721,22 @@ def main():
         action="store_true",
         help="Report what would be added, write nothing",
     )
+    parser.add_argument(
+        "--named",
+        metavar="REQUEST",
+        help="A run's request: assign the bot the issue it names outright, and "
+        "add a story for that issue if the PRD has none",
+    )
     args = parser.parse_args()
     # Acceptance criteria come from the profile, and a story keeps the ones
     # it was written with. Writing them from a profile nobody chose leaves
     # wrong criteria in the PRD long after the config is fixed.
     require_matching_profile(_config, _bot_dir)
+
+    if args.named is not None:
+        summary = import_named(args.named, args.prd, args.archived_prd, args.dry_run)
+        print(json.dumps(summary))
+        return 2 if summary.get("error") else 0
 
     if args.issues_file:
         issues = read_issues_file(args.issues_file)
@@ -597,15 +759,7 @@ def main():
         original_stories = copy.deepcopy(stories)
         existing_count = len(stories)
 
-        max_id = 0
-        max_priority = 0
-        for story in stories:
-            try:
-                id_num = int(story["id"].split("-")[1])
-            except (KeyError, IndexError, ValueError):
-                id_num = 0
-            max_id = max(max_id, id_num)
-            max_priority = max(max_priority, story.get("priority") or 0)
+        max_id, max_priority = highest_id_and_priority(stories)
 
         new_stories = []
         tracked = []
@@ -663,17 +817,7 @@ def main():
     print(
         json.dumps(
             {
-                "added": [
-                    {
-                        "id": s["id"],
-                        "issueNumber": story_issue_number(s),
-                        "title": s["title"],
-                        "status": s["status"],
-                        "priority": s["priority"],
-                        "triage": s.get("triage") or {},
-                    }
-                    for s in new_stories
-                ],
+                "added": [added_entry(s) for s in new_stories],
                 "retriaged": retriaged,
                 "finishing": finishing,
                 "checked": len(issues),

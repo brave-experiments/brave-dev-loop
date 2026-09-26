@@ -31,6 +31,7 @@ from lib import claims as claims_lib
 from lib import issue_lock, slots, triage
 from lib.issue_lock import issue_number
 from lib.load_config import build_research, load_config, load_profile
+from lib.named_target import describe_target, explicit_target
 from lib.prd_store import bot_dir_for, load_prd, prd_lock, save_prd
 
 # The queue never selects these: the story is finished with. "merged" is one of
@@ -228,38 +229,6 @@ def filter_stories(stories, run_state, claimed=None, in_progress=None):
         candidates.append(story)
 
     return candidates
-
-
-# A story, issue or pull request named outright in --extra-prompt. An issue URL
-# or a "#613" is data, not a hint: the operator has already decided which story
-# they want, so finding it is a lookup rather than something to ask a model.
-_TARGET_REF_RE = re.compile(r"(?:issues?|pull)/(\d+)\b|#(\d+)\b")
-_TARGET_STORY_RE = re.compile(r"\bUS-\d+\b", re.IGNORECASE)
-
-
-def explicit_target(extra_prompt):
-    """What --extra-prompt names outright, as a (kind, value) pair, or None.
-
-    ``("story", "US-212")`` for a story id, ``("ref", 613)`` for an issue or
-    pull request number — the two are one kind because "#613" does not say
-    which it is, and a story records both.
-
-    A bare number is deliberately not a target: "./run.sh tui 2 small ones"
-    names nothing, and guessing wrong is exactly what this exists to avoid.
-    """
-    story = _TARGET_STORY_RE.search(extra_prompt)
-    if story:
-        return ("story", story.group(0).upper())
-    ref = _TARGET_REF_RE.search(extra_prompt)
-    if ref:
-        return ("ref", int(ref.group(1) or ref.group(2)))
-    return None
-
-
-def describe_target(target):
-    """A target as the operator typed it, for an error message."""
-    kind, value = target
-    return value if kind == "story" else f"#{value}"
 
 
 def match_target(stories, target, claimed=None):
