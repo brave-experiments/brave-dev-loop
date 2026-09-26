@@ -1,4 +1,4 @@
-.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase unmount-worktrees
+.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules remove-schedules view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase unmount-worktrees
 
 # Prefer .venv when it exists so no target needs an activated shell. PEP 668
 # interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
@@ -57,6 +57,10 @@ setup:
 # Install/update cron schedules
 schedules:
 	./scripts/sync-schedules.sh
+
+# Remove this project's cron schedules, leaving every other crontab line alone
+remove-schedules:
+	./scripts/remove-schedules.sh
 
 # Show schedule summary
 view-schedules:

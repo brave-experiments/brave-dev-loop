@@ -77,5 +77,8 @@ is marked with its `project.name`. Installing one project's schedules replaces
 that project's block and leaves every other block — another project's, or
 anything you wrote yourself — where it is.
 
+`make remove-schedules` is the inverse: it strips this project's block and
+leaves every other line in the crontab alone. `make schedules` puts it back.
+
 `make view-schedules` renders the block this deployment would install and says
 which file produced it.
