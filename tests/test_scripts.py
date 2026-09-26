@@ -4791,6 +4791,122 @@ class TestProjectSchedules:
         assert body.index("if $PRINT_ONLY; then") < body.index("| crontab -")
 
 
+class TestRemoveSchedules:
+    """remove-schedules.sh strips this project's block and nothing else. The
+    suite runs on the machine whose schedules these are, so crontab is a fake
+    on PATH that reads and writes a file in the temp directory."""
+
+    FAKE_CRONTAB = """#!/bin/bash
+f="$FAKE_CRONTAB_FILE"
+case "$1" in
+  -l) if [ -f "$f" ]; then cat "$f"; else echo "no crontab" >&2; exit 1; fi ;;
+  -r) rm -f "$f" ;;
+  -) cat > "$f" ;;
+  *) echo "unexpected: $*" >&2; exit 2 ;;
+esac
+"""
+
+    @staticmethod
+    def _block(project, job):
+        return "\n".join(
+            [
+                f"# === brave-dev-loop ({project}) scheduled jobs ===",
+                job,
+                f"# === end brave-dev-loop ({project}) ===",
+            ]
+        )
+
+    def _run(self, tmp_dir, crontab, *args):
+        bot = TestProjectSchedules._bot_dir(tmp_dir, "brave-core")
+        fake_bin = os.path.join(tmp_dir, "fake-bin")
+        os.makedirs(fake_bin, exist_ok=True)
+        fake = os.path.join(fake_bin, "crontab")
+        with open(fake, "w") as f:
+            f.write(self.FAKE_CRONTAB)
+        os.chmod(fake, 0o755)
+        tab = os.path.join(tmp_dir, "crontab.txt")
+        if crontab is None:
+            if os.path.exists(tab):
+                os.remove(tab)
+        else:
+            with open(tab, "w") as f:
+                f.write(crontab + "\n")
+        env = dict(os.environ)
+        env["PATH"] = fake_bin + os.pathsep + env.get("PATH", "")
+        env["FAKE_CRONTAB_FILE"] = tab
+        result = subprocess.run(
+            [os.path.join(bot, "scripts", "remove-schedules.sh"), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        after = None
+        if os.path.exists(tab):
+            with open(tab) as f:
+                after = f.read()
+        return result.stdout, after
+
+    def test_this_projects_block_is_removed(self, tmp_dir):
+        crontab = "\n".join(
+            ["0 4 * * * backup", self._block("brave-core", "0 1 * * * mine")]
+        )
+        _, after = self._run(tmp_dir, crontab)
+        assert "mine" not in after
+        assert "brave-dev-loop (brave-core)" not in after
+        assert "backup" in after
+
+    def test_another_projects_block_survives(self, tmp_dir):
+        crontab = "\n".join(
+            [
+                self._block("bravebot", "0 3 * * * theirs"),
+                self._block("brave-core", "0 1 * * * mine"),
+            ]
+        )
+        _, after = self._run(tmp_dir, crontab)
+        assert "theirs" in after and "mine" not in after
+
+    def test_a_block_from_the_former_repo_name_is_removed_too(self, tmp_dir):
+        crontab = "\n".join(
+            [
+                "# === brave-dev-bot (brave-core) scheduled jobs ===",
+                "0 1 * * * old",
+                "# === end brave-dev-bot (brave-core) ===",
+                "0 4 * * * backup",
+            ]
+        )
+        _, after = self._run(tmp_dir, crontab)
+        assert "old" not in after and "backup" in after
+
+    def test_a_crontab_left_empty_is_removed(self, tmp_dir):
+        _, after = self._run(tmp_dir, self._block("brave-core", "0 1 * * * mine"))
+        assert after is None
+
+    def test_nothing_installed_is_not_an_error(self, tmp_dir):
+        out, after = self._run(tmp_dir, None)
+        assert after is None
+        assert "No cron jobs installed" in out
+
+    def test_a_crontab_without_this_project_is_left_as_it_was(self, tmp_dir):
+        crontab = self._block("bravebot", "0 3 * * * theirs")
+        out, after = self._run(tmp_dir, crontab)
+        assert after == crontab + "\n"
+        assert "No cron jobs installed" in out
+
+    def test_printing_touches_no_crontab(self, tmp_dir):
+        crontab = "\n".join(
+            ["0 4 * * * backup", self._block("brave-core", "0 1 * * * mine")]
+        )
+        out, after = self._run(tmp_dir, crontab, "--print")
+        assert after == crontab + "\n"
+        assert "backup" in out and "mine" not in out
+
+    def test_it_uses_the_shared_stripper(self):
+        """The marker spelling and its history belong in one place."""
+        with open(os.path.join(SCRIPT_DIR, "remove-schedules.sh")) as f:
+            assert "bot_strip_cron_blocks" in f.read()
+
+
 class TestPythonFileLock:
     """lib/file_lock.py and lib/repo_lock.py: the shell locks, for Python.
 

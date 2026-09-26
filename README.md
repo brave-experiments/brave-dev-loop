@@ -104,6 +104,7 @@ leaves the ordinary queue in charge.
 ```bash
 tail -f data/progress.txt        # watch progress
 make schedules                   # install/update this project's cron jobs
+make remove-schedules            # remove this project's cron jobs
 make view-schedules              # show the current schedule
 make unmount-worktrees           # remove idle story worktrees (ALL=1 for all)
 ./scripts/reset-run-state.sh     # reset run state between runs
