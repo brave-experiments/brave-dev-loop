@@ -32,12 +32,23 @@ fi
 
 # Neither sync is fatal: a GitHub hiccup should not cancel the run, which can
 # still work the stories already in the PRD.
-python3 "$SCRIPT_DIR/add-backlog-to-prd.py" || echo "WARNING: issue sync failed — continuing with the PRD as it stands." >&2
-
+#
+# In auto mode the issue sync runs after the status syncs, not before them. A
+# `Part of` PR that a maintainer merged between runs is only retired to
+# "merged" by the merged-PR sync, and the issue sync only adds the story that
+# finishes its issue once every story on that issue is merged. Run in the
+# other order, that follow-up story waited a whole extra run.sh. Running after
+# the bot-PR sync also means an issue whose open PR was just adopted counts as
+# tracked, instead of getting a second, pending story.
 if [ "$BOT_PRD_MODE" = "auto" ]; then
   python3 "$SCRIPT_DIR/sync-bot-prs-to-prd.py" || echo "WARNING: PR sync failed — continuing with the cached PRD." >&2
   python3 "$SCRIPT_DIR/sync-merged-prs-to-prd.py" || echo "WARNING: merged-PR sync failed — continuing with the cached PRD." >&2
   python3 "$SCRIPT_DIR/sync-closed-issues-to-prd.py" || echo "WARNING: closed-issue sync failed — continuing with the cached PRD." >&2
+fi
+
+python3 "$SCRIPT_DIR/add-backlog-to-prd.py" || echo "WARNING: issue sync failed — continuing with the PRD as it stands." >&2
+
+if [ "$BOT_PRD_MODE" = "auto" ]; then
   # Last, so the stories the two retiring syncs just finished go too. A cached
   # PRD is rebuilt from GitHub every run, so a finished story left in it is only
   # something for the selector to filter and a reader to scroll past; the two

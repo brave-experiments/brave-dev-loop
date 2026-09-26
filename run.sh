@@ -926,6 +926,30 @@ Carry on with ./$BOT_DIRNAME/docs/workflow-pending.md from where you stopped, re
   bot_set_terminal_title \
     "$(bot_story_title "$STORY_ISSUE" "$END_PR_NUMBER" "$STORY_ID" "$STORY_TITLE")"
 
+  # A story this iteration moved to "merged" may have landed a `Part of` PR,
+  # leaving its issue open with the rest of the work unowned. The backlog sync
+  # adds that follow-up story, but otherwise only at the start of the next
+  # run.sh, so the next split-out part of the issue waited a whole run. Add it
+  # now so this run can select it. Auto mode only: a run leaves a curated PRD
+  # alone. Plain Python against the API; no agent, no tokens.
+  if [ "$BOT_PRD_MODE" = "auto" ] && [ "$END_STATUS" = "merged" ] && [ "$STORY_STATUS" != "merged" ]; then
+    BACKLOG_JSON=$("$SCRIPT_DIR/scripts/with-lock.sh" prd-sync --timeout 900 -- \
+      python3 "$SCRIPT_DIR/scripts/add-backlog-to-prd.py" 2>/dev/null) \
+      || echo "WARNING: could not re-sync the backlog after $STORY_ID merged — continuing." >&2
+    ADDED_COUNT=$(echo "$BACKLOG_JSON" | tail -1 | jq -r '(.added // []) | length' 2>/dev/null || echo 0)
+    ADDED_COUNT=$((ADDED_COUNT + 0))
+    if [ "$ADDED_COUNT" -gt 0 ]; then
+      echo "$STORY_ID merged: added $ADDED_COUNT follow-up story(ies) for work its issue still has open:"
+      echo "$BACKLOG_JSON" | tail -1 | jq -r '.added[] | "  \(.id): \(.title) (#\(.issueNumber))"' 2>/dev/null || true
+      # The cap was the number of stories selectable when the run started, and
+      # these were not among them. Leave room for them rather than stopping
+      # with the follow-up untouched.
+      if [ "$CAPPED" = true ]; then
+        MAX_ITERATIONS=$((MAX_ITERATIONS + ADDED_COUNT))
+      fi
+    fi
+  fi
+
   # --- Comparison run: steps 2 and 3 of this same turn (--comparison-run only) ---
   #
   # Step 1 was the base run above. Step 2 works the same story from scratch with
