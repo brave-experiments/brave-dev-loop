@@ -96,10 +96,12 @@ Anything after `tui` chooses the story. An issue URL, a pull request URL, a
 whatever the ordinary queue thinks of it. That includes one this run already
 worked, and one that is skipped, invalid or merged: naming it puts it back to
 pending, keeping the old status and reason in the story's `requeuedFrom`, and a
-merged one starts a fresh branch and PR. Where it cannot be worked (no story
-works that issue, or another run holds it) the run stops and says which story
-and why. Any other wording is a hint the model reads, and a hint it cannot use
-leaves the ordinary queue in charge.
+merged one starts a fresh branch and PR. A named issue is assigned to the bot,
+and one the PRD has no story for gets one first, whoever it was assigned to;
+the story is worked even if GitHub refuses the assignment. Where it cannot be
+worked (a pull request no story tracks, or a story another run holds) the run
+stops and says which story and why. Any other wording is a hint the model reads,
+and a hint it cannot use leaves the ordinary queue in charge.
 
 ```bash
 tail -f data/progress.txt        # watch progress
