@@ -3837,7 +3837,34 @@ class TestPrdMode:
         the auto gate, every curated deployment silently stops picking up newly
         assigned work the day its schedules are re-synced."""
         body = self._sync_prd()
-        assert body.index("add-backlog-to-prd.py") < body.index(self.AUTO_GATE)
+        line = next(
+            ln
+            for ln in body.splitlines()
+            if 'python3 "$SCRIPT_DIR/add-backlog-to-prd.py"' in ln
+        )
+        # Unindented: at top level, outside every `if` block.
+        assert line.startswith('python3 "$SCRIPT_DIR/add-backlog-to-prd.py"'), line
+
+    def test_backlog_sync_follows_the_status_syncs(self):
+        """A `Part of` PR merged between runs is retired by the merged-PR sync,
+        and only then does the backlog sync see its issue as partly landed and
+        add the story for the rest. The other way round, that story waits a
+        whole run."""
+        body = self._sync_prd()
+        backlog = body.index('python3 "$SCRIPT_DIR/add-backlog-to-prd.py"')
+        for name in ("sync-bot-prs-to-prd.py", "sync-merged-prs-to-prd.py"):
+            assert body.index(f'python3 "$SCRIPT_DIR/{name}"') < backlog, name
+
+    def test_run_adds_follow_up_story_after_a_merge_in_the_loop(self):
+        """An iteration that takes a story to merged re-runs the backlog sync,
+        so the next split-out part of a partly fixed issue is selectable in
+        this run rather than the next one."""
+        with open(os.path.join(os.path.dirname(__file__), os.pardir, "run.sh")) as f:
+            body = f.read()
+        hook = body.index('[ "$END_STATUS" = "merged" ]')
+        assert body.index("END_STATUS=$(jq") < hook
+        assert "add-backlog-to-prd.py" in body[hook : hook + 600]
+        assert '[ "$BOT_PRD_MODE" = "auto" ]' in body[hook - 60 : hook]
 
     def test_a_run_leaves_a_curated_prd_alone(self):
         """Appending is the scheduled job's business, at an hour the operator
