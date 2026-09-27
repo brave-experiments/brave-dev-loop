@@ -36,22 +36,50 @@ in CI.
 
 ## Presubmit
 
-There is no `presubmit` command. `make check-all` is the equivalent: it runs
-every check any CI enforces, which is the four jobs in `.github/workflows/ci.yml`
-plus the organization-level security scan.
+There is no `presubmit` command. bravebot's CI decides which of its jobs a pull
+request needs from the paths it touches, with `contrib/affected-checks.py`, and
+the same script decides the local gates:
+
+```sh
+make check-affected                          # the host gates this branch needs, run
+python3 contrib/affected-checks.py           # the same list and the reason for each, run nothing
+python3 contrib/affected-checks.py --containers  # the Docker gates it needs
+```
+
+`check-affected` measures the branch against its merge base with
+`upstream/main`: its commits, its uncommitted edits and its untracked files. It
+always runs `check-scripts`, `check-spec`, `check-security`, `check-locales`,
+`check-versions` and `check-reviewdog`, which take seconds and run on every CI
+change too, then whichever of `check`, `check-ui`, `check-docs`, `check-npm` and
+`check-deps` a touched path could fail. A change to bravebot's Makefile, its
+workflows or the classifier needs every gate there is, as does a path no rule
+names. It prints each area and the first path that needs it before running
+anything, and passes `-k`, so one run reports every failing gate.
+
+The Docker gates are `check-msrv`, `check-windows` and `check-linux` for any
+change to Rust, and none for a branch that touches no Rust.
+
+Three of the gates it can choose are worth knowing about before they run:
+
+- **check-ui** builds the two bridge crates, typechecks and builds the desktop
+  app, runs its Node tests and drives the Electron walkthrough, which on macOS
+  opens a window in the logged-in session. It runs for a change under `ui/` and
+  for one to any crate the desktop app builds, which is every crate but `cli`
+  and `tui`.
+- **check-deps** is `cargo deny` over the lockfile. Its first run builds
+  cargo-deny into `~/.cache/bravebot-deny`, which takes a few minutes once.
+- **check-windows** is clippy for `x86_64-pc-windows-gnu` over every target,
+  which is CI's `Lint the Windows target` job.
+
+For the inner loop, run a single target:
 
 ```sh
 make check           # fmt --check, clippy -D warnings, tests, toolchain age
 make check-spec      # the mechanical docs/specs check
 make check-locales   # every catalog against the reference, and the gap file
-make check-npm       # npm ci --ignore-scripts and the lockfile lint
-make check-msrv      # build against the declared minimum Rust (Docker)
-make check-reviewdog # the brave/security-action scan (this branch's changes)
-make check-all       # every check CI enforces, not only the ones listed here
-make check-linux     # the same fmt/clippy/tests on Linux stable (Docker)
+make check-ui        # the desktop app, its Node tests and the walkthrough
+make check-all       # every gate, whatever the branch touches
 ```
-
-`make check` is the inner loop. Run the rest before pushing.
 
 `check-locales` reads the catalogs against each other — every message the
 reference has, the arguments each one takes, the recorded gaps — and nothing
@@ -68,26 +96,36 @@ line. Start the local gates, self-review the diff while they run, then collect:
 
 ```sh
 LOGS=$($BOT_DIR/scripts/wait-gate.sh start --dir "$PWD" \
-  "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check" "make check-spec" "make check-npm")
+  "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-affected")
 #   ... run the self-review here: it reads the same tree and writes nothing ...
 $BOT_DIR/scripts/wait-gate.sh wait "$LOGS"
 ```
+
+The log opens with the areas and the path behind each, so read that first when a
+gate fails: it says which gate the failure is in, and why that gate ran.
 
 Each gate is a shell command, so the build's environment goes in the string:
 worktrees have no `.envrc`, and without `BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1` the
 build refuses to start.
 
-**Give the Docker gates an invocation to themselves.** `check-msrv` and
-`check-linux` start by copying the whole worktree into the container, which takes
-long enough to matter and fails outright if something writes into the tree while
-it reads. `make check` writing `target/` is exactly that, so run the two Docker
-gates together and never alongside a local one:
+**Give the Docker gates an invocation to themselves.** Each one starts by copying
+the whole worktree into its container, which takes long enough to matter and
+fails outright if something writes into the tree while it reads. `make check`
+writing `target/` is exactly that, so once the host gates are done, run the ones
+`python3 contrib/affected-checks.py --containers` prints together, and never
+alongside a local one. For a change to Rust that is all three:
 
 ```sh
 $BOT_DIR/scripts/wait-gate.sh run --dir "$PWD" \
   "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-msrv" \
+  "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-windows" \
   "BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-linux"
 ```
+
+When it prints nothing, there is no Docker gate to run. When it exits non-zero
+it could not diff the branch, and that is a failed gate: fetch `upstream` and ask
+again. `make check-affected-containers` runs the same list one gate after another,
+which is slower.
 
 Exit 2 means the timeout expired with a gate still running; the container is still
 going, so `wait` on the log directory again rather than starting it over.
@@ -95,17 +133,16 @@ going, so `wait` on the log directory again rather than starting it over.
 - **check-reviewdog** drives the same opengrep and npm-audit runners the
   organization workflow drives, so a finding here is a comment the bot would
   post on the PR. `check-reviewdog-full` scans the whole tree and reports plenty
-  that predates the branch — the branch-scoped one is the gate. Run it as
-  `contrib/check-reviewdog.sh --base upstream/main`: its own default base is
-  `origin/main`, which is the fork's stale ref here (see
+  that predates the branch — the branch-scoped one is the gate. It measures from
+  `upstream/main` wherever that ref exists, as `check-affected` does. `origin/main`
+  is the fork's stale ref here (see
   [repo.md](./repo.md#entering-the-worktree--the-first-step-of-every-iteration)),
-  so the scan takes its baseline from a commit the branch is not based on, covers
-  every commit the fork is behind, and reports whatever it finds in them against
-  the branch.
-- **check-linux** is not a CI job; it is the coverage a macOS host lacks. Run it
-  whenever the change touches platform-specific code, and for anything clippy
-  might lint differently on a newer stable.
-- **check-msrv** and **check-linux** both need Docker running.
+  and measured from that, the scan would cover every commit the fork is behind
+  and report whatever it found in them against the branch.
+- **check-linux** is not a CI job; it is the coverage a macOS host lacks, since
+  a macOS host never compiles the Linux backend and clippy gains lints between
+  releases.
+- **check-msrv**, **check-windows** and **check-linux** all need Docker running.
 
 ### check-linux flakes on `crates/agent/tests/turn.rs`
 
