@@ -50,12 +50,8 @@
     "{testStep}",
     "Hold the final diff to agents/skills/testing-preflight/SKILL.md: for every new, changed or relaxed test, name the plausible wrong implementation it rejects, then restore that fault in the tree, watch that test fail for that reason, restore the tree and re-run it (must pass; required for a change to a security boundary, cancellation, concurrency or usage accounting, and skipped only with the reason written down)",
     "Carry that evidence into the pull request body: per behaviour, the test, the fault it rejects, and whether the failure was demonstrated or the coverage is reasoned only — a passing test count is not evidence that a test can fail (must pass)",
-    "Run make check (cargo fmt --check, cargo clippy --all-targets --all-features -D warnings, cargo test --all --locked, toolchain age) and fix every failure (must pass)",
-    "Run make check-spec — the mechanical docs/specs check: clause numbering, the tests each clause names, the paths it governs (must pass)",
-    "Run make check-npm — npm ci --ignore-scripts and the lockfile lint, as the npm-lockfile CI job does (must pass)",
-    "Run make check-reviewdog — the brave/security-action scan that comments on the PR, over this branch's changes; fix every finding it reports (must pass)",
-    "Run make check-msrv — cargo build --all --locked in a container pinned to the declared minimum Rust, as the minimum-toolchain CI job does (must pass; needs Docker)",
-    "Run make check-linux — fmt, clippy -D warnings and tests on Linux under current stable, which a macOS host never covers (must pass; needs Docker)",
+    "Run BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-affected — the host gates this branch needs, chosen from the paths it touches the way bravebot's CI chooses its jobs: check-scripts, check-spec, check-security, check-locales, check-versions and check-reviewdog every time, then make check (fmt --check, clippy -D warnings, tests, toolchain age), check-ui, check-docs, check-npm and check-deps wherever a touched path could fail them. It prints each area and the path that needs it, and keeps going past a failure; fix every failure and every finding check-reviewdog reports (must pass)",
+    "Run the Docker gates python3 contrib/affected-checks.py --containers names — check-msrv, check-windows and check-linux for any change to Rust, none otherwise — together in one wait-gate invocation of their own, each as BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make <target>; the classifier exiting non-zero is a failed gate, not an empty list (must pass; needs Docker)",
     "Run cargo fmt --all one final time; if it makes any changes, amend the last commit with the formatting fixes"
   ],
   "testSteps": {

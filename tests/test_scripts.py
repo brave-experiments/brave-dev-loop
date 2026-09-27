@@ -3628,24 +3628,29 @@ class TestBravebotProfile:
 
         return load_profile({"project": {"profile": "bravebot"}})
 
-    def test_covers_every_ci_enforced_check(self):
-        """`make check-all` is check + check-spec + check-npm + check-msrv +
-        check-reviewdog. Each has to appear, or a story can pass here and fail
-        in CI."""
-        blob = " ".join(self._profile()["validations"])
-        for target in (
-            "make check",
-            "make check-spec",
-            "make check-npm",
-            "make check-msrv",
-            "make check-reviewdog",
-        ):
-            assert target in blob, target
+    HOST = re.compile(r"make check-affected(?!-)")
+    CONTAINERS = "contrib/affected-checks.py --containers"
 
-    def test_covers_linux(self):
-        """A macOS host never compiles the Linux backend, and clippy gains
-        lints between releases."""
-        assert "make check-linux" in " ".join(self._profile()["validations"])
+    def test_runs_the_gates_bravebot_chooses_for_the_diff(self):
+        """bravebot's CI runs a job only where a touched path could fail it,
+        and its contrib/affected-checks.py makes the same choice for the
+        local gates. Naming the gates here instead would drift from what CI
+        runs, so a story could pass here and fail there."""
+        validations = self._profile()["validations"]
+        host = [v for v in validations if self.HOST.search(v)]
+        containers = [v for v in validations if self.CONTAINERS in v]
+        assert len(host) == 1, host
+        assert len(containers) == 1, containers
+        for step in (*host, *containers):
+            assert "(must pass" in step, step
+
+    def test_docker_gates_run_in_a_step_of_their_own(self):
+        """Each Docker gate copies the worktree into its container, and fails
+        when a host gate writes the tree while it reads."""
+        for step in self._profile()["validations"]:
+            assert not (self.HOST.search(step) and self.CONTAINERS in step), step
+            if self.CONTAINERS in step:
+                assert "wait-gate invocation of their own" in step, step
 
     def test_has_no_chromium_assumptions(self):
         blob = json.dumps(self._profile()).lower()
