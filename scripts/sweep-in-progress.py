@@ -5,10 +5,10 @@ A run labels the issue it is working so a run on another machine filters that
 story out (scripts/lib/issue_lock.py). Nothing refreshes the label and a
 machine that dies never removes it, so run.sh calls this at start: a label
 older than --max-age-hours means no run has that issue any more, whichever
-machine put it there.
+machine put it there. On a closed issue the label goes whatever its age.
 
-Only issues assigned to the bot are ever touched. Python and gh only; no agent
-is started, so this costs no tokens.
+Only labels the bot applied are ever touched. Python and gh only; no agent is
+started, so this costs no tokens.
 
 Usage:
   scripts/sweep-in-progress.py                    # release anything over 6h
@@ -54,7 +54,9 @@ def main():
         args.max_age_hours, config, bot_dir, dry_run=args.dry_run
     )
     if not released:
-        print(f"No {label} label is older than {args.max_age_hours}h.")
+        print(
+            f"No {label} label is older than {args.max_age_hours}h or on a closed issue."
+        )
         return 0
 
     verb = "Would release" if args.dry_run else "Released"

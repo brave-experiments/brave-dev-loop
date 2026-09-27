@@ -1983,6 +1983,49 @@ class TestSyncMergedRun:
         )
         assert sync_merged_prs.main() == 2
 
+    def _released(self, sync_merged_prs, monkeypatch, tmp_path, *extra):
+        released = []
+        monkeypatch.setattr(
+            sync_merged_prs.issue_lock,
+            "release",
+            lambda issue, *a, **kw: released.append(issue) or True,
+        )
+        self._run(
+            sync_merged_prs,
+            monkeypatch,
+            tmp_path,
+            [
+                make_story(
+                    status="pushed",
+                    id="US-001",
+                    prNumber=228,
+                    description="Resolve issue #724",
+                ),
+                make_story(
+                    status="pushed",
+                    id="US-002",
+                    prNumber=219,
+                    description="Resolve issue #725",
+                ),
+            ],
+            {
+                228: {"state": "MERGED", "mergedAt": "2026-09-11T18:00:04Z"},
+                219: {"state": "OPEN", "mergedAt": None},
+            },
+            *extra,
+        )
+        return released
+
+    def test_retiring_a_story_releases_its_in_progress_label(
+        self, sync_merged_prs, monkeypatch, tmp_path
+    ):
+        # Archived next, so the claim release at the end of the iteration
+        # working it can no longer find the issue in the PRD.
+        assert self._released(sync_merged_prs, monkeypatch, tmp_path) == [724]
+
+    def test_a_dry_run_releases_no_label(self, sync_merged_prs, monkeypatch, tmp_path):
+        assert self._released(sync_merged_prs, monkeypatch, tmp_path, "--dry-run") == []
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # sync-closed-issues-to-prd.py
@@ -2157,6 +2200,38 @@ class TestSyncClosedRun:
             {116: {"state": "OPEN", "stateReason": None, "closedAt": None}},
         )
         assert stories[0]["status"] == "pending"
+
+    def _released(self, sync_closed_issues, monkeypatch, tmp_path, *extra):
+        released = []
+        monkeypatch.setattr(
+            sync_closed_issues.issue_lock,
+            "release",
+            lambda issue, *a, **kw: released.append(issue) or True,
+        )
+        self._run(
+            sync_closed_issues,
+            monkeypatch,
+            tmp_path,
+            [story_for_issue(116, id="US-001"), story_for_issue(117, id="US-002")],
+            {
+                116: closed_issue(),
+                117: {"state": "OPEN", "stateReason": None, "closedAt": None},
+            },
+            *extra,
+        )
+        return released
+
+    def test_retiring_a_story_releases_its_in_progress_label(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        assert self._released(sync_closed_issues, monkeypatch, tmp_path) == [116]
+
+    def test_a_dry_run_releases_no_label(
+        self, sync_closed_issues, monkeypatch, tmp_path
+    ):
+        assert (
+            self._released(sync_closed_issues, monkeypatch, tmp_path, "--dry-run") == []
+        )
 
     def test_an_issue_github_cannot_be_asked_about_is_left_alone(
         self, sync_closed_issues, monkeypatch, tmp_path

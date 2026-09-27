@@ -8,15 +8,16 @@ label on the issue is the one piece of claim state every machine reads.
 
 The label mirrors the claim. select-task.py puts it on when it claims a story,
 claims.py takes it off when the claim is handed back at the end of an iteration,
-and update-prd-status.py takes it off as soon as a story is finished with. No
-agent is involved in any of it.
+and whatever finishes a story takes it off then: update-prd-status.py, and the
+two syncs that retire a story from GitHub. No agent is involved in any of it.
 
 What the label cannot borrow from a claim is the kernel. A claim counts only
 while its run holds a slot lock, so killing a run frees its stories at once —
 but a lock on one machine says nothing to the other two, and a machine that
 dies never removes its labels. run.sh therefore drops the labels older than
 the age limit at start: that is the whole reason the age limit exists, and why
-it can be generous rather than tuned.
+it can be generous rather than tuned. A closed issue needs no age limit, since
+nothing selects one, so its label goes at the first sweep.
 
 The label speaks for other machines only. Where this machine's claims file has
 something to say about a story, that wins: a label is a weaker claim than the
@@ -138,7 +139,7 @@ def in_progress(config=None, bot_dir=None):
 
     Deliberately not filtered by assignee: the label means somebody is working
     the issue, and that is true whoever it is assigned to. `stale()` is the one
-    that narrows to the bot's own issues, because that one removes labels.
+    that narrows to the bot's own labels, because that one removes them.
 
     This is the index-backed read, so it misses a label applied in the last few
     seconds. It is the right shape for filtering a whole PRD in one call, and
@@ -230,8 +231,8 @@ def release(issue, config=None, bot_dir=None):
     )
 
 
-def labelled_at(issue, label, config=None):
-    """When ``label`` was last applied to ``issue``, or None if unreadable.
+def last_labelled(issue, label, config=None):
+    """(when, login) of the newest application of ``label``, or None if unreadable.
 
     The newest `labeled` event wins: a label taken off and put back on is a
     fresh claim, not the age of the first one.
@@ -244,7 +245,8 @@ def labelled_at(issue, label, config=None):
             f"repos/{require_config(config, 'project.issueRepository')}"
             f"/issues/{issue}/events",
             "--jq",
-            '.[] | select(.event == "labeled") | {name: .label.name, at: .created_at}',
+            '.[] | select(.event == "labeled")'
+            " | {name: .label.name, at: .created_at, by: .actor.login}",
         ]
     )
     if out is None:
@@ -260,39 +262,45 @@ def labelled_at(issue, label, config=None):
         if event.get("name") == label:
             when = _parse_iso(event.get("at"))
             if when:
-                applied.append(when)
+                applied.append((when, (event.get("by") or "").lower()))
     return max(applied) if applied else None
 
 
 def stale(max_age_hours=DEFAULT_MAX_AGE_HOURS, config=None, bot_dir=None, now=None):
-    """Issues whose in-progress label has stood longer than the age limit.
+    """Issues whose in-progress label is the bot's and nobody is working.
 
-    Only issues assigned to the bot are considered. The label is the bot's own
-    bookkeeping; the same name on somebody else's issue is a human saying
-    something the loop has no business undoing.
+    Nobody is working it when the label has stood past the age limit, or at
+    once when the issue is closed: selection only reads open issues, so the
+    label on a closed one guards nothing. That is where a finished story leaves
+    it when a merge closes the issue before anything here releases it.
 
-    An issue whose label has no readable age counts as stale. The label is only
-    ever meant to be a claim held for hours, so the failure to prefer is the one
-    that hands the issue back — the other parks it in nobody's queue for good.
+    Only labels the bot applied are considered, judged by who applied the
+    newest one rather than by assignee: the bot labels whatever story it works,
+    and a maintainer taking the issue over does not make the bot's label theirs.
+    The same name put on by a human is not the loop's to undo.
+
+    A label with no readable event counts as stale where the issue is assigned
+    to the bot. The label is only ever meant to be a claim held for hours, so
+    the failure to prefer is the one that hands the issue back — the other parks
+    it in nobody's queue for good.
     """
     label = label_name(config, bot_dir)
     if not label:
         return []
     config = _config(config)
+    bot = require_config(config, "bot.username").lower()
     out = _gh(
         [
             "issue",
             "list",
             "--repo",
             require_config(config, "project.issueRepository"),
-            "--assignee",
-            require_config(config, "bot.username"),
             "--label",
             label,
             "--state",
-            "open",
+            "all",
             "--json",
-            "number",
+            "number,state,assignees",
             "--limit",
             "200",
         ]
@@ -300,23 +308,36 @@ def stale(max_age_hours=DEFAULT_MAX_AGE_HOURS, config=None, bot_dir=None, now=No
     if not out:
         return []
     try:
-        numbers = sorted(int(issue["number"]) for issue in json.loads(out))
+        issues = sorted(
+            (
+                int(issue["number"]),
+                issue.get("state") == "CLOSED",
+                bot
+                in {
+                    (a.get("login") or "").lower() for a in issue.get("assignees") or []
+                },
+            )
+            for issue in json.loads(out)
+        )
     except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
         print(f"WARNING: could not read the {label} issue list: {e}", file=sys.stderr)
         return []
 
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(hours=max_age_hours)
     expired = []
-    for number in numbers:
-        applied = labelled_at(number, label, config)
+    for number, closed, assigned in issues:
+        applied = last_labelled(number, label, config)
         if applied is None:
-            print(
-                f"WARNING: issue #{number} carries {label} with no readable "
-                f"labelled date — treating it as abandoned.",
-                file=sys.stderr,
-            )
-            expired.append(number)
-        elif applied < cutoff:
+            if assigned:
+                print(
+                    f"WARNING: issue #{number} carries {label} with no readable "
+                    f"labelled date — treating it as abandoned.",
+                    file=sys.stderr,
+                )
+                expired.append(number)
+            continue
+        when, by = applied
+        if by == bot and (closed or when < cutoff):
             expired.append(number)
     return expired
 

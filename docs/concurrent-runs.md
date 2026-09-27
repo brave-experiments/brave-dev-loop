@@ -94,15 +94,20 @@ deployments work one GitHub backlog from their own bot directories. Each has
 its own claims file and its own PRD, so a claim here is invisible there — and
 all of them select from the same issues. `select-task.py` therefore labels the
 issue when it claims the story, skips every issue already wearing that label
-whoever put it there, and `claims.py` takes it off with the claim. It is `gh`
-and Python throughout; no agent reads or writes it.
+whoever put it there, and `claims.py` takes it off with the claim. Whatever
+finishes a story takes it off too: `update-prd-status.py` on a terminal status,
+and the merged-PR and closed-issue syncs when they retire one. It is `gh` and
+Python throughout; no agent reads or writes it.
 
 The label cannot borrow the kernel the way a claim does. A lock on one machine
 says nothing to the others, and a machine that dies never removes its labels,
 so `run.sh` drops the labels older than 6 hours at start (`--max-age-hours` to
 change it, `--dry-run` to look first). That is the whole reason an age limit
-exists. Only issues assigned to the bot are swept: the same label on a human's
-issue is not the loop's to undo.
+exists. A closed issue is never selected, so the label on one goes at the first
+sweep whatever its age. Only labels the bot applied are swept, judged by the
+newest `labeled` event rather than the assignee: the same label put on by a
+human is not the loop's to undo, but a maintainer taking over an issue the bot
+labelled does not make the label theirs.
 
 ```bash
 ./scripts/sweep-in-progress.py --dry-run   # what start-up would hand back
