@@ -37,7 +37,8 @@ class Gh:
 
     ``issues`` is what `issue list` returns (None to fail the read), ``labels``
     maps an issue number to the labels `issue view` finds on it, and ``events``
-    maps an issue number to the (label, timestamp) pairs its event log holds.
+    maps an issue number to the (label, timestamp[, actor]) entries its event
+    log holds; the actor defaults to the bot.
     """
 
     def __init__(self, issues="[]", events=None, labels=None):
@@ -55,8 +56,10 @@ class Gh:
         if args[0] == "api":
             number = int(args[2].rsplit("/", 2)[1])
             lines = [
-                json.dumps({"name": name, "at": at})
-                for name, at in self.events.get(number, [])
+                json.dumps(
+                    {"name": e[0], "at": e[1], "by": (e[2:] or ("test-bot",))[0]}
+                )
+                for e in self.events.get(number, [])
             ]
             return "\n".join(lines) + "\n" if lines else ""
         return ""
@@ -205,37 +208,53 @@ class TestRelease:
         assert fake.calls == []
 
 
-class TestLabelledAt:
+def _parsed(ts):
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+class TestLastLabelled:
     def test_the_newest_application_wins(self, gh):
         """A label taken off and put back on is a fresh claim, not an old one."""
         gh(
             events={
                 101: [
-                    ("bot/in-progress", _hours_ago(30)),
+                    ("bot/in-progress", _hours_ago(30), "someone"),
                     ("bot/in-progress", _hours_ago(1)),
                 ]
             }
         )
-        applied = issue_lock.labelled_at(101, "bot/in-progress", ON)
-        assert applied == datetime.fromisoformat(_hours_ago(1).replace("Z", "+00:00"))
+        applied = issue_lock.last_labelled(101, "bot/in-progress", ON)
+        assert applied == (_parsed(_hours_ago(1)), "test-bot")
+
+    def test_the_login_is_lowercased(self, gh):
+        gh(events={101: [("bot/in-progress", _hours_ago(1), "Test-Bot")]})
+        assert issue_lock.last_labelled(101, "bot/in-progress", ON)[1] == "test-bot"
 
     def test_other_labels_are_ignored(self, gh):
         gh(events={101: [("bug", _hours_ago(1))]})
-        assert issue_lock.labelled_at(101, "bot/in-progress", ON) is None
+        assert issue_lock.last_labelled(101, "bot/in-progress", ON) is None
 
     def test_none_when_the_issue_has_no_events(self, gh):
         gh(events={})
-        assert issue_lock.labelled_at(101, "bot/in-progress", ON) is None
+        assert issue_lock.last_labelled(101, "bot/in-progress", ON) is None
 
     def test_none_when_the_read_fails(self, monkeypatch):
         monkeypatch.setattr(issue_lock, "_gh", lambda args, timeout=120: None)
-        assert issue_lock.labelled_at(101, "bot/in-progress", ON) is None
+        assert issue_lock.last_labelled(101, "bot/in-progress", ON) is None
+
+
+def _listed(number, state="OPEN", assignees=("test-bot",)):
+    return {
+        "number": number,
+        "state": state,
+        "assignees": [{"login": login} for login in assignees],
+    }
 
 
 class TestStale:
-    def _fake(self, gh, ages):
+    def _fake(self, gh, ages, **listing):
         return gh(
-            issues=json.dumps([{"number": n} for n in ages]),
+            issues=json.dumps([_listed(n, **listing) for n in ages]),
             events={
                 n: [("bot/in-progress", _hours_ago(h))]
                 for n, h in ages.items()
@@ -256,12 +275,38 @@ class TestStale:
         self._fake(gh, {101: None})
         assert issue_lock.stale(6, ON, now=NOW) == [101]
 
-    def test_only_the_bots_own_issues_are_considered(self, gh):
-        """The same label on a human's issue is not the loop's to undo."""
+    def test_a_closed_issue_is_released_whatever_its_age(self, gh):
+        """Selection reads open issues only, so the label there guards nothing."""
+        self._fake(gh, {101: 0.1}, state="CLOSED")
+        assert issue_lock.stale(6, ON, now=NOW) == [101]
+
+    def test_closed_issues_are_listed(self, gh):
+        """A merge closes the issue, which is where a finished story leaves it."""
         fake = self._fake(gh, {})
         issue_lock.stale(6, ON, now=NOW)
         listing = fake.calls[0]
-        assert listing[listing.index("--assignee") + 1] == "test-bot"
+        assert listing[listing.index("--state") + 1] == "all"
+
+    def test_a_label_a_human_applied_is_left_alone(self, gh):
+        """The same label put on by a human is not the loop's to undo."""
+        gh(
+            issues=json.dumps([_listed(101), _listed(102, state="CLOSED")]),
+            events={
+                101: [("bot/in-progress", _hours_ago(30), "a-maintainer")],
+                102: [("bot/in-progress", _hours_ago(30), "a-maintainer")],
+            },
+        )
+        assert issue_lock.stale(6, ON, now=NOW) == []
+
+    def test_the_bots_label_on_an_issue_a_human_took_over_is_swept(self, gh):
+        """The assignee says nothing about whose label it is."""
+        self._fake(gh, {101: 7, 102: 0.1}, assignees=("a-maintainer",))
+        assert issue_lock.stale(6, ON, now=NOW) == [101]
+
+    def test_an_unreadable_age_is_left_where_the_bot_is_not_assigned(self, gh):
+        """With no event to say whose label it is, the assignee decides."""
+        self._fake(gh, {101: None}, assignees=("a-maintainer",))
+        assert issue_lock.stale(6, ON, now=NOW) == []
 
     def test_nothing_is_stale_without_a_label(self, gh):
         fake = gh()
@@ -276,7 +321,7 @@ class TestStale:
 class TestSweep:
     def test_releases_each_stale_label(self, gh):
         fake = gh(
-            issues=json.dumps([{"number": 101}, {"number": 102}]),
+            issues=json.dumps([_listed(101), _listed(102)]),
             events={
                 101: [("bot/in-progress", _hours_ago(9))],
                 102: [("bot/in-progress", _hours_ago(1))],
@@ -287,7 +332,7 @@ class TestSweep:
 
     def test_a_dry_run_changes_nothing(self, gh):
         fake = gh(
-            issues=json.dumps([{"number": 101}]),
+            issues=json.dumps([_listed(101)]),
             events={101: [("bot/in-progress", _hours_ago(9))]},
         )
         assert issue_lock.sweep(6, ON, now=NOW, dry_run=True) == [101]

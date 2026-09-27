@@ -47,6 +47,7 @@ import sys
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
+from lib import issue_lock  # noqa: E402
 from lib.load_config import load_config, require_config  # noqa: E402
 from lib.prd_store import load_prd, prd_lock, save_prd  # noqa: E402
 
@@ -210,6 +211,12 @@ def main():
             )
         if retired and not args.dry_run:
             save_prd(args.prd, prd)
+
+    # archive-prd.py moves the story out of the PRD next, after which the claim
+    # release at the end of the iteration working it cannot find its issue.
+    if not args.dry_run:
+        for story in retired:
+            issue_lock.release(story["issueNumber"], _config, _bot_dir)
 
     verb = "Would retire" if args.dry_run else "Retired"
     print(

@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _bot_dir = os.path.dirname(_script_dir)
 sys.path.insert(0, _script_dir)
+from lib import issue_lock  # noqa: E402
 from lib.load_config import (  # noqa: E402
     load_config,
     require_config,
@@ -229,6 +230,7 @@ def main():
             merged[number] = pr
 
     retired = []
+    issues = []
     with prd_lock(args.prd):
         prd = load_prd(args.prd)
         for story in prd.get("stories", []):
@@ -241,6 +243,7 @@ def main():
             if not pr:
                 continue
             retire(story, pr.get("mergedAt"))
+            issues.append(issue_lock.issue_number(story))
             retired.append(
                 {
                     "id": story["id"],
@@ -252,6 +255,12 @@ def main():
             )
         if retired and not args.dry_run:
             save_prd(args.prd, prd)
+
+    # archive-prd.py moves the story out of the PRD next, after which the claim
+    # release at the end of the iteration working it cannot find its issue.
+    if not args.dry_run:
+        for issue in issues:
+            issue_lock.release(issue, _config, _bot_dir)
 
     removed = clean_up_worktrees(retired, args.dry_run)
 

@@ -359,8 +359,10 @@ repo_refresh_bot_hooks "$GIT_REPO" "$BOT_USERNAME" "$SCRIPT_DIR/hooks"
 # counts while its slot lock is held, which the kernel drops on death.
 release_claim() {
   [ -n "$CURRENT_STORY_ID" ] || return 0
+  # stderr stays visible: a failed label release is otherwise a label that
+  # blocks the issue on every machine with no trace of why.
   "$SCRIPT_DIR/scripts/claims.py" release \
-    --story "$CURRENT_STORY_ID" --slot "$BOT_RUN_SLOT" >/dev/null 2>&1 || true
+    --story "$CURRENT_STORY_ID" --slot "$BOT_RUN_SLOT" >/dev/null || true
   CURRENT_STORY_ID=""
 }
 
@@ -499,8 +501,9 @@ fi
 # no claims file with this one, so each labels the issue it is working and
 # filters out the stories another machine has labelled; nothing refreshes those
 # labels, and a machine that was killed never removes its own. A label older
-# than the limit therefore means nobody is on that issue any more. Only issues
-# assigned to the bot are touched. gh and Python; no agent, no tokens.
+# than the limit therefore means nobody is on that issue any more, and one on a
+# closed issue guards nothing at any age. Only labels the bot applied are
+# touched. gh and Python; no agent, no tokens.
 # with-lock keeps 20 slots starting together from sweeping 20 times over.
 "$SCRIPT_DIR/scripts/with-lock.sh" in-progress-sweep --timeout 600 -- \
   python3 "$SCRIPT_DIR/scripts/sweep-in-progress.py" \
