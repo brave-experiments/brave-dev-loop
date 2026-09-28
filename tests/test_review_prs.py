@@ -255,6 +255,27 @@ class TestProcessPr:
         assert "the other 2 were reviewed already" in prompt
 
 
+class TestPrRemote:
+    def test_ignores_a_remote_that_only_pushes_to_the_repo(self, prep, monkeypatch):
+        repo = prep.PR_REPO
+        out = (
+            f"origin\tgit@github.com:netzenbot/fork.git (fetch)\n"
+            f"origin\tssh://git@github.com/{repo}.git (push)\n"
+            f"upstream\tgit@github.com:{repo}.git (fetch)\n"
+            f"upstream\tssh://git@github.com/{repo}.git (push)\n"
+        )
+        monkeypatch.setattr(
+            prep.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=out, stderr=""),
+        )
+        prep.pr_remote.cache_clear()
+        try:
+            assert prep.pr_remote() == "upstream"
+        finally:
+            prep.pr_remote.cache_clear()
+
+
 class TestPrioritize:
     def test_limit_widens_the_cap(self, post):
         vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(12)]

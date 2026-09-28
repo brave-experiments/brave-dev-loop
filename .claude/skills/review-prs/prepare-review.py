@@ -175,11 +175,12 @@ PR_HEAD_FETCH_TIMEOUT_S = 180
 
 @functools.lru_cache(maxsize=1)
 def pr_remote():
-    """Name of the remote hosting PR_REPO.
+    """Name of the remote PR_REPO is fetched from.
 
     refs/pull/*/head only exist on the repo the PRs were opened against. That
     is usually an upstream remote, not `origin` — `origin` is typically the
-    bot's own fork, which carries no pull refs.
+    bot's own fork, which carries no pull refs. Push URLs are ignored: a fork
+    remote can push to PR_REPO while fetching from the fork.
     """
     result = subprocess.run(
         ["git", "-C", TARGET_REPO_PATH, "remote", "-v"],
@@ -191,10 +192,10 @@ def pr_remote():
         pattern = re.compile(rf"[:/]{re.escape(PR_REPO)}(\.git)?$")
         for line in result.stdout.splitlines():
             parts = line.split()
-            if len(parts) >= 2 and pattern.search(parts[1]):
+            if len(parts) >= 3 and parts[2] == "(fetch)" and pattern.search(parts[1]):
                 return parts[0]
     log(
-        f"  WARNING: no remote matches {PR_REPO}; falling back to 'origin'. "
+        f"  WARNING: no remote fetches from {PR_REPO}; falling back to 'origin'. "
         "PR head fetches will likely fail and reviews will run against "
         f"{DEFAULT_BRANCH}."
     )
