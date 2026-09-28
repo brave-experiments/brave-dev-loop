@@ -33,14 +33,19 @@ bot_cron_job() {
 # The command for a job that starts an agent session, held under a named lock
 # so two schedules never run the same job twice over one bot directory.
 #
-#   bot_cron_agent <lock name> '<prompt>' [slots]
+#   bot_cron_agent <lock name> '<prompt>' [slots] [model]
 #
 # `slots` makes the lock a counting semaphore instead of a single instance.
 # Every job sharing a lock name has to ask for the same count: a job that asks
 # for one takes slot 1 only, so it exits doing nothing whenever a job asking
-# for three happens to hold that slot.
+# for three happens to hold that slot. Pass '' for one instance when a model
+# follows.
+#
+# `model` is passed as `--model`; without it the session gets the agent's
+# default.
 bot_cron_agent() {
-  local slots="${3:-}"
-  printf "./scripts/with-lock.sh %s%s -- %s -p '%s' --allowedTools '%s'" \
-    "$1" "${slots:+ --slots $slots}" "$CLAUDE_BIN" "$2" "$CLAUDE_TOOLS"
+  local slots="${3:-}" model="${4:-}"
+  printf "./scripts/with-lock.sh %s%s -- %s -p '%s'%s --allowedTools '%s'" \
+    "$1" "${slots:+ --slots $slots}" "$CLAUDE_BIN" "$2" \
+    "${model:+ --model $model}" "$CLAUDE_TOOLS"
 }

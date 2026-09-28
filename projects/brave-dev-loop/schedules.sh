@@ -28,5 +28,5 @@ echo ""
 echo "# Review PRs — skip if no recent open PRs"
 echo "# Daily: once, late, after the day's human pull requests have landed"
 bot_cron_job "30 21 * * *" "./scripts/check-new-prs.sh" \
-  "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority')" \
+  "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' '' "$BOT_REVIEW_MODEL")" \
   "review-prs-cron.log"

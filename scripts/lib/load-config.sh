@@ -184,6 +184,11 @@ BOT_CURSOR_BIN=$(bot_config '.bot.cursorBin')
 # mid-session, on whichever tool the skill reaches for last.
 BOT_AGENT_TOOLS="Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch"
 
+# Model for a /review-prs session, sweep or review request alike. The session
+# only runs scripts and launches subagents that pick their own model, so it
+# needs no Opus; on a large sweep its own context is re-read on every turn.
+BOT_REVIEW_MODEL="${BOT_REVIEW_MODEL:-sonnet}"
+
 BOT_BP_DOCS_DIR=$(bot_config '.bestPractices.docsDir')
 
 # Absolute paths. Prefer these over the raw (base-ambiguous) config values.
@@ -243,6 +248,6 @@ export BOT_DIR BOT_CONFIG_FILE
 export BOT_PROJECT_NAME BOT_ORG BOT_PR_REPO BOT_ISSUE_REPO BOT_DEFAULT_BRANCH BOT_TARGET_REPO_PATH BOT_TARGET_REPO_DIR BOT_PRD_MODE
 export BOT_PROFILE BOT_PROFILE_DIR BOT_PROFILE_WORKTREES BOT_MAX_CONCURRENT_RUNS
 export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_SIGNING_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
-export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN BOT_AGENT_TOOLS
+export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN BOT_AGENT_TOOLS BOT_REVIEW_MODEL
 export BOT_BRAVEBOT_MODEL BOT_BRAVEBOT_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS

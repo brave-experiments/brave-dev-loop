@@ -27,6 +27,19 @@ GitHub, and `scripts/review-requested.sh` gives each one its own session, up to
 `REVIEW_REQUESTED_MAX_PRS` (5) a run. An empty queue costs one API call: the
 gate stops before any agent starts.
 
+Both start the session with `--model $BOT_REVIEW_MODEL` (`sonnet` unless the
+environment says otherwise). The session itself only runs the skill's scripts
+and launches its subagents, and those name their own models in
+`.claude/agents/review-prs-*.md`, so nothing in it needs the default model.
+
+A review is two passes. Sonnet detect agents read only the diff: one per rule
+chunk, scoped to the files that chunk's rules apply to, plus one looking for
+bugs no rule names. `select-candidates.py` drops what would never be posted,
+and a single Opus validator per PR checks what remains against the source.
+A re-review reads only the files whose change differs from the last review;
+if none does (a rebase, say), nothing is reviewed. `/review-prs full` reviews
+every file anyway.
+
 Poll runs overlap. A review takes far longer than five minutes, so a poll that
 waited for the previous one would drain the queue at one PR per session however
 often it ran — which is what made a request behind seven others wait over two
