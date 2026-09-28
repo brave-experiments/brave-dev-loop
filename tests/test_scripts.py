@@ -4254,6 +4254,14 @@ class TestReviewRequestQueue:
         assert "--allowedTools" in claude_log[0]
         assert "Task" in claude_log[0].split("--allowedTools")[1]
 
+    def test_the_session_runs_on_the_review_model(self, tmp_dir):
+        """The session runs scripts and launches subagents that choose their own
+        model; on the default model its turns cost several times as much."""
+        _, _, claude_log = self._run(
+            self.JOB, tmp_dir, self._stubs(tmp_dir), {"BOT_REVIEW_MODEL": ""}
+        )
+        assert "--model sonnet" in claude_log[0]
+
     def test_the_cap_leaves_the_rest_of_the_queue_for_the_next_poll(self, tmp_dir):
         """Five minutes later there is another poll, and it does not wait for
         this one. Reviewing the whole queue in one job is how a backlog turns
@@ -5080,6 +5088,21 @@ class TestProjectSchedules:
             for j in reviewing
         }
         assert counts == {"3"}
+
+    @pytest.mark.parametrize("profile", ["brave-core", "default", "brave-dev-loop"])
+    def test_every_review_sweep_runs_on_the_review_model(self, tmp_dir, profile):
+        """A sweep session over thirty PRs re-reads its own context on every
+        turn; that is the part of the bill the model choice decides."""
+        sweeps = [
+            j
+            for j in self._jobs(self._render(tmp_dir, profile))
+            if "/review-prs 1d" in j
+        ]
+        assert sweeps
+        for job in sweeps:
+            assert (
+                "-p '/review-prs 1d open auto reviewer-priority' --model sonnet " in job
+            )
 
     def test_bravebot_reviews_only_what_it_is_asked_to(self, tmp_dir):
         """This project has no automated best-practices sweep yet. Answering an

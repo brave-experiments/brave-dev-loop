@@ -68,9 +68,10 @@ bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
 `bot_cron_job` gives every job the same prologue — the bot directory, the bot
 identity from `.envrc`, its gate, and a hard reset of the bot repo — so a job
 line says only what is particular to it. The gate runs before the git sync: a
-job with nothing to do costs no fetches. `bot_cron_agent <lock> '<prompt>'`
-builds the command for a job that starts an agent session, held under a named
-lock.
+job with nothing to do costs no fetches. `bot_cron_agent <lock> '<prompt>'
+[slots] [model]` builds the command for a job that starts an agent session,
+held under a named lock; a `/review-prs` job passes `"$BOT_REVIEW_MODEL"` as
+its model.
 
 One machine can run several deployments, and the crontab block each one writes
 is marked with its `project.name`. Installing one project's schedules replaces

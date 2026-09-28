@@ -177,7 +177,9 @@ The review cache (`.ignore/review-prs-cache.json`) is read, changed and
 written under one lock and replaced atomically, by
 `lib/file_lock.locked_json_update`. Two runs finishing moments apart would
 otherwise each save the snapshot they read, and a lost entry means a PR
-reviewed twice.
+reviewed twice. Its `_files` key holds each PR's per-file diff hashes,
+capped at 500 PRs with the oldest dropped first; losing an entry there
+means a full review instead of an incremental one.
 
 **The exit trap** does not touch the main checkout under a worktree profile.
 It still stashes and returns to the default branch for a non-worktree profile,

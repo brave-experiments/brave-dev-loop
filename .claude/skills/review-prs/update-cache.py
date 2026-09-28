@@ -8,8 +8,10 @@ cron run is missed.
 Usage:
   update-cache.py <pr_number> <head_ref_oid>            # Update SHA only
   update-cache.py <pr_number> <head_ref_oid> --approve   # Update SHA + mark approved
+  update-cache.py <pr_number> <head_ref_oid> --file-hashes=<path>   # + per-file hashes
 """
 
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -25,13 +27,23 @@ flags = [a for a in sys.argv[1:] if a.startswith("--")]
 
 if len(args) != 2:
     print(
-        f"Usage: {sys.argv[0]} <pr_number> <head_ref_oid> [--approve]", file=sys.stderr
+        f"Usage: {sys.argv[0]} <pr_number> <head_ref_oid> [--approve] "
+        "[--file-hashes=<path>]",
+        file=sys.stderr,
     )
     sys.exit(1)
 
 pr_number = args[0]
 head_ref_oid = args[1]
 approve = "--approve" in flags
+file_hashes = None
+for flag in flags:
+    if flag.startswith("--file-hashes="):
+        with open(flag.split("=", 1)[1]) as f:
+            file_hashes = json.load(f)
+
+# Oldest entries go first: a PR that stops moving stops being reviewed.
+MAX_FILE_HASH_ENTRIES = 500
 
 # Absolute, not relative to the caller's cwd: the cache is one file per bot
 # directory, and two runs that disagreed about where it lives would each keep
@@ -54,6 +66,14 @@ with locked_json_update(cache_path) as cache:
         approved = set(cache.get("_approved", []))
         approved.add(pr_number)
         cache["_approved"] = sorted(approved)
+
+    if file_hashes is not None:
+        files = cache.get("_files", {})
+        files.pop(pr_number, None)
+        files[pr_number] = file_hashes
+        while len(files) > MAX_FILE_HASH_ENTRIES:
+            files.pop(next(iter(files)))
+        cache["_files"] = files
 
 _config = load_config()
 _pr_repo = require_config(_config, "project.prRepository")

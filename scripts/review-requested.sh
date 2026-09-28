@@ -79,7 +79,8 @@ for PR in $PRS; do
   (
     bot_acquire_lock "$LOCK_DIR/.review-pr-$PR.lock" || exit "$PR_BUSY_RC"
     echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] reviewing #$PR — review requested from $BOT_USERNAME"
-    "$BOT_CLAUDE_BIN" -p "/review-prs #$PR open auto" --allowedTools "$BOT_AGENT_TOOLS" 200>&-
+    "$BOT_CLAUDE_BIN" -p "/review-prs #$PR open auto" --model "$BOT_REVIEW_MODEL" \
+      --allowedTools "$BOT_AGENT_TOOLS" 200>&-
   ) || RC=$?
 
   if [ "$RC" -eq "$PR_BUSY_RC" ]; then

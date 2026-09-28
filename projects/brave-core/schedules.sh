@@ -39,11 +39,11 @@ echo "# sweep asking for one would take slot 1 only, and exit doing nothing"
 echo "# every time a poll happened to be holding it."
 echo "# Weekdays: 3x/day"
 bot_cron_job "0 13,20 * * 1-5" "./scripts/check-new-prs.sh" \
-  "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3)" \
+  "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")" \
   "review-prs-cron.log"
 echo "# Weekends: once/day at noon"
 bot_cron_job "0 12 * * 0,6" "./scripts/check-new-prs.sh" \
-  "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3)" \
+  "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")" \
   "review-prs-cron.log"
 
 echo ""
