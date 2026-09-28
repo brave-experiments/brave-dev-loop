@@ -23,7 +23,7 @@ BOT_AGENT_LAUNCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 bot_launch_agent() {
   local agent="$1" bin="$2" model="$3" cwd="$4" log="$5" prompt_file="$6"
-  local final_msg="$7" timeout="${8:-7200}"
+  local final_msg="$7" timeout="${8:-10800}"
 
   local prompt
   prompt=$(cat "$prompt_file")
