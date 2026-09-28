@@ -144,7 +144,7 @@ printf '%s\n' "$ROWS" | while IFS=$'\t' read -r slot state pid story started age
     echo "! slot $slot: lock held but its run (pid ${pid}) is gone — a leftover child still holds it."
     echo "    clear with: ./scripts/reset-run.sh --slot $slot"
   elif [ "$state" = "RUNNING" ] && [ "$age" != "-" ] && [ "$age" -gt 1800 ]; then
-    echo "! slot $slot: no log output for $(human_age "$age") — possibly hung (iterations are capped at 2h)."
+    echo "! slot $slot: no log output for $(human_age "$age") — possibly hung (iterations are capped at 3h)."
     echo "    inspect: tail -f $log      stop it: ./scripts/reset-run.sh --slot $slot"
   fi
 done

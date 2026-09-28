@@ -38,11 +38,12 @@ from datetime import datetime, timedelta, timezone
 from .load_config import get_config, load_config, load_profile, require_config
 
 # How long a label stands before a run at start treats it as abandoned. Only a
-# killed machine ever leaves one that long — an iteration is capped at 2h by
-# timeout-tree.sh and hands its story back at the end — so the limit is well
-# clear of any live run, and still short enough that a dead machine does not
+# killed machine ever leaves one that long — an iteration is capped at 3h by
+# timeout-tree.sh and hands its story back at the end, and a comparison
+# iteration holds it through a second 3h run and a 1h evaluator — so the limit
+# is clear of any live run, and still short enough that a dead machine does not
 # park an issue for a day.
-DEFAULT_MAX_AGE_HOURS = 6
+DEFAULT_MAX_AGE_HOURS = 8
 
 _ISSUE_RE = re.compile(r"issue #(\d+)")
 

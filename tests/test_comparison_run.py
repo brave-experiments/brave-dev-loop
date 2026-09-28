@@ -118,6 +118,14 @@ class TestOrchestration:
         between = body[start : body.index("scripts/comparison-evaluate.sh", start)]
         assert 'if [ "$COMPARISON_RC" -ne 0 ]' in between
 
+    def test_the_comparison_gets_the_base_runs_time_limit(self):
+        """Same task, same conditions: its own default would drift from
+        ITERATION_SECONDS the next time either changes."""
+        body = run_sh_body()
+        start = body.index("scripts/comparison-run.sh")
+        call = body[start : body.index("|| COMPARISON_RC=$?", start)]
+        assert '--timeout "$ITERATION_SECONDS"' in call
+
     def test_neither_step_can_kill_the_loop(self):
         """run.sh is `set -e`: a comparison that fails is a missing second
         opinion, not a failed story."""

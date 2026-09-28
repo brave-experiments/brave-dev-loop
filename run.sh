@@ -329,7 +329,7 @@ PRD_FILE="$SCRIPT_DIR/data/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/data/progress.txt"
 LOGS_DIR="$SCRIPT_DIR/logs"
 # What one iteration may spend on its agent, a resumed session included.
-ITERATION_SECONDS=7200
+ITERATION_SECONDS=10800
 # Slot 1 uses data/run-state.json, as it always has; further slots get their
 # own file so two runs never share iteration bookkeeping. The agent reads
 # BOT_RUN_STATE_FILE, so its update-prd-status.py calls land in the right one.
@@ -1026,7 +1026,7 @@ Carry on with ./$BOT_DIRNAME/docs/workflow-pending.md from where you stopped, re
       --branch "$COMPARISON_BRANCH" --prompt-file "$COMPARISON_PROMPT_FILE" \
       --log "$COMPARISON_LOG" --session-out "$COMPARISON_SESSION_FILE" \
       --agent "$COMPARISON_AGENT" --agent-bin "$COMPARISON_AGENT_BIN" \
-      --model "$COMPARISON_MODEL" \
+      --model "$COMPARISON_MODEL" --timeout "$ITERATION_SECONDS" \
       --base-agent "$BOT_AGENT" --base-session-id "$BASE_SESSION_ID" || COMPARISON_RC=$?
     bot_slot_heartbeat
 

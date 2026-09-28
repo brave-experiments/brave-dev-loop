@@ -11,7 +11,7 @@
 # The runs overlap by design — each takes its own run slot, and
 # maxConcurrentRuns is well above three — so a cap is not there to keep the
 # slot free for the next job. It is there so a wedged run cannot sit on a slot
-# forever: iterations are capped at two hours each and nothing caps the run
+# forever: iterations are capped at three hours each and nothing caps the run
 # itself, so timeout-tree.sh ends each one a minute short of the next 01:00,
 # killing the agent and its descendants, and run.sh's TERM handler hands the
 # slot and the story claim back on the way out.

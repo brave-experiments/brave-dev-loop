@@ -488,7 +488,7 @@ with it. Never end a turn to wait, and read a "continue" after a context summary
 carry on. When a session ends anyway, with the story pending and no entry past where
 the log stood at the start, run.sh (`scripts/iteration-stopped-short.py`) resumes a
 Claude session with `--resume`, at most twice and only while ten minutes of the
-iteration's two hours remain, telling it what git shows of the branch. If the story
+iteration's three hours remain, telling it what git shows of the branch. If the story
 still stopped short, or the agent is not Claude, run.sh writes the entry itself from
 git. That entry names the worktree, the head, and what no remote has, but it cannot
 say which gates passed, so it is no substitute for yours.

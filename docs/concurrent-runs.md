@@ -53,7 +53,7 @@ three states per slot:
 - **IDLE** — the lock is free. Nothing is running.
 - **RUNNING** — a live run holds it. Shows its pid, story, start time, and how
   long since it last wrote to its iteration log. A long silence there is the
-  hang signal (an iteration is hard-capped at 2h by `timeout-tree.sh`).
+  hang signal (an iteration is hard-capped at 3h by `timeout-tree.sh`).
 - **ORPHANED** — the lock is held but the run that took it is gone: a child
   inherited the lock fd and outlived its parent. `./scripts/reset-run.sh
   --slot N` clears it.
@@ -101,7 +101,7 @@ Python throughout; no agent reads or writes it.
 
 The label cannot borrow the kernel the way a claim does. A lock on one machine
 says nothing to the others, and a machine that dies never removes its labels,
-so `run.sh` drops the labels older than 6 hours at start (`--max-age-hours` to
+so `run.sh` drops the labels older than 8 hours at start (`--max-age-hours` to
 change it, `--dry-run` to look first). That is the whole reason an age limit
 exists. A closed issue is never selected, so the label on one goes at the first
 sweep whatever its age. Only labels the bot applied are swept, judged by the

@@ -13,7 +13,7 @@
 #     --branch comparison-us-004-1789 --prompt-file /tmp/p --log logs/comparison-…log \
 #     --session-out /tmp/session.json \
 #     --agent claude [--agent-bin path] [--model name] \
-#     [--base-agent bravebot] [--base-session-id 1788…] [--timeout 7200]
+#     [--base-agent bravebot] [--base-session-id 1788…] [--timeout 10800]
 #
 # Prints progress for the operator. Exits non-zero when the comparison could not
 # be produced; run.sh treats that as a skipped comparison, never as a failed
@@ -36,7 +36,7 @@ AGENT_BIN=""
 MODEL=""
 BASE_AGENT=""
 BASE_SESSION_ID=""
-TIMEOUT=7200
+TIMEOUT=10800
 
 while [ $# -gt 0 ]; do
   case "$1" in
