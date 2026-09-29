@@ -482,16 +482,32 @@ is outstanding, and the exact next command.
 The cost is one script call. The cost of skipping it is a full re-run of a presubmit
 sequence that can take hours.
 
-**Ending your turn ends the iteration.** run.sh runs the session with `--print`, so
-there is no later turn: a gate you meant to wait for and every background task stop
-with it. Never end a turn to wait, and read a "continue" after a context summary as
-carry on. When a session ends anyway, with the story pending and no entry past where
-the log stood at the start, run.sh (`scripts/iteration-stopped-short.py`) resumes a
-Claude session with `--resume`, at most twice and only while ten minutes of the
-iteration's three hours remain, telling it what git shows of the branch. If the story
-still stopped short, or the agent is not Claude, run.sh writes the entry itself from
-git. That entry names the worktree, the head, and what no remote has, but it cannot
-say which gates passed, so it is no substitute for yours.
+**Ending your turn ends the iteration.** Under `--print` there is no later turn: a
+gate you meant to wait for and every background task stop with it. In the terminal
+the session sits waiting on a person who is not there. Never end a turn to wait (wait
+with `scripts/wait-gate.sh`), and read a "continue" after a context summary as carry
+on. The same holds one step on: a story left `committed` has no PR, and the entry
+that recorded it arriving there says nothing about why it stopped.
+
+run.sh (`scripts/iteration-stopped-short.py`) calls a story *short* when it is still
+`pending`, or `committed`, with no entry for it past where the log stood at the
+start. For a Claude session it holds the iteration to that three ways:
+
+- **A Stop hook refuses the stop.** While the story is short, ending the turn sends
+  the session straight back with what git shows of the branch and the step it
+  skipped, up to five times an iteration. Under ten minutes from the limit it asks
+  for the entry instead.
+- **A quiet watchdog stops an idle session.** A session whose transcript has not
+  changed for twenty minutes (an API error, a stalled call, a terminal waiting on an
+  answer) is stopped rather than left idle until the limit.
+- **run.sh resumes what still stopped short.** A `--print` session that ended, or
+  one in either mode the watchdog stopped, is resumed with `--resume`, at most twice
+  and only while ten minutes of the iteration remain. A terminal session a person
+  exited is not resumed.
+
+If the story is still short after that, or the agent is not Claude, run.sh writes
+the entry itself from git. That entry names the worktree, the head, and what no
+remote has, but it cannot say which gates passed, so it is no substitute for yours.
 
 Two traps make this worse than it looks, and both have produced false "all green"
 reports:
