@@ -330,6 +330,12 @@ PROGRESS_FILE="$SCRIPT_DIR/data/progress.txt"
 LOGS_DIR="$SCRIPT_DIR/logs"
 # What one iteration may spend on its agent, a resumed session included.
 ITERATION_SECONDS=10800
+# A Claude session that writes nothing to its transcript for this long is stopped
+# early: an API error leaves it idle until the limit otherwise, and so does a
+# terminal session whose turn ended with nobody there to answer. A Bash call is
+# capped at 10 minutes and wait-gate.sh returns inside that, so a session that is
+# working writes well within it.
+QUIET_SECONDS=1200
 # Slot 1 uses data/run-state.json, as it always has; further slots get their
 # own file so two runs never share iteration bookkeeping. The agent reads
 # BOT_RUN_STATE_FILE, so its update-prd-status.py calls land in the right one.
@@ -665,6 +671,8 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   # detection, so file contents read mid-iteration can never trip the
   # <promise>COMPLETE</promise> check).
   TEMP_LAST_MSG=$(mktemp)
+  # The story a Claude session's Stop hook checks, and how often it has refused.
+  STOP_CHECK=$(mktemp)
 
   # Change to the parent directory (brave-browser) so relative paths in .claude/CLAUDE.md work
   BRAVE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -793,6 +801,9 @@ Additional context: $EXTRA_PROMPT"
   # macOS default): to apply the redirection bash first duplicates fd 200 to a
   # free fd near 10, and children inherit *that*. tee needs the same treatment
   # — it sits waiting on the pipe and outlives a killed run.
+  #
+  # AGENT_RC is 75 when timeout-tree.sh's quiet watchdog stopped the session.
+  AGENT_RC=0
   if [ "$BOT_AGENT" = "codex" ]; then
     CODEX_MODEL_FLAG=""
     if [ -n "$BOT_CODEX_MODEL" ]; then
@@ -846,54 +857,81 @@ Additional context: $EXTRA_PROMPT"
     if [ -n "$BOT_CLAUDE_MODEL" ]; then
       CLAUDE_MODEL_FLAG="--model $BOT_CLAUDE_MODEL"
     fi
+    # The Stop hook refuses a turn that ends with the story short of its PR and
+    # nothing recorded, and says what is left; STOP_CHECK names the story and
+    # counts the refusals (scripts/iteration-stopped-short.py --hook).
+    jq -n --arg prd "$PRD_FILE" --arg storyId "$STORY_ID" --arg startStatus "$STORY_STATUS" \
+          --arg startBranch "$STORY_BRANCH" --arg repo "$GIT_REPO" \
+          --arg progressFile "$PROGRESS_FILE" --argjson progressOffset "$PROGRESS_OFFSET" \
+          --arg sessionId "$SESSION_ID" --argjson startedAt "$BASE_STARTED_AT" \
+          --argjson seconds "$ITERATION_SECONDS" \
+      '{prd: $prd, storyId: $storyId, startStatus: $startStatus, startBranch: $startBranch,
+        repo: $repo, progressFile: $progressFile, progressOffset: $progressOffset,
+        sessionId: $sessionId, startedAt: $startedAt, seconds: $seconds, blocks: 0}' > "$STOP_CHECK"
+    STOP_HOOK="python3 $(printf '%q' "$SCRIPT_DIR/scripts/iteration-stopped-short.py") --hook $(printf '%q' "$STOP_CHECK")"
+    CLAUDE_SETTINGS=$(jq -nc --arg cmd "$STOP_HOOK" \
+      '{hooks: {Stop: [{hooks: [{type: "command", command: $cmd, timeout: 60}]}]}}')
+    # The session's transcript and its subagents' sit under a directory named for
+    # the working directory; timeout-tree.sh globs for them rather than guess the name.
+    CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    CLAUDE_QUIET=(--quiet "$QUIET_SECONDS" "$CLAUDE_HOME/projects/*/$SESSION_ID.jsonl" "$CLAUDE_HOME/projects/*/$SESSION_ID")
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let Claude own the terminal directly (no piping)
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --session-id "$SESSION_ID" "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --session-id "$SESSION_ID" "$AGENT_PROMPT" || AGENT_RC=$?
     else
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
+      AGENT_RC=${PIPESTATUS[0]}
     fi
   fi
 
-  # A pending story's iteration ends when update-prd-status.py moves the story or
-  # a progress entry says why it stayed. A session that ends its turn to wait on a
-  # gate, or answers a "continue" as if nothing was asked, does neither, and in a
-  # --print run that turn was the session: the checks it was waiting on stop with
-  # it, and its unpushed work sits in a worktree the next sweep can take. So the
-  # session is resumed and told, within what is left of the iteration's time.
-  # Only Claude is given its session id, so only Claude is resumed; for any agent,
-  # a story that still stopped short gets its entry written from what git shows.
-  if [ "$USE_TUI" != true ]; then
-    RESUMED=0
-    while true; do
-      END_CHECK=$(python3 "$SCRIPT_DIR/scripts/iteration-stopped-short.py" \
-        --prd "$PRD_FILE" --story-id "$STORY_ID" --start-status "$STORY_STATUS" \
-        --start-branch "$STORY_BRANCH" --repo "$GIT_REPO" \
-        --progress-file "$PROGRESS_FILE" --progress-offset "$PROGRESS_OFFSET" \
-        --resumed "$RESUMED" --session-id "$SESSION_ID" --log "$ITERATION_LOG") || break
-      [ "$(echo "$END_CHECK" | jq -r '.stoppedShort')" = true ] || break
-      LEFT=$((ITERATION_SECONDS - ($(date +%s) - BASE_STARTED_AT)))
-      if [ "$BOT_AGENT" != claude ] || [ "$RESUMED" -ge 2 ] || [ "$LEFT" -lt 600 ]; then
-        echo "$STORY_ID: the session ended with the story pending and nothing recorded; writing its progress entry."
-        echo "$END_CHECK" | jq -r '.entry' | "$SCRIPT_DIR/scripts/append-progress.sh" --progress-file "$PROGRESS_FILE" || true
-        break
-      fi
-      RESUMED=$((RESUMED + 1))
-      WORK=$(echo "$END_CHECK" | jq -r '.work')
-      echo ""
-      echo "$STORY_ID: the session ended with the story pending and nothing recorded. Resuming it ($RESUMED of 2, ${LEFT}s left)."
-      echo "  $WORK"
-      RESUME_PROMPT="Your turn ended with story $STORY_ID still pending and no progress entry for it. This iteration runs with --print, so ending a turn ended the session: nothing you were waiting on will report back, and every background task, gates included, was stopped with it.
-$WORK
-
-Carry on with ./$BOT_DIRNAME/docs/workflow-pending.md from where you stopped, re-running any check that had not finished, and take the story to the status the workflow gives it. If it cannot get there in this iteration, append the entry ./$BOT_DIRNAME/docs/progress-reporting.md describes for an iteration that ends without a transition, then end. Do not end your turn for any other reason."
-      jq -nc --arg storyId "$STORY_ID" --argjson resumed "$RESUMED" --arg prompt "$RESUME_PROMPT" \
-        '{"type":"resume","storyId":$storyId,"resumed":$resumed,"prompt":$prompt}' >> "$ITERATION_LOG"
-      bot_slot_heartbeat
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --resume "$SESSION_ID" "$RESUME_PROMPT" </dev/null 2>&1 \
+  # A pending or committed story's iteration ends when update-prd-status.py moves
+  # it on or a progress entry says why it stayed. The Stop hook holds a Claude
+  # session to that while it runs; this is for a session that ended anyway. In a
+  # --print run a turn that ended was the session, so the checks it was waiting on
+  # stopped with it; in the terminal, a session the quiet watchdog stopped had
+  # gone idle. Either is resumed and told, within what is left of the iteration's
+  # time. A terminal session that a person exited is not resumed: that was theirs
+  # to decide. Only Claude is given its session id, so only Claude is resumed; for
+  # any agent, a story still short gets its entry written from what git shows.
+  RESUMED=0
+  while true; do
+    ENDED=exit
+    [ "$AGENT_RC" = 75 ] && ENDED=quiet
+    ENTRY_LOG=""
+    [ -f "$ITERATION_LOG" ] && ENTRY_LOG="$ITERATION_LOG"
+    END_CHECK=$(python3 "$SCRIPT_DIR/scripts/iteration-stopped-short.py" \
+      --prd "$PRD_FILE" --story-id "$STORY_ID" --start-status "$STORY_STATUS" \
+      --start-branch "$STORY_BRANCH" --repo "$GIT_REPO" \
+      --progress-file "$PROGRESS_FILE" --progress-offset "$PROGRESS_OFFSET" \
+      --resumed "$RESUMED" --session-id "$SESSION_ID" --log "$ENTRY_LOG" \
+      --ended "$ENDED") || break
+    [ "$(echo "$END_CHECK" | jq -r '.stoppedShort')" = true ] || break
+    SHORT_STATUS=$(echo "$END_CHECK" | jq -r '.endStatus')
+    LEFT=$((ITERATION_SECONDS - ($(date +%s) - BASE_STARTED_AT)))
+    if [ "$BOT_AGENT" != claude ] || [ "$RESUMED" -ge 2 ] || [ "$LEFT" -lt 600 ] \
+      || { [ "$USE_TUI" = true ] && [ "$ENDED" != quiet ]; }; then
+      echo "$STORY_ID: the session ended with the story $SHORT_STATUS and nothing recorded; writing its progress entry."
+      echo "$END_CHECK" | jq -r '.entry' | "$SCRIPT_DIR/scripts/append-progress.sh" --progress-file "$PROGRESS_FILE" || true
+      break
+    fi
+    RESUMED=$((RESUMED + 1))
+    echo ""
+    echo "$STORY_ID: the session ended with the story $SHORT_STATUS and nothing recorded. Resuming it ($RESUMED of 2, ${LEFT}s left)."
+    echo "  $(echo "$END_CHECK" | jq -r '.work')"
+    RESUME_PROMPT=$(echo "$END_CHECK" | jq -r '.resumePrompt')
+    jq -nc --arg storyId "$STORY_ID" --argjson resumed "$RESUMED" --arg ended "$ENDED" --arg prompt "$RESUME_PROMPT" \
+      '{"type":"resume","storyId":$storyId,"resumed":$resumed,"ended":$ended,"prompt":$prompt}' >> "$ITERATION_LOG"
+    bot_slot_heartbeat
+    AGENT_RC=0
+    if [ "$USE_TUI" = true ]; then
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --resume "$SESSION_ID" "$RESUME_PROMPT" || AGENT_RC=$?
+    else
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --resume "$SESSION_ID" "$RESUME_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" >> "$TEMP_OUTPUT" || true
-    done
-  fi
+      AGENT_RC=${PIPESTATUS[0]}
+    fi
+  done
 
   stop_title_watch
 
@@ -989,8 +1027,9 @@ Carry on with ./$BOT_DIRNAME/docs/workflow-pending.md from where you stopped, re
       BASE_WORKTREE=$(git -C "$GIT_REPO" worktree list --porcelain 2>/dev/null \
         | awk -v b="branch refs/heads/$END_BRANCH" '/^worktree /{w=substr($0,10)} $0==b{print w; exit}')
     fi
-    # A TUI iteration writes no log at all, so name one only when it exists:
-    # a path to a missing file reads to the evaluator like something went wrong.
+    # A TUI iteration writes a log only when it resumes its session, so name one
+    # only when it exists: a path to a missing file reads to the evaluator like
+    # something went wrong.
     BASE_LOG=""
     if [ -f "$ITERATION_LOG" ]; then
       BASE_LOG="$ITERATION_LOG"
@@ -1084,11 +1123,11 @@ Carry on with ./$BOT_DIRNAME/docs/workflow-pending.md from where you stopped, re
     echo ""
     echo "Agent completed all tasks!"
     echo "Completed at work iteration $work_iteration (loop $loop_count of $MAX_ITERATIONS)"
-    rm -f "$TEMP_OUTPUT" "$TEMP_LAST_MSG"
+    rm -f "$TEMP_OUTPUT" "$TEMP_LAST_MSG" "$STOP_CHECK"
     exit 0
   fi
 
-  rm -f "$TEMP_OUTPUT" "$TEMP_LAST_MSG"
+  rm -f "$TEMP_OUTPUT" "$TEMP_LAST_MSG" "$STOP_CHECK"
 
   # The iteration is over: let another run pick this story up.
   release_claim

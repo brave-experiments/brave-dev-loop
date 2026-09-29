@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -53,6 +54,7 @@ def check(
     repo=None,
     branch=BRANCH,
     resumed=0,
+    ended="exit",
 ):
     prd = tmp_path / "prd.json"
     write_prd(prd, end, branch)
@@ -86,6 +88,8 @@ def check(
             "0f1e",
             "--log",
             "/logs/iteration.log",
+            "--ended",
+            ended,
         ],
         check=True,
         capture_output=True,
@@ -96,6 +100,10 @@ def check(
 
 def heading(story, status="pending"):
     return f"## 2026-09-25 10:00 - {story} - Status: {status} (iteration ended, no transition)\n"
+
+
+def arrival(story, arrow="→"):
+    return f"## 2026-09-25 10:00 - {story} - Status: pending {arrow} committed\n"
 
 
 class TestStoppedShort:
@@ -131,13 +139,33 @@ class TestStoppedShort:
             check(tmp_path, progress=heading(STORY), offset=10_000)["recorded"] is True
         )
 
-    @pytest.mark.parametrize("end", ["committed", "pushed", "skipped", "invalid"])
+    @pytest.mark.parametrize("end", ["pushed", "skipped", "invalid"])
     def test_a_story_that_moved_did_not_stop_short(self, tmp_path, end):
         assert check(tmp_path, end=end)["stoppedShort"] is False
 
-    @pytest.mark.parametrize("start", ["committed", "pushed", "skipped"])
-    def test_only_a_pending_story_can_stop_short(self, tmp_path, start):
+    @pytest.mark.parametrize("start", ["pushed", "skipped", "merged"])
+    def test_only_a_story_short_of_its_pr_can_stop_short(self, tmp_path, start):
         assert check(tmp_path, start=start, end=start)["stoppedShort"] is False
+
+    @pytest.mark.parametrize("arrow", ["→", "->"])
+    def test_a_story_committed_without_a_pr_stopped_short(self, tmp_path, arrow):
+        """The entry for reaching committed was written on the way to the PR."""
+        found = check(tmp_path, end="committed", progress=arrival(STORY, arrow))
+        assert found["recorded"] is False
+        assert found["stoppedShort"] is True
+
+    def test_a_committed_story_whose_failed_push_was_recorded_did_not(self, tmp_path):
+        failed = f"## 2026-09-25 11:00 - {STORY} - Status: committed (push failed)\n"
+        found = check(tmp_path, end="committed", progress=arrival(STORY) + failed)
+        assert found["stoppedShort"] is False
+
+    def test_an_arrival_heading_still_records_a_story_left_pending(self, tmp_path):
+        assert check(tmp_path, progress=arrival(STORY))["stoppedShort"] is False
+
+    def test_a_story_picked_up_committed_and_left_there_stopped_short(self, tmp_path):
+        assert (
+            check(tmp_path, start="committed", end="committed")["stoppedShort"] is True
+        )
 
     def test_the_entry_it_writes_is_itself_a_record(self, tmp_path):
         """What run.sh appends must stop a later check from writing another."""
@@ -151,6 +179,129 @@ class TestStoppedShort:
         assert "`claude -r 0f1e`" in found["entry"]
         assert found["entry"].rstrip().endswith("---")
         assert check(tmp_path, progress=found["entry"])["recorded"] is True
+
+    def test_the_entry_for_a_committed_story_is_itself_a_record(self, tmp_path):
+        found = check(tmp_path, end="committed", progress=arrival(STORY))
+        assert "Status: committed (iteration ended, no transition)" in found["entry"]
+        assert "no PR" in found["entry"]
+        again = check(
+            tmp_path, end="committed", progress=arrival(STORY) + found["entry"]
+        )
+        assert again["stoppedShort"] is False
+
+    def test_an_entry_after_a_quiet_stop_says_run_sh_stopped_it(self, tmp_path):
+        assert "run.sh stopped it" in check(tmp_path, ended="quiet")["entry"]
+
+
+class TestResumePrompt:
+    def test_a_pending_story_is_sent_back_to_the_pending_workflow(self, tmp_path):
+        prompt = check(tmp_path)["resumePrompt"]
+        assert f"story {STORY} still pending" in prompt
+        assert (
+            os.path.join(os.path.abspath(ROOT_DIR), "docs", "workflow-pending.md")
+            in prompt
+        )
+        assert "--print" in prompt
+        assert "wait-gate.sh" in prompt
+
+    def test_a_committed_story_is_sent_to_push_and_open_its_pr(self, tmp_path):
+        prompt = check(tmp_path, end="committed", progress=arrival(STORY))[
+            "resumePrompt"
+        ]
+        assert f"story {STORY} still committed" in prompt
+        assert "workflow-committed.md" in prompt
+        assert "open the draft PR" in prompt
+
+    def test_a_session_the_watchdog_stopped_is_told_so(self, tmp_path):
+        prompt = check(tmp_path, ended="quiet")["resumePrompt"]
+        assert "wrote nothing for too long" in prompt
+        assert "--print" not in prompt
+
+
+def hook(tmp_path, end="pending", progress="", session="0f1e", left=3600, state=None):
+    """Run the Stop hook once; returns its decision (None to allow) and the state after."""
+    prd = tmp_path / "prd.json"
+    write_prd(prd, end)
+    log = tmp_path / "progress.txt"
+    if not log.exists():
+        log.write_text(progress)
+    repo = tmp_path / "target"
+    if not repo.exists():
+        new_repo(repo)
+    path = tmp_path / "stop-check.json"
+    if state is None and not path.exists():
+        state = {
+            "prd": str(prd),
+            "storyId": STORY,
+            "startStatus": "pending",
+            "startBranch": BRANCH,
+            "repo": str(repo),
+            "progressFile": str(log),
+            "progressOffset": 0,
+            "sessionId": "0f1e",
+            "startedAt": int(time.time()) - (7200 - left),
+            "seconds": 7200,
+            "blocks": 0,
+        }
+    if state is not None:
+        path.write_text(state if isinstance(state, str) else json.dumps(state))
+    result = subprocess.run(
+        [sys.executable, SCRIPT, "--hook", str(path)],
+        input=json.dumps(
+            {
+                "session_id": session,
+                "hook_event_name": "Stop",
+                "stop_hook_active": False,
+            }
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    decision = json.loads(result.stdout) if result.stdout.strip() else None
+    try:
+        after = json.loads(path.read_text())
+    except ValueError:
+        after = None
+    return decision, after
+
+
+class TestHook:
+    def test_a_stop_that_leaves_the_story_pending_is_refused(self, tmp_path):
+        decision, state = hook(tmp_path)
+        assert decision["decision"] == "block"
+        assert f"Story {STORY} is still pending" in decision["reason"]
+        assert "workflow-pending.md" in decision["reason"]
+        assert "wait-gate.sh" in decision["reason"]
+        assert "Stop check 1 of 5" in decision["reason"]
+        assert state["blocks"] == 1
+
+    def test_it_refuses_five_times_then_lets_the_session_stop(self, tmp_path):
+        decisions = [hook(tmp_path)[0] for _ in range(6)]
+        assert [d is not None for d in decisions] == [True] * 5 + [False]
+
+    def test_another_session_is_let_stop(self, tmp_path):
+        assert hook(tmp_path, session="another")[0] is None
+
+    def test_a_story_that_moved_is_let_stop(self, tmp_path):
+        assert hook(tmp_path, end="pushed")[0] is None
+
+    def test_a_story_with_an_entry_is_let_stop(self, tmp_path):
+        assert hook(tmp_path, progress=heading(STORY))[0] is None
+
+    def test_a_committed_story_is_sent_to_open_its_pr(self, tmp_path):
+        decision, _ = hook(tmp_path, end="committed", progress=arrival(STORY))
+        assert f"Story {STORY} is committed but has no PR" in decision["reason"]
+        assert "workflow-committed.md" in decision["reason"]
+
+    def test_near_the_limit_it_asks_for_the_entry_now(self, tmp_path):
+        decision, _ = hook(tmp_path, left=120)
+        assert "Under 10 minutes" in decision["reason"]
+        assert "append-progress.sh" in decision["reason"]
+        assert "wait-gate.sh" not in decision["reason"]
+
+    def test_a_state_it_cannot_read_lets_the_session_stop(self, tmp_path):
+        assert hook(tmp_path, state="{not json")[0] is None
 
 
 class TestWork:
@@ -211,7 +362,32 @@ class TestRunSh:
         assert re.search(r"^ITERATION_SECONDS=\d+$", body, re.MULTILINE)
         assert 'timeout-tree.sh" 7200' not in body
         assert "LEFT=$((ITERATION_SECONDS - ($(date +%s) - BASE_STARTED_AT)))" in body
-        assert 'timeout-tree.sh" "$LEFT" $BOT_CLAUDE_BIN' in body
+        assert (
+            body.count('timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN')
+            == 2
+        )
+
+    def test_every_claude_launch_has_the_stop_hook_and_the_quiet_watchdog(self):
+        launches = [
+            line
+            for line in run_sh().splitlines()
+            if "$BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG" in line
+        ]
+        assert len(launches) == 4
+        for line in launches:
+            assert '--settings "$CLAUDE_SETTINGS"' in line, line
+            assert '"${CLAUDE_QUIET[@]}"' in line, line
+
+    def test_the_stop_hook_is_this_script(self):
+        body = run_sh()
+        assert (
+            'STOP_HOOK="python3 $(printf \'%q\' "$SCRIPT_DIR/scripts/iteration-stopped-short.py")'
+            ' --hook $(printf \'%q\' "$STOP_CHECK")"' in body
+        )
+        assert '{hooks: {Stop: [{hooks: [{type: "command", command: $cmd' in body
+
+    def test_a_terminal_iteration_is_checked_too(self):
+        assert 'if [ "$USE_TUI" != true ]; then\n    RESUMED=0' not in run_sh()
 
     def test_the_offset_is_taken_before_the_agent_starts(self):
         body = run_sh()
@@ -231,33 +407,60 @@ class TestRunSh:
 
 
 FAKE_CLAUDE = """#!/bin/bash
-# Records each run's flags (the prompt spans lines), then does what FAKE_MODE says a resumed session does.
-printf '%s\\n' "${*:1:7}" >> "$FAKE_CALLS"
+# Records each run's flags (the prompt, last, spans lines), then does what FAKE_MODE says a resumed session does.
+printf '%s\\n' "${*:1:$(($# - 1))}" >> "$FAKE_CALLS"
 echo '{"type":"result"}'
 case "$FAKE_MODE" in
   record) printf '## 2026-09-25 11:00 - US-313 - Status: pending (iteration ended, no transition)\\n' >> "$PROGRESS_FILE" ;;
-  move) jq '(.stories[] | select(.id == "US-313") | .status) = "committed"' "$PRD_FILE" > "$PRD_FILE.new" && mv "$PRD_FILE.new" "$PRD_FILE" ;;
+  move) jq '(.stories[] | select(.id == "US-313") | .status) = "pushed"' "$PRD_FILE" > "$PRD_FILE.new" && mv "$PRD_FILE.new" "$PRD_FILE" ;;
+  quiet) exit 75 ;;
 esac
 """
+
+
+def resumes(log):
+    """The resume records in an iteration log, whatever the session wrote around them."""
+    records = []
+    for line in log.splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("type") == "resume":
+            records.append(record)
+    return records
 
 
 def resume_block():
     """The resume loop exactly as run.sh has it, between the agent run and stop_title_watch."""
     body = run_sh()
-    start = body.index('  if [ "$USE_TUI" != true ]; then\n    RESUMED=0\n')
+    start = body.index("  RESUMED=0\n  while true; do\n")
     return body[start : body.index("\n  stop_title_watch\n", start)]
 
 
 class TestResumeLoop:
     """run.sh's resume loop, run against a fake claude in tmp_path."""
 
-    def run(self, tmp_path, mode="nothing", agent="claude", elapsed=0):
+    def run(
+        self,
+        tmp_path,
+        mode="nothing",
+        agent="claude",
+        elapsed=0,
+        tui=False,
+        rc=0,
+        end="pending",
+        progress_text="",
+    ):
         repo = tmp_path / "target"
         new_repo(repo)
         prd = tmp_path / "prd.json"
-        write_prd(prd, "pending")
+        write_prd(prd, end)
         progress = tmp_path / "progress.txt"
         progress.write_text(heading("US-200"))
+        offset = progress.stat().st_size
+        with open(progress, "a") as f:
+            f.write(progress_text)
         fake = tmp_path / "claude"
         fake.write_text(FAKE_CLAUDE)
         fake.chmod(0o755)
@@ -269,7 +472,7 @@ class TestResumeLoop:
             SCRIPT_DIR=os.path.abspath(ROOT_DIR),
             PRD_FILE=str(prd),
             PROGRESS_FILE=str(progress),
-            PROGRESS_OFFSET=str(progress.stat().st_size),
+            PROGRESS_OFFSET=str(offset),
             GIT_REPO=str(repo),
             STORY_ID=STORY,
             STORY_STATUS="pending",
@@ -278,7 +481,7 @@ class TestResumeLoop:
             ITERATION_LOG=str(tmp_path / "iteration.log"),
             TEMP_OUTPUT=str(tmp_path / "output"),
             ITERATION_SECONDS="7200",
-            USE_TUI="false",
+            USE_TUI="true" if tui else "false",
             BOT_AGENT=agent,
             BOT_CLAUDE_BIN=str(fake),
             CLAUDE_MODEL_FLAG="",
@@ -289,7 +492,9 @@ class TestResumeLoop:
         env.pop("BOT_COMPARISON_RUN", None)
         script = (
             "set -e\nbot_slot_heartbeat() { :; }\n"
-            f"BASE_STARTED_AT=$(( $(date +%s) - {elapsed} ))\n" + resume_block()
+            f"BASE_STARTED_AT=$(( $(date +%s) - {elapsed} ))\n"
+            f"AGENT_RC={rc}\nCLAUDE_SETTINGS='{{}}'\n"
+            f"CLAUDE_QUIET=(--quiet 600 '{tmp_path}/none-*.jsonl')\n" + resume_block()
         )
         subprocess.run(
             ["bash", "-c", script], check=True, env=env, capture_output=True, text=True
@@ -331,4 +536,43 @@ class TestResumeLoop:
     def test_an_iteration_near_its_time_limit_is_not_resumed(self, tmp_path):
         runs, entries, _ = self.run(tmp_path, elapsed=7200 - 300)
         assert runs == []
+        assert entries == 1
+
+    def test_a_session_that_committed_without_a_pr_is_resumed_to_open_it(
+        self, tmp_path
+    ):
+        runs, entries, log = self.run(
+            tmp_path, mode="move", end="committed", progress_text=arrival(STORY)
+        )
+        assert len(runs) == 1
+        assert entries == 1
+        (resume,) = resumes(log)
+        assert "workflow-committed.md" in resume["prompt"]
+
+    def test_every_resume_carries_the_stop_hook(self, tmp_path):
+        runs, _, _ = self.run(tmp_path)
+        assert all("--settings {}" in r for r in runs)
+
+    def test_a_terminal_session_the_watchdog_stopped_is_resumed_in_the_terminal(
+        self, tmp_path
+    ):
+        runs, entries, log = self.run(tmp_path, tui=True, rc=75, mode="quiet")
+        assert len(runs) == 2
+        assert not any("--print" in r for r in runs)
+        assert all("--resume 0f1e" in r for r in runs)
+        assert entries == 1
+        records = resumes(log)
+        assert [r["ended"] for r in records] == ["quiet", "quiet"]
+        assert "wrote nothing for too long" in records[0]["prompt"]
+
+    def test_a_terminal_session_a_person_exited_is_not_resumed(self, tmp_path):
+        runs, entries, _ = self.run(tmp_path, tui=True, rc=0)
+        assert runs == []
+        assert entries == 1
+
+    def test_a_terminal_session_resumed_then_exited_is_not_resumed_again(
+        self, tmp_path
+    ):
+        runs, entries, _ = self.run(tmp_path, tui=True, rc=75)
+        assert len(runs) == 1
         assert entries == 1
