@@ -216,6 +216,19 @@ def load_profile(config, base_dir=None):
         return {}
 
 
+def pr_draft(profile):
+    """Whether this project's pull requests are opened as drafts.
+
+    `prDraft` in profile.json. Absent means draft: that is what every project
+    did before the key existed, and a draft is the safe side to err on -- a
+    human marks it ready, where the reverse would put an unreviewed bot PR in
+    front of reviewers. Anything that is not a JSON boolean is treated as
+    absent rather than guessed at.
+    """
+    value = profile.get("prDraft")
+    return value if isinstance(value, bool) else True
+
+
 def build_research(profile, config, base_dir=None):
     """Render a profile's pre-implementation reading steps.
 

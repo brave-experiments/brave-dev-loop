@@ -1,6 +1,7 @@
 {
   "description": "bravebot: a Rust workspace (cargo) with a thin npm wrapper, checked by ci.yml plus the organization-level brave/security-action scan.",
   "worktrees": true,
+  "prDraft": false,
   "uiPaths": [
     "crates/tui/"
   ],
