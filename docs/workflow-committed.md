@@ -204,6 +204,11 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
    the PR without it and record the mismatch in `$BOT_DIR/data/progress.txt`.
 
 8. **If push or PR creation succeeds:**
+   - **Read the PR back before recording anything about it.** `gh pr create` printing a URL does not say what state the PR is in, and the next iteration will trust whatever you write:
+     ```bash
+     gh pr view <pr-number> --json state,isDraft,reviewRequests,assignees,labels
+     ```
+     Record the values it returns, not the flags you passed. If `isDraft` disagrees with the profile's `prDraft`, or a label or assignee from steps 5-7 is missing, fix it now and read again.
    - Update the PRD status:
      ```bash
      python3 $BOT_DIR/scripts/update-prd-status.py pushed <story-id> --pr-number <number>
