@@ -3513,6 +3513,54 @@ class TestProfileLoading:
             assert term not in blob, f"default profile leaks {term!r}"
 
 
+class TestProfilePrDraft:
+    """Whether a PR opens as a draft is the profile's call, not a shared doc's."""
+
+    @staticmethod
+    def _lib():
+        sys.path.insert(0, SCRIPT_DIR)
+        import lib.load_config as m
+
+        return m
+
+    def test_brave_core_opens_drafts(self):
+        m = self._lib()
+        assert (
+            m.pr_draft(m.load_profile({"project": {"profile": "brave-core"}})) is True
+        )
+
+    def test_bravebot_opens_ready_for_review(self):
+        m = self._lib()
+        assert m.pr_draft(m.load_profile({"project": {"profile": "bravebot"}})) is False
+
+    def test_absent_key_means_draft(self):
+        assert self._lib().pr_draft({}) is True
+
+    def test_a_non_boolean_is_treated_as_absent(self):
+        """ "false" is a truthy string; reading it as a boolean would guess."""
+        m = self._lib()
+        for value in ("false", 0, None, []):
+            assert m.pr_draft({"prDraft": value}) is True, value
+
+    def test_every_profile_states_its_choice(self):
+        for name in sorted(os.listdir(PROJECTS_DIR)):
+            path = os.path.join(PROJECTS_DIR, name, "profile.json")
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                profile = json.load(f)
+            if name in ("brave-core", "bravebot", "default"):
+                assert isinstance(profile.get("prDraft"), bool), name
+
+    def test_shared_docs_do_not_hard_code_draft(self):
+        """An unconditional `gh pr create --draft` overrides the profile."""
+        for name in ("workflow-committed.md", "git-repository.md", "STATE-MACHINE.md"):
+            with open(os.path.join(DOCS_DIR, name)) as f:
+                text = f.read()
+            assert "gh pr create --draft" not in text, name
+            assert "prDraft" in text, name
+
+
 class TestProfileResearch:
     """The "read this first" step is profile-owned. It has to be: pointing a
     story at a best_practices.md that only brave-core has was the bug that

@@ -155,7 +155,7 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
    - Push to remote with -u flag if needed
    - Create PR using gh pr create with the format below. Use a HEREDOC to pass the body to ensure correct formatting.
 
-**IMPORTANT**: Always create PRs in draft state using the `--draft` flag. This allows for human review before marking ready.
+**IMPORTANT**: Draft or ready is project-specific: pass `--draft` when `prDraft` in `projects/<profile>/profile.json` is `true` or absent, and omit it when `false`. See [workflow-committed.md](./workflow-committed.md).
 
 **IMPORTANT**: Labels are project-specific and come from the project profile (`labels.pr` in `projects/<profile>/profile.json`, plus the profile's `docs/labels.md`). Pass each one with a `--label` flag; a profile that defines none means a PR with no labels. See [workflow-committed.md](./workflow-committed.md) for the full rules.
 
@@ -171,7 +171,7 @@ command is the evidence under them, not the reproduction:
 python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body.md \
   --diff-base <the ref this worktree was branched from>   # must pass first, from the worktree
 
-gh pr create --draft --title "the pr title" \
+gh pr create [--draft] --title "the pr title" \    # --draft per the profile's prDraft
   --label "<each label the profile's rules give you>" \
   --body-file /tmp/pr-body.md
 ```

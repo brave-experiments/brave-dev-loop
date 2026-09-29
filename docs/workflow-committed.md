@@ -151,10 +151,10 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
 
    **CRITICAL: Always include labels when creating the PR.** Determine which labels apply (see label rules below) and pass them directly to `gh pr create` using `--label` flags.
 
-   **IMPORTANT**: Always create PRs in draft state using the `--draft` flag. This allows for human review before marking ready.
+   **IMPORTANT**: Whether the PR opens as a draft is the project profile's call: read `prDraft` in `projects/<profile>/profile.json`. `true` or absent: pass `--draft`, which allows human review before marking ready. `false`: omit `--draft` and open the PR ready for review. Do not open it as a draft and flip it afterwards: a draft requests no reviewers, so the reminder path in [workflow-pushed.md](./workflow-pushed.md) never reaches it.
 
    ```bash
-   gh pr create --draft --title "Story title" \
+   gh pr create [--draft] --title "Story title" \
      --label "<each label the profile's rules give you>" \
      --body-file /tmp/pr-body-<story-id>.md
    ```

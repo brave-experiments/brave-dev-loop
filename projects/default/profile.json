@@ -11,6 +11,7 @@
     "generic": "Find and run relevant tests to verify the change (must pass)"
   },
   "testTargets": {},
+  "prDraft": true,
   "labels": {
     "pr": [],
     "disabledTest": ""
