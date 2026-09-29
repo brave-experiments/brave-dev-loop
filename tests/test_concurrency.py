@@ -270,6 +270,17 @@ class TestFdInheritance:
     def _holds_lock(self, lockfile):
         return bash(f"bot_lock_probe {lockfile}").returncode == 1
 
+    def _wait_for_the_child(self, proc, lockfile):
+        """The lock is taken before the child is forked: killing the parent in
+        between leaves no child to inherit it, whatever exec-clean.sh does."""
+        _wait_for(
+            lambda: (
+                os.path.exists(lockfile)
+                and self._holds_lock(lockfile)
+                and _descendants(proc.pid)
+            )
+        )
+
     def test_a_plain_child_inherits_the_lock_fd(self, tmp_dir):
         # The failure mode, demonstrated: without sanitising, killing the
         # parent leaves the lock held by its child.
@@ -283,7 +294,7 @@ class TestFdInheritance:
                 "sleep 60 &\nwait\n",
             ]
         )
-        _wait_for(lambda: os.path.exists(lockfile) and self._holds_lock(lockfile))
+        self._wait_for_the_child(proc, lockfile)
         kids = _descendants(proc.pid)
         os.kill(proc.pid, signal.SIGKILL)
         proc.wait(timeout=10)
@@ -305,7 +316,7 @@ class TestFdInheritance:
                 f"{EXEC_CLEAN} sleep 60 &\nwait\n",
             ]
         )
-        _wait_for(lambda: os.path.exists(lockfile) and self._holds_lock(lockfile))
+        self._wait_for_the_child(proc, lockfile)
         kids = _descendants(proc.pid)
         os.kill(proc.pid, signal.SIGKILL)
         proc.wait(timeout=10)

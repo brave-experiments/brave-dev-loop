@@ -243,8 +243,11 @@ class TestFindSession:
             json.loads(find_session(tmp_dir, "bravebot", cwd).stdout)["auditLog"] == ""
         )
 
-    def test_claude_resolves_the_transcript_for_a_known_id(self, tmp_dir):
-        cwd = os.path.join(tmp_dir, "bot")
+    @pytest.mark.parametrize("where", ["bot", os.path.join("repo", ".claude", "wt")])
+    def test_claude_resolves_the_transcript_for_a_known_id(self, tmp_dir, where):
+        """Claude Code replaces each character of the path, a run included:
+        a worktree under .claude/ lives in a directory named ...-repo--claude-wt."""
+        cwd = os.path.join(tmp_dir, where)
         os.makedirs(cwd)
         slug = "".join(c if c.isalnum() else "-" for c in os.path.abspath(cwd))
         projects = os.path.join(tmp_dir, ".claude", "projects", slug)

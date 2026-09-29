@@ -25,9 +25,9 @@ import sys
 
 
 def slugify(path):
-    """Both Claude and bravebot name a session directory after the working
-    directory, with every non-alphanumeric run replaced by a single dash."""
-    return re.sub(r"[^a-zA-Z0-9]+", "-", path)
+    """Claude names a session directory after the working directory, with each
+    non-alphanumeric character replaced by a dash: /.claude/ becomes --claude-."""
+    return re.sub(r"[^a-zA-Z0-9]", "-", path)
 
 
 def same_dir(a, b):
