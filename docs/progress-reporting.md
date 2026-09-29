@@ -13,6 +13,8 @@ ENTRY
 
 It takes a lock, so an entry cannot interleave with another run's ([Concurrent runs](./concurrent-runs.md)). A bare `>>` from two agents at once produces a log where neither entry is readable.
 
+**An entry describes the state at the time it was written.** A line such as "PR is a draft" or "CI is green" is an observation, not a fact that keeps: the next iteration must re-query GitHub before acting on it or repeating it (see "RE-READ GITHUB STATE" in `.claude/CLAUDE.md`). Write what you observed, from a query you ran in this turn.
+
 **IMPORTANT:** Every progress entry MUST include a `Resume command` line with the claude resume command for the current session. Use the format: `claude -r <session-id>` where `<session-id>` is the current conversation's session ID. This allows easy resumption of the agent.
 
 ## For status: "pending" → "committed"
@@ -77,6 +79,7 @@ it names for those.
 - Pushed branch: [branch-name]
 - Created PR: #[pr-number]
 - PR URL: [url]
+- PR state as read back after creation: [isDraft, requested reviewers, assignee, labels — from `gh pr view --json`, not from the flags passed]
 - **Resume command:** `claude -r <session-id>`
 ---
 ```
