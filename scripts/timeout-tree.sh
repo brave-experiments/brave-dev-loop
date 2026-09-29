@@ -56,17 +56,16 @@ kill_tree() {
 STATE_DIR=$(mktemp -d)
 touch "$STATE_DIR/stamp"
 
-# Whether anything a glob matches changed since the stamp. IFS is a newline only
-# so a path with a space in it survives the unquoted expansion that globs it.
+# Whether anything a glob matches changed since the stamp. compgen prints one
+# match a line, so a path with a space in it arrives whole.
 changed() {
-  local glob path IFS=$'\n'
+  local glob path
   for glob in "${QUIET_GLOBS[@]}"; do
-    for path in $glob; do
-      [ -e "$path" ] || continue
+    while IFS= read -r path; do
       if [ -n "$(find "$path" -newer "$STATE_DIR/stamp" -print 2>/dev/null | head -n 1)" ]; then
         return 0
       fi
-    done
+    done < <(compgen -G "$glob")
   done
   return 1
 }
