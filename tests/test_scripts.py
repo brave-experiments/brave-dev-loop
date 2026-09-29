@@ -8,6 +8,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -822,6 +823,20 @@ def select_task_args(tmp_dir, stories, extra_prompt, checked=(), count=False):
         run_id="test",
         count=count,
     )
+
+
+def test_the_selection_model_loads_no_mcp_server(select_task, tmp_dir):
+    """The candidates it reads are issue titles, which anyone can write."""
+    argv = os.path.join(tmp_dir, "argv")
+    fake = os.path.join(tmp_dir, "claude")
+    with open(fake, "w") as f:
+        f.write(
+            f"#!/bin/bash\nprintf '%s\\n' \"$@\" > {shlex.quote(argv)}\necho US-001\n"
+        )
+    os.chmod(fake, 0o755)
+    assert select_task.llm_select([make_story()], "the first one", fake) == "US-001"
+    with open(argv) as f:
+        assert "--strict-mcp-config" in f.read().splitlines()
 
 
 class TestSelectTaskNamedStoryIsNotSubstituted:
@@ -4254,6 +4269,12 @@ class TestReviewRequestQueue:
         assert "--allowedTools" in claude_log[0]
         assert "Task" in claude_log[0].split("--allowedTools")[1]
 
+    def test_the_session_loads_no_mcp_server(self, tmp_dir):
+        """The PR under review is untrusted text, and a server in the operator's
+        ~/.claude.json can hold their own accounts."""
+        _, _, claude_log = self._run(self.JOB, tmp_dir, self._stubs(tmp_dir))
+        assert "--strict-mcp-config" in claude_log[0]
+
     def test_the_session_runs_on_the_review_model(self, tmp_dir):
         """The session runs scripts and launches subagents that choose their own
         model; on the default model its turns cost several times as much."""
@@ -4985,6 +5006,17 @@ class TestProjectSchedules:
         is a schedule change that no one asked for."""
         with open(self.GOLDEN) as f:
             assert self._render(tmp_dir, "brave-core") == f.read()
+
+    @pytest.mark.parametrize("profile", ["brave-core", "brave-dev-loop", "default"])
+    def test_every_agent_job_loads_no_mcp_server(self, tmp_dir, profile):
+        """A server the operator added for their own account sits in
+        ~/.claude.json, which every session reads unless told not to."""
+        agents = [
+            j for j in self._jobs(self._render(tmp_dir, profile)) if "claude -p '" in j
+        ]
+        assert agents
+        for job in agents:
+            assert "--strict-mcp-config" in job, job
 
     def test_bravebot_runs_three_agent_runs_a_day(self, tmp_dir):
         assert len(self._run_jobs(self._render(tmp_dir, "bravebot"))) == 3

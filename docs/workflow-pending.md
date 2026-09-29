@@ -649,8 +649,9 @@ before and after where the difference is the point, and each step where the
 change is a sequence.
 
 **A browser interface.** Navigate to the page, check the change works, and
-screenshot it if you have browser tools configured (e.g. via MCP). Note in the
-progress report when you do not, because then a person has to look for you.
+screenshot it if you can drive a browser from the shell. Loop sessions load no
+MCP server (`--strict-mcp-config`), so an MCP browser tool is not available. Note
+in the progress report when you cannot, because then a person has to look for you.
 
 Never reconstruct a screen from the code. A plausible-looking screen that the
 product does not actually draw is worse than no screen, because a reviewer will

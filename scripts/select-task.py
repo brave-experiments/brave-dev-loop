@@ -348,7 +348,7 @@ def llm_select(candidates, extra_prompt, claude_bin="claude"):
 
     try:
         result = subprocess.run(
-            [claude_bin, "--print", "--model", "haiku", prompt],
+            [claude_bin, "--print", "--strict-mcp-config", "--model", "haiku", prompt],
             capture_output=True,
             text=True,
             timeout=30,

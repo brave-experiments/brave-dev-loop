@@ -44,7 +44,7 @@ bot_launch_agent() {
       BOT_LAUNCH_SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
       "$clean" --cd "$cwd" "$timeout_tree" "$timeout" \
         $bin $model_flag --dangerously-skip-permissions --print --verbose \
-        --output-format stream-json --session-id "$BOT_LAUNCH_SESSION_ID" "$prompt" \
+        --output-format stream-json --strict-mcp-config --session-id "$BOT_LAUNCH_SESSION_ID" "$prompt" \
         </dev/null 2>&1 | "$clean" tee -a "$log" >/dev/null || rc=$?
       # The final assistant text, never a tool result: the same extraction run.sh
       # uses for its completion check.
