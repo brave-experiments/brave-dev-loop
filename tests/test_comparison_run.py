@@ -154,6 +154,39 @@ class TestOrchestration:
         assert "Evaluator run (step 3 of 3)" in body
 
 
+def test_a_launched_claude_loads_no_mcp_server(tmp_dir):
+    """The comparison and evaluator sessions skip permissions like the base run,
+    so a server in the operator's ~/.claude.json would be theirs to call."""
+    argv = os.path.join(tmp_dir, "argv")
+    fake = os.path.join(tmp_dir, "claude")
+    with open(fake, "w") as f:
+        f.write('#!/bin/bash\nprintf \'%s\\n\' "$@" > "$ARGV_OUT"\n')
+    os.chmod(fake, 0o755)
+    prompt = os.path.join(tmp_dir, "prompt")
+    with open(prompt, "w") as f:
+        f.write("do the story")
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; bot_launch_agent claude "$2" "" "$3" "$3/log" "$4" "$3/final" 60',
+            "_",
+            os.path.join(SCRIPTS_DIR, "lib", "agent-launch.sh"),
+            fake,
+            tmp_dir,
+            prompt,
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "ARGV_OUT": argv},
+    )
+    assert result.returncode == 0, result.stderr
+    with open(argv) as f:
+        args = f.read().splitlines()
+    assert "--strict-mcp-config" in args
+    assert args[-1] == "do the story"
+
+
 # ── find-agent-session.py ────────────────────────────────────────────────────
 
 

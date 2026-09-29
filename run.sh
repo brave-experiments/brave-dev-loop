@@ -871,15 +871,17 @@ Additional context: $EXTRA_PROMPT"
     STOP_HOOK="python3 $(printf '%q' "$SCRIPT_DIR/scripts/iteration-stopped-short.py") --hook $(printf '%q' "$STOP_CHECK")"
     CLAUDE_SETTINGS=$(jq -nc --arg cmd "$STOP_HOOK" \
       '{hooks: {Stop: [{hooks: [{type: "command", command: $cmd, timeout: 60}]}]}}')
+    # --strict-mcp-config loads no MCP server, so one the operator added for their own
+    # account (~/.claude.json) is never offered to a session reading untrusted issues.
     # The session's transcript and its subagents' sit under a directory named for
     # the working directory; timeout-tree.sh globs for them rather than guess the name.
     CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
     CLAUDE_QUIET=(--quiet "$QUIET_SECONDS" "$CLAUDE_HOME/projects/*/$SESSION_ID.jsonl" "$CLAUDE_HOME/projects/*/$SESSION_ID")
     if [ "$USE_TUI" = true ]; then
       # TUI mode: let Claude own the terminal directly (no piping)
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --session-id "$SESSION_ID" "$AGENT_PROMPT" || AGENT_RC=$?
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --strict-mcp-config --session-id "$SESSION_ID" "$AGENT_PROMPT" || AGENT_RC=$?
     else
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --strict-mcp-config --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
       AGENT_RC=${PIPESTATUS[0]}
     fi
@@ -925,9 +927,9 @@ Additional context: $EXTRA_PROMPT"
     bot_slot_heartbeat
     AGENT_RC=0
     if [ "$USE_TUI" = true ]; then
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --resume "$SESSION_ID" "$RESUME_PROMPT" || AGENT_RC=$?
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --strict-mcp-config --resume "$SESSION_ID" "$RESUME_PROMPT" || AGENT_RC=$?
     else
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --resume "$SESSION_ID" "$RESUME_PROMPT" </dev/null 2>&1 \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --strict-mcp-config --resume "$SESSION_ID" "$RESUME_PROMPT" </dev/null 2>&1 \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" >> "$TEMP_OUTPUT" || true
       AGENT_RC=${PIPESTATUS[0]}
     fi

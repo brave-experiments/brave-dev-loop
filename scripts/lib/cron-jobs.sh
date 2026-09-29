@@ -45,7 +45,7 @@ bot_cron_job() {
 # default.
 bot_cron_agent() {
   local slots="${3:-}" model="${4:-}"
-  printf "./scripts/with-lock.sh %s%s -- %s -p '%s'%s --allowedTools '%s'" \
+  printf "./scripts/with-lock.sh %s%s -- %s -p '%s'%s --allowedTools '%s' --strict-mcp-config" \
     "$1" "${slots:+ --slots $slots}" "$CLAUDE_BIN" "$2" \
     "${model:+ --model $model}" "$CLAUDE_TOOLS"
 }

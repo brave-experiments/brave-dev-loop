@@ -378,6 +378,20 @@ class TestRunSh:
             assert '--settings "$CLAUDE_SETTINGS"' in line, line
             assert '"${CLAUDE_QUIET[@]}"' in line, line
 
+    def test_every_claude_launch_loads_no_mcp_server(self):
+        """A server the operator added for their own account sits in
+        ~/.claude.json, which every session reads. Loop sessions skip
+        permissions and read untrusted issue text."""
+        launches = [
+            line
+            for line in run_sh().splitlines()
+            if "$BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG" in line
+        ]
+        assert len(launches) == 4
+        for line in launches:
+            assert "--strict-mcp-config" in line, line
+            assert "--mcp-config" not in line.replace("--strict-mcp-config", ""), line
+
     def test_the_stop_hook_is_this_script(self):
         body = run_sh()
         assert (
