@@ -261,9 +261,13 @@
    tree that will be pushed.
 
    **The rule: the tree you gate is the tree you push.** A gate result belongs to
-   the exact tree it ran on. Rebase after gating and the result is void. Edit a
-   file after gating and the result is void. So rebase first, gate once, and
-   commit that tree without touching it again.
+   the tree it ran on. Edit a file after gating and the result is void. So rebase
+   first, gate once, and commit that tree without touching it again.
+
+   A rebase after gating voids the result only if it could change the outcome.
+   Upstream often moves during a long gate run, and re-running the suite because an
+   unrelated commit landed costs hours and money and learns nothing. See
+   [9f](#9f-a-rebase-after-the-gates-voids-them-only-if-it-reaches-the-diff).
 
    ### 9a. Put the branch on current upstream — before the gates, not after
 
@@ -277,7 +281,8 @@
    there. Rebasing before the first push is free. Rebasing *before* the gates
    rather than after is what stops the suite from running twice: a rebase on top
    of a green suite has thrown that suite away, and re-running it is the single
-   most expensive thing an iteration does.
+   most expensive thing an iteration does. (If upstream moves *during* the gates, a
+   second rebase does not automatically undo them: see 9f.)
 
    If the rebased tree fails on code this diff does not touch, check whether
    upstream is already red before changing anything — see
@@ -390,6 +395,35 @@
    flake rules in step 11 — re-run the named test by itself — rather than by
    re-running the suite.
 
+   ### 9f. A rebase after the gates voids them only if it reaches the diff
+
+   Note the commit the gates ran on (`git rev-parse upstream/master` before 9b).
+   If you must rebase again before pushing, compare what upstream gained since:
+
+   ```bash
+   git fetch upstream
+   git diff --stat <gated-upstream-sha> upstream/master   # what the rebase pulls in
+   git diff --name-only upstream/master...HEAD            # what this branch touches
+   ```
+
+   The gate result **stands** if all of these hold:
+
+   - `git rebase` finished with no conflict and needed no hand edit.
+   - Nothing upstream gained touches a file the branch touches, or the interface
+     (headers, public API, schema, shared config) the branch's code calls or
+     implements.
+   - Nothing upstream gained touches dependency manifests, lockfiles, or build or
+     toolchain config, since those change what every gate compiles.
+
+   That is a rebase over unrelated work. Do not re-run the gates. Push, and write in
+   progress.txt and the PR body's test plan that the gates ran on `<sha>` and the
+   branch was then rebased onto `<sha>` over changes in `<areas>` that do not reach
+   the diff. CI builds the merge with upstream anyway and is the backstop.
+
+   The result is **void** if any condition fails, or if you cannot tell. Then re-run
+   only the gates the new upstream changes can reach (as in 9d), not the whole
+   suite by default. When in doubt, the cost of a re-run is the price of doubt.
+
 10. **If ALL tests pass:**
    - Commit ALL changes (must be in `[targetRepoPath from bot config]`)
    - **Then prove the committed tree is the tree the gates passed on:**
@@ -408,15 +442,16 @@
    passed on the tree HEAD already holds is the most expensive thing an iteration
    can do and it learns nothing. Confirm instead that nothing since has voided it:
 
-   - **No rebase since the gates ran.** If upstream moved and the branch needs
-     rebasing again, the gate result is void — go back to 9a.
+   - **No rebase since the gates ran, or one that 9f clears.** If upstream moved
+     and the branch needs rebasing again, apply 9f. Only a rebase it does not clear
+     voids the gate result and sends you back to 9a.
    - **No edit and no `--amend` since the gates ran.** If either happened, re-run
      the gates the change could reach (9d).
    - `git status --porcelain` prints nothing.
 
-   Do NOT create a PR until the full suite has passed on the exact tree HEAD points
-   at. Only where a *flake* was settled below does a gate count as passed without a
-   clean run — never anywhere else.
+   Do NOT create a PR until the full suite has passed on the tree HEAD points at.
+   Only a *flake* settled below, or a rebase that 9f clears, lets a gate count as
+   passed without a clean run on that exact tree — never anywhere else.
 
    **A gate that failed under load is not a failed gate. Re-run the test it named,
    by itself.** "Run them all" means run them all, not pass them all regardless of

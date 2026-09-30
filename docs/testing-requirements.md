@@ -158,7 +158,8 @@ Project-specific. See the project profile's `docs/testing.md` for the presubmit 
   [workflow-pending.md](./workflow-pending.md)
 - **Presubmit must pass** before creating a PR - run it once, on the rebased tree,
   and commit that tree unchanged (workflow-pending.md step 9). Running it again on
-  the tree it already passed on buys nothing
+  the tree it already passed on buys nothing, and neither does re-running it after a
+  later rebase over changes that do not reach the diff (workflow-pending.md, 9f)
 - Do NOT commit broken code
 - Do NOT skip tests for any reason
 - Keep changes focused and minimal
