@@ -570,6 +570,46 @@ def submit_approval(repo, pr_number):
     return None
 
 
+def bot_review_requested(repo, pr_number, bot_username):
+    """Whether the bot is still a requested reviewer on the PR."""
+    rc, out, _ = run_cmd(
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/pulls/{pr_number}/requested_reviewers",
+            "--jq",
+            ".users[].login",
+        ],
+        timeout=30,
+    )
+    return rc == 0 and bot_username in out.split()
+
+
+def submit_comment_review(repo, pr_number, head_sha, body):
+    """Submit a COMMENT review. Returns html_url or None."""
+    payload = json.dumps({"event": "COMMENT", "body": body, "commit_id": head_sha})
+    rc, out, err = run_cmd(
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/pulls/{pr_number}/reviews",
+            "--method",
+            "POST",
+            "--input",
+            "-",
+        ],
+        input_data=payload,
+        timeout=30,
+    )
+    if rc == 0:
+        try:
+            return json.loads(out).get("html_url", "")
+        except json.JSONDecodeError:
+            return ""
+    log(f"ERROR: failed to submit review for PR #{pr_number}: {err}")
+    return None
+
+
 def check_can_approve(pr_number, bot_username):
     """Run the approval gate script. Returns True if approval is allowed."""
     rc, out, err = run_cmd(
@@ -698,6 +738,21 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 # Can't approve but no violations to post
                 result["status"] = "approved"  # Effectively clean
                 log(f"AUTO: {link} - no violations")
+                # GitHub clears a review request only when a review is
+                # submitted. The gate refuses when the bot already approved
+                # this commit or its earlier threads are open, and posting
+                # nothing then leaves the request standing: the 5-minute
+                # review-request poll reviewed one such PR 204 times. Answer it.
+                if bot_review_requested(repo, number, bot_username):
+                    url = submit_comment_review(
+                        repo,
+                        number,
+                        head_sha,
+                        f"Reviewed again at {head_sha[:8]} as requested: no new issues.",
+                    )
+                    if url is not None:
+                        result["review_url"] = url
+                        log(f"AUTO: {link} - answered the review request")
             return result
 
         if auto_mode:
