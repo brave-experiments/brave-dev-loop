@@ -143,7 +143,43 @@ class TestScope:
             {"doc": "arch.md", "condition": "always"},
         ]
         flags = prep.classify_files(["scripts/x.py"])
-        assert [d["doc"] for d in prep.docs_for_flags(docs, flags)] == ["arch.md"]
+        assert [
+            d["doc"] for d in prep.docs_for_flags(docs, flags, ["scripts/x.py"])
+        ] == ["arch.md"]
+
+    def test_a_paths_doc_runs_only_when_a_file_under_it_changed(self, prep):
+        docs = [{"doc": "ui.md", "condition": "paths:ui/,crates/ui-bridge/"}]
+        for files, wanted in (
+            (["crates/core/src/lib.rs", "uix/a.ts"], []),
+            (["crates/core/src/lib.rs", "ui/src/App.tsx"], ["ui.md"]),
+            (["crates/ui-bridge/src/lib.rs"], ["ui.md"]),
+        ):
+            flags = prep.classify_files(files)
+            assert [d["doc"] for d in prep.docs_for_flags(docs, flags, files)] == wanted
+
+    def test_a_paths_doc_reads_only_the_files_under_it(self, prep):
+        assert prep.files_in_scope("paths:ui/", self.FILES) == ["ui/b.ts"]
+
+
+class TestDiscoverBestPractices:
+    def run(self, tmp_path, *flags):
+        result = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(SKILL_DIR, "discover-best-practices.py"),
+                str(tmp_path),
+                *flags,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return {d["doc"]: d["condition"] for d in json.loads(result.stdout)}
+
+    def test_a_paths_condition_survives_the_flag_filter_with_its_case(self, tmp_path):
+        (tmp_path / "ui.md").write_text("# UI\n\n<!-- applicability: Paths:UI/ -->\n")
+        (tmp_path / "cpp.md").write_text("<!-- applicability: has_cpp_files -->\n")
+        assert self.run(tmp_path, "--has-frontend") == {"ui.md": "paths:UI/"}
 
 
 PR = {

@@ -648,8 +648,22 @@ _FAMILY_PREDICATES = {
 }
 
 
+def path_prefixes(condition):
+    """The directories a `paths:a/,b/` condition names, or None for any other condition."""
+    if not condition or not condition.startswith("paths:"):
+        return None
+    return [p for p in condition[len("paths:") :].split(",") if p]
+
+
+def _under(path, prefixes):
+    return any(path.startswith(p) for p in prefixes)
+
+
 def files_in_scope(condition, paths):
     """The files in `paths` a document tagged with `condition` is checked against."""
+    prefixes = path_prefixes(condition)
+    if prefixes is not None:
+        return [p for p in paths if _under(p, prefixes)]
     own = _FAMILY_PREDICATES.get(condition)
     if own is None:
         return list(paths)
@@ -660,9 +674,16 @@ def files_in_scope(condition, paths):
     ]
 
 
-def docs_for_flags(docs, file_flags):
+def docs_for_flags(docs, file_flags, files):
     """Drop documents whose condition no changed file meets; discovery returns all when none does."""
-    return [d for d in docs if file_flags.get(d.get("condition"), True)]
+
+    def met(condition):
+        prefixes = path_prefixes(condition)
+        if prefixes is not None:
+            return any(_under(f, prefixes) for f in files)
+        return file_flags.get(condition, True)
+
+    return [d for d in docs if met(d.get("condition"))]
 
 
 # ---------------------------------------------------------------------------
@@ -1491,7 +1512,7 @@ def process_pr(
 
     try:
         applicable_docs = docs_for_flags(
-            discover_best_practices(file_flags), file_flags
+            discover_best_practices(file_flags), file_flags, changed
         )
     except Exception as e:
         applicable_docs = []

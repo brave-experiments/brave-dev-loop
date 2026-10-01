@@ -6,6 +6,11 @@ file-type conditions trigger each document. Conditions are read from an
 <!-- applicability: CONDITION --> HTML comment in each file's first 10 lines.
 If no comment is found, the script falls back to naming conventions.
 
+A condition of the form paths:PREFIX[,PREFIX...] (e.g. paths:ui/) ties a
+document to the changed files under those directories instead of a file type.
+The flags cannot express it, so such a document is always output and
+prepare-review.py decides from the changed paths.
+
 Usage:
     python3 discover-best-practices.py <best_practices_dir> [--flags ...]
 
@@ -74,7 +79,10 @@ def extract_applicability(filepath):
                     r"<!--\s*applicability:\s*(\S+)\s*-->", line, re.IGNORECASE
                 )
                 if m:
-                    return m.group(1).lower()
+                    condition = m.group(1)
+                    if condition.lower().startswith("paths:"):
+                        return "paths:" + condition[len("paths:") :]
+                    return condition.lower()
     except OSError:
         pass
     return None
@@ -142,7 +150,9 @@ def main():
         filtered = [
             d
             for d in all_docs
-            if d["condition"] == "always" or d["condition"] in active_conditions
+            if d["condition"] == "always"
+            or d["condition"].startswith("paths:")
+            or d["condition"] in active_conditions
         ]
     else:
         filtered = all_docs
