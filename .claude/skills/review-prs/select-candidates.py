@@ -161,6 +161,7 @@ def write_validator(pr, candidates, bot_username, bp_dir):
         "has_approval": pr.get("hasApproval", False),
         "prior_comments": prior,
         "bot_username": bot_username,
+        "guidance": _prep.REVIEW_GUIDANCE,
     }
     prompt_file = os.path.join(pr_work_dir, "validate_prompt.txt")
     results_file = os.path.join(pr_work_dir, "validated.json")

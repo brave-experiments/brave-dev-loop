@@ -22,10 +22,12 @@ Scan recent open PRs in the configured PR repository for violations of documente
 The review pipeline minimizes LLM token usage by pushing all heavy data through files, not context:
 
 1. **prepare-review.py** (zero LLM tokens) — fetches PRs, diffs, comments; works out which files changed since the last review; writes one detect prompt per rule chunk, plus one for bugs, to a temp work directory; outputs a tiny JSON pointer to the work dir
-2. **Detect subagents** (`review-prs-detect`, Sonnet) — each reads its prompt from a file, checks the diff against its rules, and writes candidate findings to a JSON file. They never read source files.
+2. **Detect subagents** (`review-prs-detect`, Sonnet) — each reads its prompt from a file, checks the diff against its rules, and writes candidate findings to a JSON file. They never read source files, except the ones a project's review guidance names (below).
 3. **select-candidates.py** (zero LLM tokens) — drops the candidates post-review.py would drop anyway (no rule link, a rule id that does not exist, duplicates, lines already commented on, everything past twice the per-PR cap) and writes one validate prompt per PR that has any left
 4. **Validate subagents** (`review-prs-validate`, Opus) — one per PR; reads the candidates against the PR's source tree and writes the ones that hold up
 5. **collect-results.py** (zero LLM tokens) — reads the validated results, feeds them to post-review.py which handles prioritization, dedup, posting, approval, cache updates and notifications
+
+**Project review guidance.** A project profile (`projects/<profile>/profile.json`) may carry a `review` key, documented in [projects/README.md](../../../projects/README.md). Its `guidance` text is read by one extra detect subagent per PR (`chunk_id` `project`, launched like the others from `subagent_prompts`) and by the PR's validator. `prepare-review.py` and `select-candidates.py` add it to the prompts, so the main session does nothing differently. With `verdict`, `post-review.py` opens the review it posts with a recommendation. A profile without the key reviews as before.
 
 The main LLM session only orchestrates: run scripts, read a small manifest, launch subagents with tiny prompts, run the collector. It never sees diffs, rule text, or violation details.
 

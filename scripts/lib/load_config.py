@@ -229,6 +229,33 @@ def pr_draft(profile):
     return value if isinstance(value, bool) else True
 
 
+def review_guidance(profile):
+    """Extra review text for this project, from `review.guidance` in profile.json.
+
+    A string or a list of strings; blank entries and anything else are dropped,
+    so a malformed key means no extra guidance rather than a broken review.
+    """
+    review = profile.get("review")
+    value = review.get("guidance") if isinstance(review, dict) else None
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [
+        entry.strip() for entry in value if isinstance(entry, str) and entry.strip()
+    ]
+
+
+def review_verdict(profile):
+    """Whether a posted review opens with the bot's recommendation.
+
+    `review.verdict` in profile.json. Only a JSON `true` turns it on, so a
+    project that does not ask for it keeps the empty review body it has today.
+    """
+    review = profile.get("review")
+    return isinstance(review, dict) and review.get("verdict") is True
+
+
 def build_research(profile, config, base_dir=None):
     """Render a profile's pre-implementation reading steps.
 

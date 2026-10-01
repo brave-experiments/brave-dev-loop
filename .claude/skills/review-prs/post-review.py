@@ -29,13 +29,22 @@ BOT_DIR = os.path.join(SCRIPT_DIR, "..", "..", "..")
 BOT_DIR = os.path.normpath(BOT_DIR)
 
 sys.path.insert(0, os.path.join(BOT_DIR, "scripts"))
-from lib.load_config import load_config, require_config, resolve_docs_dir
+from lib.load_config import (
+    load_config,
+    load_profile,
+    require_config,
+    resolve_docs_dir,
+    review_verdict,
+)
 
 CACHE_PATH = os.path.join(BOT_DIR, ".ignore", "review-prs-cache.json")
 _config = load_config()
 require_config(_config, "bestPractices.docsDir")
 _BP_BASE = os.path.dirname(resolve_docs_dir(_config, BOT_DIR))
 MANAGE_BP_IDS = os.path.join(_BP_BASE, "script", "manage-bp-ids.py")
+VERDICT = review_verdict(load_profile(_config, BOT_DIR))
+VERDICT_APPROVE = "**Recommendation: approve**"
+VERDICT_CHANGES = "**Recommendation: request changes**"
 CHECK_CAN_APPROVE = os.path.join(BOT_DIR, "scripts", "check-can-approve.py")
 UPDATE_CACHE = os.path.join(SCRIPT_DIR, "update-cache.py")
 SIGNAL_NOTIFY = os.path.join(BOT_DIR, "scripts", "signal-notify.sh")
@@ -436,7 +445,7 @@ def deduplicate_violations(violations, existing_comments):
     return kept
 
 
-def post_batch_review(repo, pr_number, violations, head_sha):
+def post_batch_review(repo, pr_number, violations, head_sha, body=""):
     """Post violations as a single inline review. Returns (review_url, posted_count).
 
     Corrects line numbers that fall outside diff hunks before posting.
@@ -473,7 +482,7 @@ def post_batch_review(repo, pr_number, violations, head_sha):
     payload = json.dumps(
         {
             "event": "COMMENT",
-            "body": "",
+            "body": body,
             "comments": comments,
         }
     )
@@ -544,9 +553,9 @@ def post_batch_review(repo, pr_number, violations, head_sha):
     return review_url, posted
 
 
-def submit_approval(repo, pr_number):
+def submit_approval(repo, pr_number, body=""):
     """Submit an APPROVE review. Returns html_url or None."""
-    payload = json.dumps({"event": "APPROVE", "body": ""})
+    payload = json.dumps({"event": "APPROVE", "body": body})
     rc, out, err = run_cmd(
         [
             "gh",
@@ -725,7 +734,9 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
         if not violations:
             # No violations — attempt approval
             if check_can_approve(number, bot_username):
-                approval_url = submit_approval(repo, number)
+                approval_url = submit_approval(
+                    repo, number, VERDICT_APPROVE if VERDICT else ""
+                )
                 if approval_url is not None:
                     update_cache(number, head_sha, approve=True)
                     result["status"] = "approved"
@@ -757,7 +768,13 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
 
         if auto_mode:
             # Post violations
-            review_url, posted = post_batch_review(repo, number, violations, head_sha)
+            review_url, posted = post_batch_review(
+                repo,
+                number,
+                violations,
+                head_sha,
+                VERDICT_CHANGES if VERDICT else "",
+            )
             result["status"] = "posted"
             result["comments_posted"] = posted
             result["review_url"] = review_url or ""

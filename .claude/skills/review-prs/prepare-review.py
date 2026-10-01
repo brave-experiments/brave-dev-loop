@@ -40,9 +40,11 @@ import importlib.util
 
 from lib.load_config import (
     load_config,
+    load_profile,
     require_config,
     resolve_docs_dir,
     resolve_target_repo,
+    review_guidance,
 )
 from lib.repo_lock import repo_lock
 
@@ -83,6 +85,7 @@ BP_LINK_BASE = f"https://github.com/{PR_REPO}/tree/{DEFAULT_BRANCH}/docs/best-pr
 require_config(_config, "project.targetRepoPath")
 TARGET_REPO_PATH = resolve_target_repo(_config, _BOT_DIR)
 UPDATE_CACHE = os.path.join(_SCRIPT_DIR, "update-cache.py")
+REVIEW_GUIDANCE = review_guidance(load_profile(_config, _BOT_DIR))
 
 
 def log(msg):
@@ -1079,6 +1082,18 @@ Your job: find bugs this change introduces. For example a wrong or inverted cond
 - When in doubt, leave it out. A wrong bug report costs the author more time than a missed one costs the bot.
 - Comment style: short (1-3 sentences), direct."""
 
+_PROJECT_RULES = """\
+Your job: decide whether this project would approve this change, using the guidance below. It is written for this project and overrides "Only report bugs" for the things it names.
+- Report only what the guidance names, and only when the change causes it: the ADDED lines, or what they do to the code around them.
+- Every finding has severity "high" and no rule_link, because approval rides on it. Set `rule` to a short name for the finding, such as "Contradicts a spec clause".
+- The source tree at the PR head is at: {source_path}
+  Paths in the guidance are relative to it. You may Read the files the guidance names and the files those lead to. Read nothing else, and do not search the tree for problems of your own.
+- A finding that needs a file you could not read goes in `issue` as something to check, not as a claim.
+- When in doubt, leave it out. A wrong finding costs the author more time than a missed one costs the bot.
+- Comment style: short (1-3 sentences), direct.
+
+{guidance}"""
+
 _BEST_PRACTICE_LINK_REQUIREMENT = """\
 Best practice link requirement: each rule has a stable ID anchor (e.g., <a id="CS-001"></a>) on the line before its heading. Every violation MUST carry a direct link using that ID:
   {bp_link_base}/<doc>.md#<ID>
@@ -1237,6 +1252,36 @@ def build_correctness_prompt(ctx, diff_text, ranges, candidates_file, chunk_id):
     return "\n".join(parts)
 
 
+def _guidance_text(ctx):
+    """The project's review guidance as a bulleted block."""
+    return "## Project review guidance\n\n" + "\n".join(
+        f"- {entry}" for entry in ctx["guidance"]
+    )
+
+
+def build_project_prompt(
+    ctx, diff_text, ranges, source_path, candidates_file, chunk_id
+):
+    """The prompt for the project's own review guidance."""
+    parts = _prompt_header(ctx)
+    parts += _diff_parts(diff_text, [], ranges)
+    parts += _prior_parts(ctx)
+    parts += [
+        _PROJECT_RULES.format(source_path=source_path, guidance=_guidance_text(ctx)),
+        "",
+    ]
+    if ctx.get("prior_comments"):
+        parts += [_PRIOR_COMMENTS_RULES, ""]
+    parts.append(_detect_output(candidates_file, chunk_id, rules=False))
+    return "\n".join(parts)
+
+
+_GUIDANCE_VALIDATION = (
+    " A candidate that applies the project review guidance below is not a bug "
+    "report: keep it when the guidance, the diff and the source support it, and "
+    "drop it when they do not."
+)
+
 _VALIDATE_INSTRUCTIONS = """\
 Validation:
 The source tree at the PR head is at: {source_path}
@@ -1248,7 +1293,7 @@ Reviewers who read only the diff proposed the candidates above. For each one:
 - Drop it if the PR did not introduce it: the flagged code is on a context line, or the dependency or pattern already existed before this PR.
 - Drop a rule candidate the cited rule text does not support, a naming suggestion for a symbol defined outside the PR's changed files, and a "while you're here" suggestion on code a move or rename carried over unchanged.
 - A claim about what upstream Chromium code does needs the upstream file read. If you cannot find and read it, drop the candidate.
-- A candidate with no rule_link is a bug report: keep it only if the bug is real, the change introduces it, and it would misbehave at runtime or break the build.
+- A candidate with no rule_link is a bug report: keep it only if the bug is real, the change introduces it, and it would misbehave at runtime or break the build.{guidance_note}
 - Check the surrounding code for a justification — a comment, a TODO, or the same pattern used nearby.
 - Sanitize @mentions: keep only logins of actual PR participants.
 - Keep what survives, tightening draft_comment where the source gives better context. Do not add findings of your own. Keep file, line, severity, rule and rule_link unless the source shows they are wrong, and keep `line` within the valid line ranges.
@@ -1300,6 +1345,8 @@ def build_validate_prompt(
     parts += _prior_parts(ctx)
     if ctx.get("prior_comments"):
         parts += [_PRIOR_COMMENTS_RULES, ""]
+    if ctx.get("guidance"):
+        parts += [_guidance_text(ctx), ""]
     base_ref = ctx.get("base_ref")
     if base_ref and is_feature_branch(base_ref):
         lookup = f"gh api repos/{PR_REPO}/contents/<path>?ref={base_ref}"
@@ -1320,6 +1367,7 @@ def build_validate_prompt(
             results_file=results_file,
             never_post=_NEVER_POST,
             gh_note=gh_note,
+            guidance_note=_GUIDANCE_VALIDATION if ctx.get("guidance") else "",
             pr_number=ctx["number"],
         )
     )
@@ -1489,6 +1537,7 @@ def process_pr(
         "rereview_note": rereview_note,
         "prior_comments": prior_comments,
         "bot_username": bot_username,
+        "guidance": REVIEW_GUIDANCE,
     }
 
     subagent_prompts = []
@@ -1538,6 +1587,21 @@ def process_pr(
                 "correctness", "correctness", prompt_file, results_file, prompt
             )
         )
+        if REVIEW_GUIDANCE:
+            prompt_file, results_file, prompt = write_prompt(
+                "project",
+                lambda rf: build_project_prompt(
+                    ctx,
+                    code_diff,
+                    code_ranges,
+                    worktree_path or TARGET_REPO_PATH,
+                    rf,
+                    "project",
+                ),
+            )
+            subagent_prompts.append(
+                _prompt_entry("project", "project", prompt_file, results_file, prompt)
+            )
 
     pr_result = {
         "number": pr_number,

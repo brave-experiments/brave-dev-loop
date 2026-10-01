@@ -2,6 +2,17 @@
   "description": "bravebot: a Rust workspace (cargo) with a thin npm wrapper, checked by ci.yml plus the organization-level brave/security-action scan.",
   "worktrees": true,
   "prDraft": false,
+  "review": {
+    "verdict": true,
+    "guidance": [
+      "This review decides whether the bot recommends approving the pull request. Report what a maintainer would want fixed before approving, and nothing else.",
+      "Agreement with the specs. docs/specs/README.md lists every spec and the files it governs, and a spec wins where it and the code disagree. Read the specs that govern the changed files, and the specs the title concerns. Report a change that contradicts a clause, and a change to behaviour a clause states that leaves the clause and the tests it names unchanged. Never suggest rewording a clause to fit the code.",
+      "The untrusted-content rule, as docs/development/reviewing-for-the-rule.md states it. Report a branch on untrusted bytes, a `declassify` outside the policy gates, and a `Labelled` built by hand to give a value a better label than its inputs had.",
+      "Tests that can fail, per docs/best-practices/tests.md. Report a behaviour change whose tests cover only the allowed path, a relaxed assertion, and a test that would still pass with the fault restored.",
+      "Scope. Report a change that does nothing for what the title says, such as an unrelated refactor, and a new dependency, permission grant or network destination the title does not account for.",
+      "Report nothing that `make check` already decides: formatting, lints, clause numbering, lockfiles."
+    ]
+  },
   "uiPaths": [
     "crates/tui/"
   ],
