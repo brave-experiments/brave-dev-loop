@@ -5153,23 +5153,28 @@ class TestProjectSchedules:
 
         assert not (minutes("brave-core") & minutes("bravebot"))
 
-    def test_the_poll_and_the_sweep_draw_on_the_same_slots(self, tmp_dir):
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot"])
+    def test_the_poll_and_the_sweep_draw_on_the_same_slots(self, tmp_dir, profile):
         """A PR review is a full checkout of the target repo per PR, so the
         total number running at once has to be bounded however they were
         started. One lock name, and — this is the part that bites — the same
         count from every job that uses it: a job asking for one slot takes slot
         1 only, and exits doing nothing whenever a job asking for three holds
         it. That is a sweep starved by the poll."""
-        jobs = self._jobs(self._render(tmp_dir, "brave-core"))
+        jobs = self._jobs(self._render(tmp_dir, profile))
         reviewing = [j for j in jobs if "review-prs" in j]
-        assert len(reviewing) == 3  # weekday sweep, weekend sweep, the poll
+        # brave-core: weekday sweep, weekend sweep, the poll; bravebot: one
+        # daily sweep, the poll
+        assert len(reviewing) == {"brave-core": 3, "bravebot": 2}[profile]
         counts = {
             re.search(r"with-lock\.sh review-prs --slots (\d+)", j).group(1)
             for j in reviewing
         }
         assert counts == {"3"}
 
-    @pytest.mark.parametrize("profile", ["brave-core", "default", "brave-dev-loop"])
+    @pytest.mark.parametrize(
+        "profile", ["brave-core", "bravebot", "default", "brave-dev-loop"]
+    )
     def test_every_review_sweep_runs_on_the_review_model(self, tmp_dir, profile):
         """A sweep session over thirty PRs re-reads its own context on every
         turn; that is the part of the bill the model choice decides."""
@@ -5184,13 +5189,21 @@ class TestProjectSchedules:
                 "-p '/review-prs 1d open auto reviewer-priority' --model sonnet " in job
             )
 
-    def test_bravebot_reviews_only_what_it_is_asked_to(self, tmp_dir):
-        """This project has no automated best-practices sweep yet. Answering an
-        explicit request does not wait on one: what a human asked for is not the
-        unsolicited pass over everything that moved today."""
+    def test_bravebot_sweeps_eight_times_a_day_and_answers_requests(self, tmp_dir):
+        """The sweep is spread evenly over the day, and an explicit request
+        does not wait on it: the poll is a job of its own."""
         block = self._render(tmp_dir, "bravebot")
         assert "review-requested.sh" in block
-        assert "/review-prs 1d" not in block
+        sweeps = [j for j in self._jobs(block) if "/review-prs 1d" in j]
+        assert len(sweeps) == 1
+        minute, hours = sweeps[0].split()[:2]
+        assert minute == "30"
+        assert hours.split(",") == [str(h) for h in range(0, 24, 3)]
+        assert sweeps[0].split()[2:5] == ["*", "*", "*"]
+
+    def test_bravebot_sweep_minute_is_off_the_poll_minutes(self, tmp_dir):
+        poll = self._review_request_job(tmp_dir, "bravebot").split()[0].split(",")
+        assert "30" not in poll
 
     @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
     def test_every_job_runs_in_the_bot_dir_and_logs_there(self, tmp_dir, profile):

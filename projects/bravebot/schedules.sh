@@ -39,10 +39,21 @@ bot_cron_job "0 17 * * *" "./scripts/check-has-work.sh" \
   "run-cron.log"
 
 echo ""
+echo "# Review PRs — skip if no recent open PRs"
+echo "# Gate check runs before git sync to avoid wasted fetches"
+echo "# Daily: 8x/day, every 3 hours at :30. Three slots, the same count the"
+echo "# review-request poll below asks for: a sweep asking for one would take"
+echo "# slot 1 only, and exit doing nothing every time a poll happened to be"
+echo "# holding it. :30 is off every minute the poll uses and off brave-core's."
+bot_cron_job "30 0,3,6,9,12,15,18,21 * * *" "./scripts/check-new-prs.sh" \
+  "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")" \
+  "review-prs-cron.log"
+
+echo ""
 echo "# Review requested from the bot — skip unless someone asked"
 echo "# Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)"
-echo "# This project schedules no unsolicited best-practices sweep: the bot reviews"
-echo "# a bravebot PR when a human clicks Request review on it, and not otherwise."
+echo "# A human clicking Request review on a bravebot PR gets an answer within"
+echo "# five minutes, without waiting for the next sweep above."
 echo "# Every 5 min, and runs overlap — a review is much longer than the gap —"
 echo "# bounded by three review-prs slots, with a lock per PR inside the job."
 echo "# Minutes are offset from brave-core's copy of this job, which can be"
