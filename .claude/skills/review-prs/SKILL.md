@@ -29,6 +29,8 @@ The review pipeline minimizes LLM token usage by pushing all heavy data through 
 
 **Project review guidance.** A project profile (`projects/<profile>/profile.json`) may carry a `review` key, documented in [projects/README.md](../../../projects/README.md). Its `guidance` text is read by one extra detect subagent per PR (`chunk_id` `project`, launched like the others from `subagent_prompts`) and by the PR's validator. `prepare-review.py` and `select-candidates.py` add it to the prompts, so the main session does nothing differently. With `verdict`, `post-review.py` opens the review it posts with a recommendation. A profile without the key reviews as before.
 
+**Which best-practice docs a PR is checked against.** Each doc in the target repo's `best-practices/` declares it in an `<!-- applicability: CONDITION -->` comment in its first 10 lines: `always`, a file-type condition (`has_cpp_files`, `has_frontend_files`, … — see `discover-best-practices.py`), or `paths:ui/,crates/ui-bridge/`, which runs the doc only when a changed file is under one of those directories and shows it only those files.
+
 The main LLM session only orchestrates: run scripts, read a small manifest, launch subagents with tiny prompts, run the collector. It never sees diffs, rule text, or violation details.
 
 ---
