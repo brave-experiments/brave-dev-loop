@@ -509,3 +509,44 @@ class TestUpdateCache:
         files = self._run(bot, "900", "sha", f"--file-hashes={hashes}")["_files"]
         assert len(files) == 500
         assert "0" not in files and list(files)[-1] == "900"
+
+
+class TestCleanReviewTheGateRefuses:
+    """A clean review the approval gate will not turn into an approval (the bot
+    already approved this commit, or its earlier threads are open). GitHub
+    clears a review request only when a review is submitted, so posting nothing
+    leaves the PR in the review-request queue and every poll reviews it again."""
+
+    PR = {"number": 7, "title": "t", "headRefOid": "abcdef1234567890"}
+
+    @pytest.fixture
+    def posted(self, post, monkeypatch):
+        reviews = []
+        monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
+        monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b: False)
+        monkeypatch.setattr(
+            post,
+            "submit_approval",
+            lambda *a: pytest.fail("the gate refused; nothing may approve"),
+        )
+        monkeypatch.setattr(
+            post,
+            "submit_comment_review",
+            lambda repo, n, sha, body: reviews.append((n, sha, body)) or "url",
+        )
+        return reviews
+
+    def test_a_standing_request_is_answered(self, post, posted, monkeypatch):
+        monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: True)
+        result = post.process_pr(dict(self.PR), "o/r", "bot", True)
+        assert [(n, sha) for n, sha, _ in posted] == [(7, "abcdef1234567890")]
+        assert "no new issues" in posted[0][2]
+        assert result["status"] == "approved" and result["review_url"] == "url"
+
+    def test_an_unrequested_pr_gets_nothing(self, post, posted, monkeypatch):
+        """The sweep reviews PRs nobody asked the bot about. A comment there
+        would be noise on every rebase."""
+        monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: False)
+        post.process_pr(dict(self.PR), "o/r", "bot", True)
+        assert posted == []
