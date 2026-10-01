@@ -254,6 +254,120 @@ class TestProcessPr:
         assert "+let y = 2" in prompt and "+int x;" not in prompt
         assert "the other 2 were reviewed already" in prompt
 
+    def test_guidance_adds_a_project_prompt_and_only_then(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        first, _ = self._run(prep, tmp_dir)
+        assert "project" not in [p["kind"] for p in first["subagent_prompts"]]
+
+        monkeypatch.setattr(
+            prep, "REVIEW_GUIDANCE", ["Check the spec.", "Check tests."]
+        )
+        result, _ = self._run(prep, tmp_dir)
+        assert [p["chunk_id"] for p in result["subagent_prompts"]][-2:] == [
+            "correctness",
+            "project",
+        ]
+        with open(result["subagent_prompts"][-1]["prompt_file"]) as f:
+            prompt = f.read()
+        assert "- Check the spec.\n- Check tests." in prompt
+        assert "+int x;" in prompt and "+let y = 1" in prompt
+        assert "PR head is at: " in prompt
+        assert "project_candidates.json" in prompt
+        with open(result["subagent_prompts"][-2]["prompt_file"]) as f:
+            assert "Check the spec." not in f.read()
+
+    def test_the_validator_sees_the_guidance_it_judges_against(self, prep):
+        ctx = {"number": 1, "title": "t", "bot_username": "bot"}
+        args = ([{"id": "c1"}], [], "", {}, [], "/src", "/out.json")
+        plain = prep.build_validate_prompt(ctx, *args)
+        assert "Project review guidance" not in plain
+        assert "project review guidance" not in plain
+        guided = prep.build_validate_prompt(
+            dict(ctx, guidance=["Check the spec."]), *args
+        )
+        assert "- Check the spec." in guided
+        assert "applies the project review guidance" in guided
+
+
+class TestProfileReview:
+    def test_guidance_is_a_string_or_a_list_of_text(self, prep):
+        assert prep.review_guidance({}) == []
+        assert prep.review_guidance({"review": {"guidance": " one "}}) == ["one"]
+        assert prep.review_guidance(
+            {"review": {"guidance": ["a", "", " ", 3, "b"]}}
+        ) == [
+            "a",
+            "b",
+        ]
+
+    @pytest.mark.parametrize(
+        "review", ["text", ["a"], {"guidance": 5}, {"guidance": {}}]
+    )
+    def test_malformed_guidance_means_none(self, prep, review):
+        assert prep.review_guidance({"review": review}) == []
+
+    def test_verdict_needs_a_json_true(self, post):
+        assert post.review_verdict({"review": {"verdict": True}}) is True
+        for value in ("true", 1, None):
+            assert post.review_verdict({"review": {"verdict": value}}) is False
+        assert post.review_verdict({}) is False
+
+    def test_bravebot_asks_for_a_review_and_brave_core_does_not(self, prep, post):
+        for name in ("bravebot", "brave-core"):
+            profile = prep.load_profile({"project": {"profile": name}}, ROOT_DIR)
+            asked = name == "bravebot"
+            assert bool(prep.review_guidance(profile)) is asked, name
+            assert post.review_verdict(profile) is asked, name
+
+
+class TestVerdict:
+    PR = {"number": 7, "title": "t", "headRefOid": "abcdef1234567890"}
+    FINDING = {
+        "file": "a.rs",
+        "line": 3,
+        "severity": "high",
+        "rule": "Contradicts a spec clause",
+        "draft_comment": "The spec says otherwise.",
+    }
+
+    @pytest.fixture
+    def sent(self, post, monkeypatch):
+        sent = {}
+        monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
+        monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b: True)
+        monkeypatch.setattr(
+            post,
+            "submit_approval",
+            lambda repo, n, body="": sent.update(approve=body) or "url",
+        )
+        monkeypatch.setattr(
+            post,
+            "post_batch_review",
+            lambda repo, n, vs, sha, body="": sent.update(comment=body) or ("url", 1),
+        )
+        return sent
+
+    def _run(self, post, violations):
+        return post.process_pr(dict(self.PR, violations=violations), "o/r", "bot", True)
+
+    def test_an_approval_opens_with_the_recommendation(self, post, sent, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", True)
+        assert self._run(post, [])["status"] == "approved"
+        assert sent == {"approve": "**Recommendation: approve**"}
+
+    def test_a_review_with_comments_recommends_changes(self, post, sent, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", True)
+        assert self._run(post, [dict(self.FINDING)])["status"] == "posted"
+        assert sent == {"comment": "**Recommendation: request changes**"}
+
+    def test_no_verdict_keeps_the_bodies_empty(self, post, sent, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", False)
+        self._run(post, [])
+        self._run(post, [dict(self.FINDING)])
+        assert sent == {"approve": "", "comment": ""}
+
 
 class TestPrRemote:
     def test_ignores_a_remote_that_only_pushes_to_the_repo(self, prep, monkeypatch):
