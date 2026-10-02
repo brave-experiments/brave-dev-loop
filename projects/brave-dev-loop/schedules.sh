@@ -1,7 +1,7 @@
 #!/bin/bash
 # brave-dev-loop's own cron jobs. Sourced by scripts/sync-schedules.sh, which
 # supplies the variables and the bot_cron_* helpers (scripts/lib/cron-jobs.sh)
-# and wraps whatever this file prints in the crontab block for this project
+# and wraps what each group prints in a crontab block for this project
 # alone.
 #
 # No sync-target-repo.sh in front of either command, unlike every other
@@ -15,18 +15,26 @@
 # starts at 01:00, 12:45 and 17:00, brave-core between 06:00 and 20:00, and
 # each one
 # drives its own agent session over its own checkout.
+#
+# The jobs are grouped, and each group is a function that prints its lines: a
+# machine can install just the jobs that run.sh (make schedules-run), just the
+# ones that review (make schedules-review), or all of them (make schedules).
 
-echo ""
-echo "# Main agent run — skip if no actionable stories"
-echo "# Gate check runs before git sync to avoid wasted fetches"
-echo "# Daily: 6 iterations, overnight, killed at 4h30m — before brave-core's 07:45"
-bot_cron_job "0 3 * * *" "./scripts/check-has-work.sh" \
-  "./scripts/timeout-tree.sh 16200 ./run.sh 6" \
-  "run-cron.log"
+schedule_run() {
+  echo ""
+  echo "# Main agent run — skip if no actionable stories"
+  echo "# Gate check runs before git sync to avoid wasted fetches"
+  echo "# Daily: 6 iterations, overnight, killed at 4h30m — before brave-core's 07:45"
+  bot_cron_job "0 3 * * *" "./scripts/check-has-work.sh" \
+    "./scripts/timeout-tree.sh 16200 ./run.sh 6" \
+    "run-cron.log"
+}
 
-echo ""
-echo "# Review PRs — skip if no recent open PRs"
-echo "# Daily: once, late, after the day's human pull requests have landed"
-bot_cron_job "30 21 * * *" "./scripts/check-new-prs.sh" \
-  "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' '' "$BOT_REVIEW_MODEL")" \
-  "review-prs-cron.log"
+schedule_review() {
+  echo ""
+  echo "# Review PRs — skip if no recent open PRs"
+  echo "# Daily: once, late, after the day's human pull requests have landed"
+  bot_cron_job "30 21 * * *" "./scripts/check-new-prs.sh" \
+    "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' '' "$BOT_REVIEW_MODEL")" \
+    "review-prs-cron.log"
+}

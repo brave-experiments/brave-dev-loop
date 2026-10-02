@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/load-config.sh"
 
 BLOCK=$("$SCRIPT_DIR/sync-schedules.sh" --print)
-SCHEDULE_FILE=$(sed -n 's/^# Jobs: //p' <<< "$BLOCK")
+SCHEDULE_FILE=$(sed -n 's/^# Jobs: //p' <<< "$BLOCK" | head -1)
 
 # Colors (disable if not a terminal)
 if [ -t 1 ]; then

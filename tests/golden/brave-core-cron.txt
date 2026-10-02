@@ -1,4 +1,4 @@
-# === brave-dev-loop (brave-core) scheduled jobs ===
+# === brave-dev-loop (brave-core:run) scheduled jobs ===
 # Managed by sync-schedules.sh - do not edit manually
 # Jobs: projects/brave-core/schedules.sh
 SHELL=/bin/bash
@@ -21,6 +21,14 @@ PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap
 # Weekends: once/day at 14:10
 10 14 * * 0,6 cd {BOT} && source .envrc && ./scripts/check-has-work.sh && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./run.sh 3 ; } >> {BOT}/logs/run-cron.log 2>&1
 
+# === end brave-dev-loop (brave-core:run) ===
+
+# === brave-dev-loop (brave-core:review) scheduled jobs ===
+# Managed by sync-schedules.sh - do not edit manually
+# Jobs: projects/brave-core/schedules.sh
+SHELL=/bin/bash
+PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+
 # Review PRs — skip if no recent open PRs
 # Gate check runs before git sync to avoid wasted fetches
 # Three slots, the same count the review-request poll below asks for: a
@@ -39,6 +47,14 @@ PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap
 # inside the job so two runs never review the same one.
 4,9,14,19,24,29,34,39,44,49,54,59 * * * * cd {BOT} && source .envrc && ./scripts/check-review-requests.sh && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh ; } >> {BOT}/logs/review-requested-cron.log 2>&1
 
+# === end brave-dev-loop (brave-core:review) ===
+
+# === brave-dev-loop (brave-core:maintenance) scheduled jobs ===
+# Managed by sync-schedules.sh - do not edit manually
+# Jobs: projects/brave-core/schedules.sh
+SHELL=/bin/bash
+PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+
 # Learnable pattern search — skip if no recent merged PRs
 # Gate check runs before git sync to avoid wasted fetches
 0 6 * * * cd {BOT} && source .envrc && ./scripts/check-bot-prs.sh && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh learnable-pattern-search -- /usr/bin/claude -p '/learnable-pattern-search 2d' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' --strict-mcp-config ; } >> {BOT}/logs/learnable-pattern-search-cron.log 2>&1
@@ -50,4 +66,4 @@ PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap
 # Update best practices from upstream Chromium docs (monthly, 1st of each month)
 15 4 1 * * cd {BOT} && source .envrc && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh update-best-practices -- /usr/bin/claude -p '/update-best-practices' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' --strict-mcp-config ; } >> {BOT}/logs/update-best-practices-cron.log 2>&1
 
-# === end brave-dev-loop (brave-core) ===
+# === end brave-dev-loop (brave-core:maintenance) ===
