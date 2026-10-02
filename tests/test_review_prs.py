@@ -423,6 +423,54 @@ class TestVerdict:
         assert sent == {"approve": "", "comment": ""}
 
 
+class TestCleanReviewOfTheBotsOwnPr:
+    """GitHub refuses an approval from a PR's author. A clean review of a PR
+    the bot opened used to try one anyway, and the refusal left the PR with
+    nothing on it."""
+
+    PR = {"number": 7, "title": "t", "headRefOid": "abcdef1234567890"}
+
+    @pytest.fixture
+    def posted(self, post, monkeypatch):
+        reviews = []
+        monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
+        monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b: True)
+        monkeypatch.setattr(
+            post,
+            "submit_approval",
+            lambda repo, n, body="": reviews.append(("approve", n, body)) or "url",
+        )
+        monkeypatch.setattr(
+            post,
+            "submit_comment_review",
+            lambda repo, n, sha, body: reviews.append(("comment", n, body)) or "url",
+        )
+        return reviews
+
+    def test_its_own_pr_gets_a_comment_not_an_approval(self, post, posted, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", True)
+        pr = dict(self.PR, author="bot", checks_details="<details>x</details>")
+        result = post.process_pr(pr, "o/r", "bot", True)
+        assert [(kind, n) for kind, n, _ in posted] == [("comment", 7)]
+        body = posted[0][2]
+        assert body.startswith("**Recommendation: approve**")
+        assert "No issues found at abcdef12" in body
+        assert body.endswith("<details>x</details>")
+        assert result["status"] == "commented" and result["review_url"] == "url"
+
+    def test_without_a_verdict_the_comment_still_says_it_was_clean(
+        self, post, posted, monkeypatch
+    ):
+        monkeypatch.setattr(post, "VERDICT", False)
+        post.process_pr(dict(self.PR, author="bot"), "o/r", "bot", True)
+        assert posted[0][2].startswith("No issues found at abcdef12")
+
+    def test_someone_elses_pr_is_still_approved(self, post, posted):
+        post.process_pr(dict(self.PR, author="alice"), "o/r", "bot", True)
+        assert [kind for kind, _, _ in posted] == ["approve"]
+
+
 class TestPrRemote:
     def test_ignores_a_remote_that_only_pushes_to_the_repo(self, prep, monkeypatch):
         repo = prep.PR_REPO
@@ -626,6 +674,13 @@ class TestCollect:
         assert [r["number"] for r in results] == [1]
         assert results[0]["fileHashesFile"] == "/h.json"
         assert results[0]["violations"] == []
+
+    def test_the_author_reaches_post_review(self, collect, tmp_dir):
+        """post-review needs it to tell the bot's own PR, which it may not
+        approve, from anyone else's."""
+        manifest = {"prs": [dict(self._pr(tmp_dir, validation=None), author="bot")]}
+        [result] = collect.build_post_review_input(manifest)["pr_results"]
+        assert result["author"] == "bot"
 
 
 class TestDescribeChecks:
