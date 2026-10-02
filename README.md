@@ -105,8 +105,12 @@ and a hint it cannot use leaves the ordinary queue in charge.
 
 ```bash
 tail -f data/progress.txt        # watch progress
-make schedules                   # install/update this project's cron jobs
-make remove-schedules            # remove this project's cron jobs
+make schedules                   # install/update all of this project's cron jobs
+make schedules-run               # ...only the run.sh jobs
+make schedules-review            # ...only the PR review jobs
+make remove-schedules            # remove all of this project's cron jobs
+make remove-schedules-run        # ...only the run.sh jobs
+make remove-schedules-review     # ...only the PR review jobs
 make view-schedules              # show the current schedule
 make unmount-worktrees           # remove idle story worktrees (ALL=1 for all)
 ./scripts/reset-run-state.sh     # reset run state between runs
@@ -160,9 +164,9 @@ commits the pull request has never had, and a conflict aborts the rebase and
 leaves the worktree usable. Where the repository signs commits, the rebase
 writes new ones and needs the signing key available. No model is involved.
 
-Scheduled jobs are per-project: `make schedules` installs one crontab block for
-the project in `config.json` and leaves any other deployment's block alone, and
-what goes in it comes from `projects/<profile>/schedules.sh` — see
+Scheduled jobs are per-project: `make schedules` installs the crontab blocks for
+the project in `config.json` and leaves any other deployment's blocks alone, and
+what goes in them comes from `projects/<profile>/schedules.sh` — see
 [Project profiles](projects/README.md#schedules).
 
 Several runs can share one bot directory — set `bot.maxConcurrentRuns` and see

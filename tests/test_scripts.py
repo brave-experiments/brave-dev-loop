@@ -5163,9 +5163,9 @@ class TestProjectSchedules:
         it. That is a sweep starved by the poll."""
         jobs = self._jobs(self._render(tmp_dir, profile))
         reviewing = [j for j in jobs if "review-prs" in j]
-        # brave-core: weekday sweep, weekend sweep, the poll; bravebot: one
-        # daily sweep, the poll
-        assert len(reviewing) == {"brave-core": 3, "bravebot": 2}[profile]
+        # brave-core: weekday sweep, weekend sweep, the poll; bravebot: a
+        # daytime sweep, an overnight one, the poll
+        assert len(reviewing) == {"brave-core": 3, "bravebot": 3}[profile]
         counts = {
             re.search(r"with-lock\.sh review-prs --slots (\d+)", j).group(1)
             for j in reviewing
@@ -5190,16 +5190,47 @@ class TestProjectSchedules:
             )
 
     def test_bravebot_sweeps_eight_times_a_day_and_answers_requests(self, tmp_dir):
-        """The sweep is spread evenly over the day, and an explicit request
-        does not wait on it: the poll is a job of its own."""
+        """The daytime sweeps fall inside 06:00-23:00, and an explicit request
+        does not wait on them: the poll is a job of its own."""
         block = self._render(tmp_dir, "bravebot")
         assert "review-requested.sh" in block
         sweeps = [j for j in self._jobs(block) if "/review-prs 1d" in j]
-        assert len(sweeps) == 1
-        minute, hours = sweeps[0].split()[:2]
+        (daytime,) = [j for j in sweeps if not j.startswith("30 2 ")]
+        minute, hours = daytime.split()[:2]
         assert minute == "30"
-        assert hours.split(",") == [str(h) for h in range(0, 24, 3)]
-        assert sweeps[0].split()[2:5] == ["*", "*", "*"]
+        hours = [int(h) for h in hours.split(",")]
+        assert len(hours) == 8
+        assert 6 <= min(hours) and max(hours) < 23
+        assert daytime.split()[2:5] == ["*", "*", "*"]
+
+    def test_bravebot_sweeps_once_overnight_in_the_middle_of_the_gap(self, tmp_dir):
+        """One sweep covers the hours the daytime ones skip, halfway between the
+        last of them and the first."""
+        sweeps = [
+            j
+            for j in self._jobs(self._render(tmp_dir, "bravebot"))
+            if "/review-prs 1d" in j
+        ]
+        (overnight,) = [j for j in sweeps if j.split()[1] == "2"]
+        assert overnight.split()[:5] == ["30", "2", "*", "*", "*"]
+        (daytime,) = [j for j in sweeps if j is not overnight]
+        hours = [int(h) for h in daytime.split()[1].split(",")]
+        last, first = max(hours) + 0.5, min(hours) + 0.5
+        assert (last + ((first + 24 - last) / 2)) % 24 == 2.5
+
+    def test_the_sweeps_are_spread_no_more_than_three_hours_apart(self, tmp_dir):
+        """Eight sweeps bunched into one stretch of the day would leave the rest
+        of it unreviewed."""
+        sweeps = [
+            j
+            for j in self._jobs(self._render(tmp_dir, "bravebot"))
+            if "/review-prs 1d" in j
+        ]
+        hours = sorted(int(h) for j in sweeps for h in j.split()[1].split(","))
+        gaps = [b - a for a, b in zip(hours, hours[1:])] + [hours[0] + 24 - hours[-1]]
+        assert len(hours) == 9
+        assert max(gaps) <= 4
+        assert all(g >= 2 for g in gaps[:-1])
 
     def test_bravebot_sweep_minute_is_off_the_poll_minutes(self, tmp_dir):
         poll = self._review_request_job(tmp_dir, "bravebot").split()[0].split(",")
@@ -5264,14 +5295,76 @@ class TestProjectSchedules:
     def test_the_block_is_marked_with_the_project_name(self, tmp_dir):
         """What keeps one project's install from stripping another's jobs."""
         block = self._render(tmp_dir, "bravebot", name="bravebot")
-        assert block.startswith("# === brave-dev-loop (bravebot) scheduled jobs ===")
-        assert block.rstrip().endswith("# === end brave-dev-loop (bravebot) ===")
+        assert block.startswith(
+            "# === brave-dev-loop (bravebot:run) scheduled jobs ==="
+        )
+        assert block.rstrip().endswith("# === end brave-dev-loop (bravebot:review) ===")
 
     def test_printing_touches_no_crontab(self):
         """The suite runs on the machine whose schedules these are."""
         with open(os.path.join(SCRIPT_DIR, "sync-schedules.sh")) as f:
             body = f.read()
         assert body.index("if $PRINT_ONLY; then") < body.index("| crontab -")
+
+    @classmethod
+    def _group(cls, tmp_dir, profile, group):
+        bot = cls._bot_dir(tmp_dir, profile)
+        result = subprocess.run(
+            [
+                os.path.join(bot, "scripts", "sync-schedules.sh"),
+                "--print",
+                "--group",
+                group,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return result
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
+    def test_the_run_group_holds_the_run_jobs_and_no_review(self, tmp_dir, profile):
+        result = self._group(tmp_dir, profile, "run")
+        assert result.returncode == 0, result.stderr
+        jobs = self._jobs(result.stdout)
+        assert any("./run.sh " in j for j in jobs)
+        assert not any("review-prs" in j or "review-requested" in j for j in jobs)
+        assert result.stdout.startswith(f"# === brave-dev-loop ({profile}:run) ")
+
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
+    def test_the_review_group_holds_the_review_jobs_and_no_run(self, tmp_dir, profile):
+        result = self._group(tmp_dir, profile, "review")
+        assert result.returncode == 0, result.stderr
+        jobs = self._jobs(result.stdout)
+        assert any("/review-prs 1d" in j or "review-requested.sh" in j for j in jobs)
+        assert not any("./run.sh " in j or "sync-prd.sh" in j for j in jobs)
+        assert result.stdout.startswith(f"# === brave-dev-loop ({profile}:review) ")
+
+    @pytest.mark.parametrize(
+        "profile", ["brave-core", "bravebot", "default", "brave-dev-loop"]
+    )
+    def test_the_groups_together_are_every_job_exactly_once(self, tmp_dir, profile):
+        whole = self._jobs(self._render(tmp_dir, profile))
+        parts = []
+        for group in ("run", "review", "maintenance"):
+            result = self._group(tmp_dir, profile, group)
+            if result.returncode == 0:
+                parts += self._jobs(result.stdout)
+        bot = self._bot_dir(tmp_dir, profile)
+        parts = [
+            p.replace(os.path.realpath(bot), "{BOT}").replace(bot, "{BOT}")
+            for p in parts
+        ]
+        assert sorted(parts) == sorted(whole)
+
+    def test_a_group_the_project_has_no_jobs_in_is_an_error(self, tmp_dir):
+        result = self._group(tmp_dir, "bravebot", "maintenance")
+        assert result.returncode == 1
+        assert "defines no 'maintenance' jobs" in result.stderr
+
+    def test_an_unknown_group_is_an_error(self, tmp_dir):
+        result = self._group(tmp_dir, "bravebot", "nightly")
+        assert result.returncode == 1
+        assert "unknown group" in result.stderr
 
 
 class TestRemoveSchedules:
@@ -5299,8 +5392,16 @@ esac
             ]
         )
 
-    def _run(self, tmp_dir, crontab, *args):
-        bot = TestProjectSchedules._bot_dir(tmp_dir, "brave-core")
+    def _run(
+        self,
+        tmp_dir,
+        crontab,
+        *args,
+        script="remove-schedules.sh",
+        profile="brave-core",
+        returncode=0,
+    ):
+        bot = TestProjectSchedules._bot_dir(tmp_dir, profile)
         fake_bin = os.path.join(tmp_dir, "fake-bin")
         os.makedirs(fake_bin, exist_ok=True)
         fake = os.path.join(fake_bin, "crontab")
@@ -5318,16 +5419,18 @@ esac
         env["PATH"] = fake_bin + os.pathsep + env.get("PATH", "")
         env["FAKE_CRONTAB_FILE"] = tab
         result = subprocess.run(
-            [os.path.join(bot, "scripts", "remove-schedules.sh"), *args],
+            [os.path.join(bot, "scripts", script), *args],
             capture_output=True,
             text=True,
             env=env,
         )
-        assert result.returncode == 0, result.stderr
+        assert result.returncode == returncode, result.stderr
         after = None
         if os.path.exists(tab):
             with open(tab) as f:
                 after = f.read()
+        if returncode:
+            return result.stderr, after
         return result.stdout, after
 
     def test_this_projects_block_is_removed(self, tmp_dir):
@@ -5388,6 +5491,154 @@ esac
         """The marker spelling and its history belong in one place."""
         with open(os.path.join(SCRIPT_DIR, "remove-schedules.sh")) as f:
             assert "bot_strip_cron_blocks" in f.read()
+
+    def test_one_group_is_removed_and_the_others_stay(self, tmp_dir):
+        crontab = "\n".join(
+            [
+                self._block("brave-core:run", "0 1 * * * runjob"),
+                self._block("brave-core:review", "0 2 * * * reviewjob"),
+            ]
+        )
+        _, after = self._run(tmp_dir, crontab, "--group", "review")
+        assert "reviewjob" not in after and "runjob" in after
+
+    def test_removing_everything_takes_every_group(self, tmp_dir):
+        crontab = "\n".join(
+            [
+                "0 4 * * * backup",
+                self._block("brave-core:run", "0 1 * * * runjob"),
+                self._block("brave-core:review", "0 2 * * * reviewjob"),
+                self._block("bravebot:review", "0 3 * * * theirs"),
+            ]
+        )
+        _, after = self._run(tmp_dir, crontab)
+        assert "runjob" not in after and "reviewjob" not in after
+        assert "backup" in after and "theirs" in after
+
+    def test_a_group_cannot_be_cut_out_of_a_pre_group_block(self, tmp_dir):
+        crontab = self._block("brave-core", "0 1 * * * old")
+        err, after = self._run(tmp_dir, crontab, "--group", "review", returncode=1)
+        assert "before jobs were grouped" in err
+        assert after == crontab + "\n"
+
+    def test_removing_a_group_nothing_installed_is_not_an_error(self, tmp_dir):
+        crontab = self._block("brave-core:run", "0 1 * * * runjob")
+        out, after = self._run(tmp_dir, crontab, "--group", "review")
+        assert "No cron jobs installed" in out
+        assert after == crontab + "\n"
+
+    def test_an_unknown_group_removes_nothing(self, tmp_dir):
+        crontab = self._block("brave-core:run", "0 1 * * * runjob")
+        err, after = self._run(tmp_dir, crontab, "--group", "nightly", returncode=1)
+        assert "unknown group" in err
+        assert after == crontab + "\n"
+
+
+class TestInstallSchedulesByGroup:
+    """make schedules-run and make schedules-review install one group each, as
+    blocks that live side by side; make schedules installs every group. The
+    crontab is the fake TestRemoveSchedules puts on PATH."""
+
+    def _sync(self, tmp_dir, crontab, *args, **kw):
+        return TestRemoveSchedules()._run(
+            tmp_dir, crontab, *args, script="sync-schedules.sh", **kw
+        )
+
+    def test_only_the_run_group_installs_no_review_job(self, tmp_dir):
+        _, after = self._sync(tmp_dir, None, "--group", "run")
+        assert "./run.sh " in after
+        assert "review-prs" not in after and "review-requested" not in after
+        assert "(brave-core:run) scheduled jobs" in after
+
+    def test_only_the_review_group_installs_no_run_job(self, tmp_dir):
+        _, after = self._sync(tmp_dir, None, "--group", "review")
+        assert "review-requested.sh" in after
+        assert "./run.sh " not in after and "sync-prd.sh" not in after
+
+    def test_the_two_groups_installed_in_turn_both_stay(self, tmp_dir):
+        _, after = self._sync(tmp_dir, None, "--group", "run")
+        _, after = self._sync(tmp_dir, after, "--group", "review")
+        assert "(brave-core:run) scheduled jobs" in after
+        assert "(brave-core:review) scheduled jobs" in after
+
+    def test_installing_a_group_again_replaces_it_not_duplicates_it(self, tmp_dir):
+        _, once = self._sync(tmp_dir, None, "--group", "review")
+        _, twice = self._sync(tmp_dir, once.rstrip("\n"), "--group", "review")
+        assert twice.count("scheduled jobs ===") == 1
+        assert twice.count("review-requested.sh") == once.count("review-requested.sh")
+
+    def test_installing_a_group_leaves_other_lines_and_projects_alone(self, tmp_dir):
+        theirs = "\n".join(
+            [
+                "0 4 * * * backup",
+                "# === brave-dev-loop (bravebot:review) scheduled jobs ===",
+                "0 3 * * * theirs",
+                "# === end brave-dev-loop (bravebot:review) ===",
+            ]
+        )
+        _, after = self._sync(tmp_dir, theirs, "--group", "review")
+        assert "backup" in after and "theirs" in after
+        assert "(brave-core:review) scheduled jobs" in after
+
+    def test_everything_installs_every_group_and_replaces_a_pre_group_block(
+        self, tmp_dir
+    ):
+        old = "\n".join(
+            [
+                "0 4 * * * backup",
+                "# === brave-dev-loop (brave-core) scheduled jobs ===",
+                "0 1 * * * stale",
+                "# === end brave-dev-loop (brave-core) ===",
+            ]
+        )
+        _, after = self._sync(tmp_dir, old)
+        assert "stale" not in after and "backup" in after
+        for group in ("run", "review", "maintenance"):
+            assert f"(brave-core:{group}) scheduled jobs" in after
+        assert "(brave-core) scheduled jobs" not in after
+
+    def test_a_group_is_refused_while_a_pre_group_block_is_installed(self, tmp_dir):
+        old = "\n".join(
+            [
+                "# === brave-dev-loop (brave-core) scheduled jobs ===",
+                "0 1 * * * stale",
+                "# === end brave-dev-loop (brave-core) ===",
+            ]
+        )
+        err, after = self._sync(tmp_dir, old, "--group", "run", returncode=1)
+        assert "make schedules" in err
+        assert after == old + "\n"
+
+    def test_a_group_the_profile_lacks_installs_nothing(self, tmp_dir):
+        err, after = self._sync(
+            tmp_dir, None, "--group", "maintenance", profile="bravebot", returncode=1
+        )
+        assert "defines no 'maintenance' jobs" in err
+        assert after is None
+
+    def test_remove_undoes_install_for_each_group(self, tmp_dir):
+        _, after = self._sync(tmp_dir, None)
+        _, after = TestRemoveSchedules()._run(
+            tmp_dir, after.rstrip("\n"), "--group", "review"
+        )
+        assert "(brave-core:review)" not in after
+        assert "(brave-core:run)" in after and "(brave-core:maintenance)" in after
+        out, after = TestRemoveSchedules()._run(tmp_dir, after.rstrip("\n"))
+        assert after is None
+
+    def test_make_has_a_target_per_group(self):
+        with open(os.path.join(SCRIPT_DIR, os.pardir, "Makefile")) as f:
+            makefile = f.read()
+        for target, script in (
+            ("schedules-run", "sync-schedules.sh --group run"),
+            ("schedules-review", "sync-schedules.sh --group review"),
+            ("remove-schedules-run", "remove-schedules.sh --group run"),
+            ("remove-schedules-review", "remove-schedules.sh --group review"),
+        ):
+            assert re.search(
+                rf"^{target}:\n\t\./scripts/{re.escape(script)}$", makefile, re.M
+            )
+            assert re.search(rf"^\.PHONY:.* {target}( |$)", makefile, re.M)
 
 
 class TestPythonFileLock:

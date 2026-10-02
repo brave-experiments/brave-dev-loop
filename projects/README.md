@@ -54,17 +54,27 @@ pointer has nothing to add.
 
 ## Schedules
 
-`make schedules` installs one crontab block for one project, and the jobs in it
-come from `projects/<profile>/schedules.sh`. A profile with no such file gets
+`make schedules` installs the crontab blocks for one project, and the jobs in
+them come from `projects/<profile>/schedules.sh`. A profile with no such file gets
 `projects/default/schedules.sh`, so a new project is still just a profile
 directory.
 
-Each file prints crontab lines, built with the helpers in
-`scripts/lib/cron-jobs.sh`:
+Each file defines up to three functions, one per group of jobs, and each prints
+crontab lines built with the helpers in `scripts/lib/cron-jobs.sh`:
+
+| Function | Holds |
+| --- | --- |
+| `schedule_run` | the `run.sh` jobs and the PRD sync that feeds them |
+| `schedule_review` | the `review-prs` sweeps and the poll for requested reviews |
+| `schedule_maintenance` | everything else: pattern search, Signal, the repo sync |
+
+A group a project has no jobs in is simply not defined. For example:
 
 ```sh
-bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
-  "./scripts/sync-target-repo.sh && ./run.sh 20" "run-cron.log"
+schedule_run() {
+  bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
+    "./scripts/sync-target-repo.sh && ./run.sh 20" "run-cron.log"
+}
 ```
 
 `bot_cron_job` gives every job the same prologue — the bot directory, the bot
@@ -75,13 +85,33 @@ job with nothing to do costs no fetches. `bot_cron_agent <lock> '<prompt>'
 held under a named lock; a `/review-prs` job passes `"$BOT_REVIEW_MODEL"` as
 its model.
 
-One machine can run several deployments, and the crontab block each one writes
-is marked with its `project.name`. Installing one project's schedules replaces
-that project's block and leaves every other block — another project's, or
-anything you wrote yourself — where it is.
+Cron reads the machine's local clock, so an hour in a schedule is an hour in the
+machine's time zone.
 
-`make remove-schedules` is the inverse: it strips this project's block and
-leaves every other line in the crontab alone. `make schedules` puts it back.
+Each group is a crontab block of its own, marked with the `project.name` and the
+group (`brave-dev-loop (bravebot:review)`), so one group installs without the
+others:
+
+```sh
+make schedules           # every group
+make schedules-run       # only the run.sh jobs
+make schedules-review    # only the review jobs
+```
+
+The same `--group` (`run`, `review` or `maintenance`) works on
+`scripts/sync-schedules.sh` directly. One machine can run several deployments:
+installing a project's schedules replaces that project's blocks and leaves every
+other block — another project's, or anything you wrote yourself — where it is.
+
+`make remove-schedules` is the inverse: it strips every one of this project's
+blocks and leaves every other line in the crontab alone. `make
+remove-schedules-run` and `make remove-schedules-review` strip one group.
+`make schedules` puts everything back.
+
+A crontab installed before jobs were grouped holds one block for the whole
+project. `make schedules` and `make remove-schedules` replace or remove it;
+installing or removing a single group refuses while it is there, because the
+group cannot be cut out of it.
 
 `make view-schedules` renders the block this deployment would install and says
 which file produced it.
