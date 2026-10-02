@@ -216,6 +216,7 @@ def main():
             continue
         existing = _post.fetch_existing_comments(repo, number) if violations else []
         candidates = select(pr, violations, existing, _prep.BP_DIR)
+        pr["detected"] = len(violations)
         log(f"PR #{number}: {len(violations)} detected, {len(candidates)} to validate")
         if not candidates:
             pr["validation"] = None

@@ -553,6 +553,17 @@ def post_batch_review(repo, pr_number, violations, head_sha, body=""):
     return review_url, posted
 
 
+def with_details(text, pr_data):
+    """`text` followed by how the review was reached, for a project that asks for a verdict."""
+    details = pr_data.get("checks_details", "")
+    return f"{text}\n\n{details}" if VERDICT and details else text
+
+
+def verdict_body(verdict, pr_data):
+    """A review body that opens with the verdict and ends with how it was reached."""
+    return with_details(verdict, pr_data) if VERDICT else ""
+
+
 def submit_approval(repo, pr_number, body=""):
     """Submit an APPROVE review. Returns html_url or None."""
     payload = json.dumps({"event": "APPROVE", "body": body})
@@ -735,7 +746,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             # No violations — attempt approval
             if check_can_approve(number, bot_username):
                 approval_url = submit_approval(
-                    repo, number, VERDICT_APPROVE if VERDICT else ""
+                    repo, number, verdict_body(VERDICT_APPROVE, pr_data)
                 )
                 if approval_url is not None:
                     update_cache(number, head_sha, approve=True)
@@ -759,7 +770,10 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                         repo,
                         number,
                         head_sha,
-                        f"Reviewed again at {head_sha[:8]} as requested: no new issues.",
+                        with_details(
+                            f"Reviewed again at {head_sha[:8]} as requested: no new issues.",
+                            pr_data,
+                        ),
                     )
                     if url is not None:
                         result["review_url"] = url
@@ -773,7 +787,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 number,
                 violations,
                 head_sha,
-                VERDICT_CHANGES if VERDICT else "",
+                verdict_body(VERDICT_CHANGES, pr_data),
             )
             result["status"] = "posted"
             result["comments_posted"] = posted
