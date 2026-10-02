@@ -207,6 +207,8 @@ class TestProcessPr:
         monkeypatch.setattr(prep, "fetch_diff", lambda n: diff["text"])
         monkeypatch.setattr(prep, "fetch_prior_comments", lambda *a, **k: ("", False))
         monkeypatch.setattr(prep, "extract_images", lambda n: [])
+        monkeypatch.setattr(prep, "fetch_pr_body", lambda n: "The author's words.")
+        monkeypatch.setattr(prep, "REVIEW_SUMMARY", False)
         monkeypatch.setattr(
             prep,
             "resolve_bot_threads",
@@ -313,6 +315,31 @@ class TestProcessPr:
         with open(result["subagent_prompts"][-2]["prompt_file"]) as f:
             assert "Check the spec." not in f.read()
 
+    def test_a_summary_prompt_covers_the_whole_pr_and_only_when_asked(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        first, _ = self._run(prep, tmp_dir)
+        assert first["summary_prompt"] is None
+
+        monkeypatch.setattr(prep, "REVIEW_SUMMARY", True)
+        prior = self._hashes(prep)
+        stubbed["text"] = diff_of(self.CC, section("ui/b.ts", ["let y = 2"]), self.LOCK)
+        result, _ = self._run(prep, tmp_dir, prior=prior)
+        assert [p["kind"] for p in result["subagent_prompts"]] == [
+            "rules",
+            "correctness",
+        ]
+        summary = result["summary_prompt"]
+        with open(summary["prompt_file"]) as f:
+            prompt = f.read()
+        assert "The author's words." in prompt
+        assert "+int x;" in prompt and "+let y = 2" in prompt
+        assert "the other 2 were reviewed already" not in prompt
+        assert summary["results_file"].endswith("summary.json")
+        assert "Never @-mention anyone." in prompt
+        with open(summary["body_file"]) as f:
+            assert f.read() == "The author's words."
+
     def test_the_validator_sees_the_guidance_it_judges_against(self, prep):
         ctx = {"number": 1, "title": "t", "bot_username": "bot"}
         args = ([{"id": "c1"}], [], "", {}, [], "/src", "/out.json")
@@ -413,12 +440,31 @@ class TestVerdict:
             "comment": "**Recommendation: request changes**\n\n<details>y</details>",
         }
 
+    def test_the_description_comes_before_the_how_section(
+        self, post, sent, monkeypatch
+    ):
+        monkeypatch.setattr(post, "VERDICT", True)
+        pr = dict(
+            self.PR,
+            violations=[],
+            description_details="**What this pull request does**",
+            checks_details="<details>x</details>",
+        )
+        post.process_pr(pr, "o/r", "bot", True)
+        assert sent["approve"] == (
+            "**Recommendation: approve**\n\n**What this pull request does**"
+            "\n\n<details>x</details>"
+        )
+
     def test_no_verdict_keeps_the_bodies_empty(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", False)
         for extra in ({}, {"checks_details": "<details>x</details>"}):
             for found in ([], [dict(self.FINDING)]):
                 post.process_pr(
-                    dict(self.PR, violations=found, **extra), "o/r", "bot", True
+                    dict(self.PR, violations=found, description_details="d", **extra),
+                    "o/r",
+                    "bot",
+                    True,
                 )
         assert sent == {"approve": "", "comment": ""}
 
@@ -681,6 +727,97 @@ class TestCollect:
         manifest = {"prs": [dict(self._pr(tmp_dir, validation=None), author="bot")]}
         [result] = collect.build_post_review_input(manifest)["pr_results"]
         assert result["author"] == "bot"
+
+
+class TestDescribePr:
+    FULL = (
+        "Closes o/r#1\n\nUser impact: none -- a refactor.\n\n## The problem\nIt broke.\n\n"
+        "## Reproduce\n1. Run it.\n\n## The fix\nFixed.\n\n## Test plan\n- [x] make check\n"
+    )
+
+    def _pr(self, tmp_dir, result=None, body=FULL):
+        summary = {
+            "results_file": os.path.join(tmp_dir, "summary.json"),
+            "body_file": os.path.join(tmp_dir, "pr_body.md"),
+        }
+        if result is not None:
+            with open(summary["results_file"], "w") as f:
+                json.dump(result, f)
+        with open(summary["body_file"], "w") as f:
+            f.write(body)
+        return {"summary_prompt": summary}
+
+    def test_a_complete_description_has_nothing_missing(self, collect):
+        assert collect.missing_from_description(self.FULL) == []
+
+    def test_the_missing_parts_are_named(self, collect):
+        body = "Closes o/r#1\n\n## Summary\nIt broke.\n\n## Reproduce\nTry it.\n"
+        missing = collect.missing_from_description(body)
+        assert len(missing) == 4
+        assert missing[0].startswith("A `User impact:` line")
+        assert "A `## The fix` section." in missing
+        assert "A `## Test plan` section." in missing
+        assert any("Steps in `## Reproduce`" in m for m in missing)
+        assert collect.missing_from_description("  ") == ["A description: it is empty."]
+
+    def test_a_pr_without_a_summary_prompt_gets_nothing(self, collect):
+        assert collect.describe_pr({"summary_prompt": None}) == ""
+        assert collect.describe_pr({}) == ""
+
+    def test_description_steps_and_gaps_are_laid_out(self, collect, tmp_dir):
+        pr = self._pr(
+            tmp_dir,
+            {
+                "description": "It retries a slow reply.",
+                "manual_testing": {
+                    "in_description": False,
+                    "steps": ["Run it.", "Wait."],
+                },
+            },
+            body="Just a title.",
+        )
+        text = collect.describe_pr(pr)
+        assert text.startswith("**What this pull request does**\n\nIt retries")
+        assert "**Trying it by hand**" in text
+        assert "1. Run it.\n2. Wait." in text
+        assert "**Missing from the description**\n\n- A `User impact:` line" in text
+
+    def test_steps_are_left_out_when_the_description_has_them(self, collect, tmp_dir):
+        pr = self._pr(
+            tmp_dir,
+            {
+                "description": "d",
+                "manual_testing": {"in_description": True, "steps": ["Run it."]},
+            },
+        )
+        text = collect.describe_pr(pr)
+        assert "Trying it by hand" not in text
+        assert "Missing from the description" not in text
+
+    def test_an_unreadable_or_malformed_result_still_lists_the_gaps(
+        self, collect, tmp_dir
+    ):
+        pr = self._pr(tmp_dir, None, body="")
+        assert collect.describe_pr(pr).startswith("**Missing from the description**")
+        pr = self._pr(tmp_dir, ["not", "a", "dict"], body=self.FULL)
+        assert collect.describe_pr(pr) == ""
+        pr = self._pr(
+            tmp_dir,
+            {"description": 5, "manual_testing": {"steps": "run it"}},
+            body=self.FULL,
+        )
+        assert collect.describe_pr(pr) == ""
+
+    def test_the_section_reaches_the_post_review_input(self, collect, tmp_dir):
+        pr = dict(
+            self._pr(tmp_dir, {"description": "It does a thing."}),
+            number=1,
+            title="t",
+            subagent_prompts=[],
+            validation=None,
+        )
+        [result] = collect.build_post_review_input({"prs": [pr]})["pr_results"]
+        assert "It does a thing." in result["description_details"]
 
 
 class TestDescribeChecks:
