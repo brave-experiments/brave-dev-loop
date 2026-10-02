@@ -155,6 +155,7 @@ def build_post_review_input(manifest, project_checks=()):
             {
                 "number": pr["number"],
                 "title": pr.get("title", ""),
+                "author": pr.get("author", ""),
                 "headRefOid": pr.get("headRefOid", ""),
                 "hasApproval": pr.get("hasApproval", False),
                 "fileHashesFile": pr.get("file_hashes_file"),

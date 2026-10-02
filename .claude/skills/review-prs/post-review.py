@@ -564,6 +564,16 @@ def verdict_body(verdict, pr_data):
     return with_details(verdict, pr_data) if VERDICT else ""
 
 
+def own_pr_body(bot_username, head_sha, pr_data):
+    """The clean verdict on a PR the bot opened, which it may not approve."""
+    note = (
+        f"No issues found at {head_sha[:8]}. {bot_username} opened this PR, and "
+        "GitHub does not let a PR's author approve it, so this is a comment "
+        "rather than an approval."
+    )
+    return with_details(f"{VERDICT_APPROVE}\n\n{note}" if VERDICT else note, pr_data)
+
+
 def submit_approval(repo, pr_number, body=""):
     """Submit an APPROVE review. Returns html_url or None."""
     payload = json.dumps({"event": "APPROVE", "body": body})
@@ -664,7 +674,7 @@ def send_signal_notification(results, repo, summary):
     for r in results:
         url = pr_url(repo, r["number"])
         status = r.get("status", "")
-        if status == "approved":
+        if status in ("approved", "commented"):
             approved.append(url)
         elif status == "posted":
             violations.append(url)
@@ -744,7 +754,24 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
 
         if not violations:
             # No violations — attempt approval
-            if check_can_approve(number, bot_username):
+            can_approve = check_can_approve(number, bot_username)
+            if can_approve and pr_data.get("author") == bot_username:
+                # GitHub refuses an approval from the PR's own author, and a
+                # refused approval used to end the run with nothing on the PR:
+                # no review, no sign it had been read. Say it as a comment.
+                url = submit_comment_review(
+                    repo,
+                    number,
+                    head_sha,
+                    own_pr_body(bot_username, head_sha, pr_data),
+                )
+                if url is not None:
+                    result["status"] = "commented"
+                    result["review_url"] = url
+                    log(f"AUTO: {link} - no violations, own PR, commented")
+                else:
+                    log(f"AUTO: {link} - SKIPPED: clean-review comment failed")
+            elif can_approve:
                 approval_url = submit_approval(
                     repo, number, verdict_body(VERDICT_APPROVE, pr_data)
                 )
@@ -894,6 +921,11 @@ def main():
             url = r.get("review_url", "")
             summary_lines.append(
                 f"  \u274c {link} - {r['comments_posted']} comments - {url}"
+            )
+        elif r["status"] == "commented":
+            url = r.get("review_url", "")
+            summary_lines.append(
+                f"  \u2705 {link} - no violations, own PR, commented - {url}"
             )
         elif r["status"] == "skipped":
             summary_lines.append(f"  \u23ed\ufe0f {link} - SKIPPED")
