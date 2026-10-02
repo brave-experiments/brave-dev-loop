@@ -554,9 +554,11 @@ def post_batch_review(repo, pr_number, violations, head_sha, body=""):
 
 
 def with_details(text, pr_data):
-    """`text` followed by how the review was reached, for a project that asks for a verdict."""
-    details = pr_data.get("checks_details", "")
-    return f"{text}\n\n{details}" if VERDICT and details else text
+    """`text` followed by what the PR does and how the review was reached, for a project that asks for a verdict."""
+    if not VERDICT:
+        return text
+    extras = [pr_data.get("description_details", ""), pr_data.get("checks_details", "")]
+    return "\n\n".join([text] + [e for e in extras if e])
 
 
 def verdict_body(verdict, pr_data):

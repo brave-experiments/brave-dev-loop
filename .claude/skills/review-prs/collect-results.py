@@ -8,6 +8,7 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -51,6 +52,96 @@ def collect_violations(pr):
     except (OSError, json.JSONDecodeError) as e:
         return [], [], f"the validator wrote no results ({e})"
     return data.get("violations", []), data.get("validation_log", []), None
+
+
+_PR_BODY_RULES = []
+
+
+def _pr_body_rules():
+    """scripts/check-pr-body.py, which holds the shape a PR description must have."""
+    if not _PR_BODY_RULES:
+        spec = importlib.util.spec_from_file_location(
+            "check_pr_body", os.path.join(BOT_DIR, "scripts", "check-pr-body.py")
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _PR_BODY_RULES.append(mod)
+    return _PR_BODY_RULES[0]
+
+
+def missing_from_description(body):
+    """What a PR description lacks of the required shape (docs/pr-descriptions.md)."""
+    rules = _pr_body_rules()
+    body = rules.HTML_COMMENT.sub("", body.replace("\r\n", "\n"))
+    if not body.strip():
+        return ["A description: it is empty."]
+    missing = []
+    preamble, _ = rules.split_at_first_heading(body)
+    if not any(rules.IMPACT_LINE.match(ln) for ln in preamble):
+        missing.append(
+            "A `User impact:` line above the first heading: what a person using "
+            "the product can now see, or `none` and why not."
+        )
+    sections, _ = rules.split_sections(body)
+    for canonical, aliases in rules.REQUIRED_SECTIONS:
+        _, text = rules.find_section(sections, aliases)
+        if text is None or not text.strip():
+            missing.append(f"A `## {canonical}` section.")
+        elif canonical == "Reproduce" and not (
+            rules.FENCE.search(text)
+            or rules.NUMBERED_STEP.search(text)
+            or rules.NOT_REPRODUCIBLE.search(text)
+        ):
+            missing.append(
+                "Steps in `## Reproduce` a person can follow: numbered steps or a "
+                "command in a code block, with what happens and what should happen."
+            )
+    return missing
+
+
+def _text_list(value):
+    if not isinstance(value, list):
+        return []
+    return [x.strip() for x in value if isinstance(x, str) and x.strip()]
+
+
+def describe_pr(pr):
+    """What the PR does, how to try it, and what its description lacks, as markdown."""
+    summary = pr.get("summary_prompt")
+    if not summary:
+        return ""
+    parts = []
+    try:
+        with open(summary.get("results_file", "")) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    description = data.get("description")
+    if isinstance(description, str) and description.strip():
+        parts.append(f"**What this pull request does**\n\n{description.strip()}")
+
+    testing = data.get("manual_testing")
+    steps = _text_list(testing.get("steps")) if isinstance(testing, dict) else []
+    if steps and not testing.get("in_description"):
+        numbered = "\n".join(f"{i}. {step}" for i, step in enumerate(steps, 1))
+        parts.append(
+            "**Trying it by hand**\n\nThe description does not say how to try "
+            f"this change. These steps would:\n\n{numbered}"
+        )
+
+    try:
+        with open(summary.get("body_file", ""), encoding="utf-8") as f:
+            missing = missing_from_description(f.read())
+    except OSError:
+        missing = []
+    if missing:
+        bullets = "\n".join(f"- {m}" for m in missing)
+        parts.append(f"**Missing from the description**\n\n{bullets}")
+
+    return "\n\n".join(parts)
 
 
 def _count(n, noun):
@@ -161,6 +252,7 @@ def build_post_review_input(manifest, project_checks=()):
                 "violations": violations,
                 "validation_log": validation_log,
                 "checks_details": describe_checks(pr, violations, project_checks),
+                "description_details": describe_pr(pr),
             }
         )
 
