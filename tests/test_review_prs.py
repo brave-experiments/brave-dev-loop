@@ -398,10 +398,28 @@ class TestVerdict:
         assert self._run(post, [dict(self.FINDING)])["status"] == "posted"
         assert sent == {"comment": "**Recommendation: request changes**"}
 
+    def test_the_how_section_follows_the_recommendation(self, post, sent, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", True)
+        pr = dict(self.PR, violations=[], checks_details="<details>x</details>")
+        post.process_pr(pr, "o/r", "bot", True)
+        pr = dict(
+            self.PR,
+            violations=[dict(self.FINDING)],
+            checks_details="<details>y</details>",
+        )
+        post.process_pr(pr, "o/r", "bot", True)
+        assert sent == {
+            "approve": "**Recommendation: approve**\n\n<details>x</details>",
+            "comment": "**Recommendation: request changes**\n\n<details>y</details>",
+        }
+
     def test_no_verdict_keeps_the_bodies_empty(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", False)
-        self._run(post, [])
-        self._run(post, [dict(self.FINDING)])
+        for extra in ({}, {"checks_details": "<details>x</details>"}):
+            for found in ([], [dict(self.FINDING)]):
+                post.process_pr(
+                    dict(self.PR, violations=found, **extra), "o/r", "bot", True
+                )
         assert sent == {"approve": "", "comment": ""}
 
 
@@ -561,6 +579,7 @@ class TestSelectCandidates:
         with open(os.path.join(work, "manifest.json")) as f:
             by_number = {p["number"]: p for p in json.load(f)["prs"]}
         assert by_number[1]["validation"]["candidates"] == 1
+        assert by_number[1]["detected"] == 1 and by_number[2]["detected"] == 0
         assert by_number[2]["validation"] is None
         assert by_number[3]["review_incomplete"] is True
         with open(by_number[1]["validation"]["prompt_file"]) as f:
@@ -607,6 +626,116 @@ class TestCollect:
         assert [r["number"] for r in results] == [1]
         assert results[0]["fileHashesFile"] == "/h.json"
         assert results[0]["violations"] == []
+
+
+class TestDescribeChecks:
+    def _pr(self, tmp_dir, kinds, **extra):
+        prompts = []
+        for i, (kind, doc, rules) in enumerate(kinds):
+            path = os.path.join(tmp_dir, f"r{i}.json")
+            with open(path, "w") as f:
+                f.write("{}")
+            entry = {"kind": kind, "results_file": path}
+            if doc:
+                entry.update(doc=doc, rule_count=rules)
+            prompts.append(entry)
+        return dict({"subagent_prompts": prompts, "files_total": 3}, **extra)
+
+    KINDS = [
+        ("rules", "specs.md", 10),
+        ("rules", "tests.md", 5),
+        ("correctness", None, 0),
+        ("project", None, 0),
+    ]
+
+    def test_a_clean_review_says_what_it_read_and_that_nothing_was_flagged(
+        self, collect, tmp_dir
+    ):
+        text = collect.describe_checks(
+            self._pr(tmp_dir, self.KINDS, files_reviewed=3),
+            [],
+            ["Whether the tests can fail."],
+        )
+        assert text.startswith("<details>\n<summary>How this review reached")
+        assert text.endswith("</details>")
+        assert "read 3 changed files." in text
+        assert (
+            "15 rules from this project's best-practice documents (specs, tests)"
+            in text
+        )
+        assert "**Bugs.**" in text
+        assert "  - Whether the tests can fail." in text
+        assert "nothing to double-check" in text
+
+    def test_a_re_review_says_it_read_only_the_changed_files(self, collect, tmp_dir):
+        text = collect.describe_checks(
+            self._pr(tmp_dir, self.KINDS, files_reviewed=1), []
+        )
+        assert "read 1 of the 3 changed files" in text
+        assert "changed since the bot last reviewed" in text
+
+    def test_flagged_problems_are_counted_through_the_second_read(
+        self, collect, tmp_dir
+    ):
+        pr = self._pr(
+            tmp_dir,
+            self.KINDS,
+            files_reviewed=3,
+            detected=4,
+            validation={"candidates": 3},
+        )
+        assert "flagged 4 possible problems. 3 of them went to a second reader" in (
+            collect.describe_checks(pr, [{"file": "a"}])
+        )
+        assert "and kept 1." in collect.describe_checks(pr, [{"file": "a"}])
+        assert "none of them to be a real problem" in collect.describe_checks(pr, [])
+
+    def test_flags_that_only_repeat_need_no_second_look(self, collect, tmp_dir):
+        pr = self._pr(tmp_dir, self.KINDS, files_reviewed=3, detected=2)
+        assert "none needed a second look" in collect.describe_checks(pr, [])
+
+    def test_a_check_that_wrote_nothing_is_not_claimed(self, collect, tmp_dir):
+        pr = self._pr(tmp_dir, self.KINDS, files_reviewed=3)
+        os.remove(pr["subagent_prompts"][2]["results_file"])
+        text = collect.describe_checks(pr, [])
+        assert "**Bugs.**" not in text
+        assert "1 of 4 checks produced no result" in text
+
+    def test_a_project_without_guidance_has_no_criteria_item(self, collect, tmp_dir):
+        pr = self._pr(tmp_dir, self.KINDS[:3], files_reviewed=3)
+        assert "own criteria" not in collect.describe_checks(pr, [])
+
+    def test_the_section_reaches_the_post_review_input(self, collect, tmp_dir):
+        manifest = {
+            "prs": [
+                dict(
+                    self._pr(tmp_dir, self.KINDS, files_reviewed=3),
+                    number=1,
+                    title="t",
+                    validation=None,
+                )
+            ]
+        }
+        [result] = collect.build_post_review_input(manifest, ["Check it."])[
+            "pr_results"
+        ]
+        assert "  - Check it." in result["checks_details"]
+
+    def test_checks_come_from_the_profile_as_text(self, prep, collect):
+        assert collect.review_checks({}) == []
+        assert collect.review_checks({"review": {"checks": " a "}}) == []
+        assert collect.review_checks({"review": {"checks": ["a", "", 3, " b "]}}) == [
+            "a",
+            "b",
+        ]
+        profile = prep.load_profile({"project": {"profile": "bravebot"}}, ROOT_DIR)
+        assert collect.review_checks(profile)
+        assert (
+            collect.review_checks(
+                prep.load_profile({"project": {"profile": "brave-core"}}, ROOT_DIR)
+            )
+            == []
+        )
 
 
 class TestUpdateCache:

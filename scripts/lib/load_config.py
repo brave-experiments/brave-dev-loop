@@ -246,6 +246,21 @@ def review_guidance(profile):
     ]
 
 
+def review_checks(profile):
+    """Plain-language descriptions of what `review.guidance` checks, from `review.checks`.
+
+    A list of strings shown to readers of a posted review, so they can see what
+    the review looked at. Anything else means no list.
+    """
+    review = profile.get("review")
+    value = review.get("checks") if isinstance(review, dict) else None
+    if not isinstance(value, list):
+        return []
+    return [
+        entry.strip() for entry in value if isinstance(entry, str) and entry.strip()
+    ]
+
+
 def review_verdict(profile):
     """Whether a posted review opens with the bot's recommendation.
 

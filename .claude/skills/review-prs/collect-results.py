@@ -20,6 +20,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
 
 sys.path.insert(0, os.path.join(BOT_DIR, "scripts"))
+from lib.load_config import load_config, load_profile, review_checks
 
 
 def log(msg):
@@ -52,7 +53,92 @@ def collect_violations(pr):
     return data.get("violations", []), data.get("validation_log", []), None
 
 
-def build_post_review_input(manifest):
+def _count(n, noun):
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def describe_checks(pr, violations, project_checks=()):
+    """The "how did this review decide" section a reader can expand, as markdown."""
+    prompts = pr.get("subagent_prompts", [])
+    finished = [p for p in prompts if os.path.isfile(p.get("results_file", ""))]
+    total = pr.get("files_total", 0)
+    read = pr.get("files_reviewed", total)
+    if read == total:
+        lines = [f"The review read {_count(total, 'changed file')}."]
+    else:
+        lines = [
+            f"The review read {read} of the {_count(total, 'changed file')}: "
+            "only those that changed since the bot last reviewed this pull request."
+        ]
+
+    kinds = {p.get("kind") for p in finished}
+    checked = []
+    docs = [p for p in finished if p.get("kind") == "rules"]
+    if docs:
+        names = sorted({os.path.splitext(p["doc"])[0] for p in docs})
+        rules = sum(p.get("rule_count", 0) for p in docs)
+        checked.append(
+            f"**Written best practices.** The changes were compared with "
+            f"{_count(rules, 'rule')} from this project's best-practice documents "
+            f"({', '.join(names)})."
+        )
+    if "correctness" in kinds:
+        checked.append(
+            "**Bugs.** The changes were read for mistakes that would make the "
+            "code misbehave or stop it building."
+        )
+    if "project" in kinds:
+        item = "**This project's own criteria.**"
+        if project_checks:
+            item += " The changes were checked against these questions:\n" + "\n".join(
+                f"  - {c}" for c in project_checks
+            )
+        checked.append(item)
+    if checked:
+        lines += ["", "What it checked:", ""] + [f"- {c}" for c in checked]
+
+    if len(finished) < len(prompts):
+        lines += [
+            "",
+            f"{len(prompts) - len(finished)} of {len(prompts)} checks produced no "
+            "result and are not counted above.",
+        ]
+
+    detected = pr.get("detected", 0)
+    validation = pr.get("validation") or {}
+    candidates = validation.get("candidates", 0)
+    lines.append("")
+    if not detected:
+        lines.append(
+            "None of these checks flagged anything, so there was nothing to double-check."
+        )
+    elif not candidates:
+        lines.append(
+            f"The checks flagged {_count(detected, 'possible problem')}, all "
+            "repeats of each other or of comments already on the pull request, "
+            "so none needed a second look."
+        )
+    else:
+        kept = len(violations)
+        outcome = (
+            f"kept {kept}"
+            if kept
+            else "found none of them to be a real problem introduced by this change"
+        )
+        lines.append(
+            f"The checks flagged {_count(detected, 'possible problem')}. "
+            f"{candidates} of them went to a second reader, who checked each "
+            f"against the full source code rather than only the diff, and {outcome}."
+        )
+
+    body = "\n".join(lines)
+    return (
+        "<details>\n<summary>How this review reached its recommendation</summary>"
+        f"\n\n{body}\n\n</details>"
+    )
+
+
+def build_post_review_input(manifest, project_checks=()):
     """Build the input JSON structure for post-review.py."""
     pr_results = []
 
@@ -74,6 +160,7 @@ def build_post_review_input(manifest):
                 "fileHashesFile": pr.get("file_hashes_file"),
                 "violations": violations,
                 "validation_log": validation_log,
+                "checks_details": describe_checks(pr, violations, project_checks),
             }
         )
 
@@ -159,7 +246,8 @@ def main():
     print_cached_and_progress(manifest)
 
     # Build post-review input
-    post_review_data = build_post_review_input(manifest)
+    profile = load_profile(load_config(), BOT_DIR)
+    post_review_data = build_post_review_input(manifest, review_checks(profile))
 
     # Collection stats
     prs = manifest.get("prs", [])

@@ -4,6 +4,12 @@
   "prDraft": false,
   "review": {
     "verdict": true,
+    "checks": [
+      "Whether the change agrees with the project's specs, and whether a change to behaviour a spec describes also updates that spec and its tests.",
+      "Whether untrusted content (text from the web, files or tools) can influence a decision, or be given a better trust label than it came with, anywhere other than the places built for that.",
+      "Whether the tests would fail if the behaviour broke, rather than covering only the allowed case or passing with the bug put back.",
+      "Whether the change does what its title says and nothing more, with no unrelated refactor and no new dependency, permission or network destination the title does not explain."
+    ],
     "guidance": [
       "This review decides whether the bot recommends approving the pull request. Report what a maintainer would want fixed before approving, and nothing else.",
       "Agreement with the specs. docs/specs/README.md lists every spec and the files it governs, and a spec wins where it and the code disagree. Read the specs that govern the changed files, and the specs the title concerns. Report a change that contradicts a clause, and a change to behaviour a clause states that leaves the clause and the tests it names unchanged. Never suggest rewording a clause to fit the code.",
