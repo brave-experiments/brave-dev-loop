@@ -67,6 +67,12 @@ SELECTIVE_ERASES = {"J", "K"}
 # so nothing lands on the screen.
 DEVICE_REPORTS = {"c", "n"}
 
+# Window operations that save and restore the window title, which a program
+# writing its own title sends once on the way in and once on the way out. The
+# title is not a cell. The other window operations resize or move the window,
+# so they stay reported.
+TITLE_STACK = {"22", "23"}
+
 
 class Screen:
     """A grid of characters, and a cursor that writes into it."""
@@ -177,6 +183,8 @@ def replay(capture, cols, rows):
                 screen.note_unmodelled(match.group(0))
             continue
         if final in DEVICE_REPORTS:
+            continue
+        if final == "t" and params.split(";")[0] in TITLE_STACK:
             continue
 
         if final in ("H", "f"):
