@@ -189,6 +189,55 @@ def test_command_without_an_outcome_warns(checker):
     assert any("outcome" in w for w in warnings)
 
 
+# ── A step is the person's, not the program's ────────────────────────────────
+
+
+def test_a_step_that_is_a_call_the_program_makes_warns(checker):
+    body = with_reproduce(
+        "1. Start a turn in a directory containing `shot.png`.\n"
+        '2. The assistant calls `list_files` with `{"directory":"."}`, then '
+        '`vet_content` with `{"ref":"ref:1"}`.\n'
+        "\nThe result is an error. Expected: a prompt showing the picture."
+    )
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert any("call payload" in w for w in warnings)
+
+
+def test_a_step_that_types_a_message_does_not_warn(checker):
+    body = with_reproduce(
+        "1. Start the program in a directory containing `shot.png`.\n"
+        "2. Type `what does shot.png say?` and press Enter.\n"
+        "\nThe result is an error. Expected: a prompt showing the picture."
+    )
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert warnings == []
+
+
+def test_a_payload_in_a_fence_is_what_a_stand_in_sends(checker):
+    body = with_reproduce(
+        "1. Start the stand-in model, which answers with the calls below.\n"
+        "2. Type `what does shot.png say?` and press Enter.\n"
+        "\n```json\n"
+        '{"name":"list_files","arguments":{"directory":"."}}\n'
+        "```\n"
+        "\nThe result is an error. Expected: a prompt showing the picture."
+    )
+    errors, warnings = checker.check(body)
+    assert errors == []
+    assert warnings == []
+
+
+def test_a_request_to_an_api_the_person_calls_is_a_step(checker):
+    body = with_reproduce(
+        '1. `curl -X POST localhost:8080/v1/chat -d \'{"prompt":"hi"}\'`\n'
+        "\nIt hangs. Expected: a reply inside the configured limit."
+    )
+    _, warnings = checker.check(body)
+    assert not any("call payload" in w for w in warnings)
+
+
 # ── A test is not a reproduction ─────────────────────────────────────────────
 
 

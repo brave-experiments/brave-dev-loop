@@ -246,6 +246,40 @@ replay does not model. Keep it: the interface emits nothing it cannot account
 for, so a failure means the capture is unusual and the screen should not be
 trusted.
 
+## Reproducing something the model decides
+
+The planner's tool calls (`list_files`, `read_file`, `vet_content` and the rest) and the
+references they hand back (`ref:1`) are not steps. A person types a message into the session
+prompt or the message box; which tools the planner then calls is the model's choice. A test
+scripts those calls, so a body that copies a test's `tool_request(...)` lines as its steps
+describes the test and not the product, and leaves out everything the reviewer needs to get
+there.
+
+Write the person's steps, and make them complete from a cold start:
+
+- **The launch.** The front end ([above](#which-front-end-a-change-is-in)), the command that
+  starts it, and the redirected `HOME` from the screenshot recipe so the run is not yours.
+- **The directory.** What the work directory contains and how to make it (`printf`, `cp`, or a
+  generated file), and the trust answer, because a fresh directory opens a trust prompt that
+  swallows the first keys. Say whether the files are trusted: the trust map decides whether
+  the planner is handed names or opaque references, so a bug in one of them is not in the other.
+- **The message.** The exact text the person types.
+- **What appears.** The screen, from a capture, before and after.
+
+When no message makes a stock model take the path, the model has to be a stand-in. A
+`provider` block with `options.baseURL` pointing at a local server and no key makes bravebot
+treat it as a gateway and send `POST /v1/chat/completions` with no credentials; a session
+takes its model from `<HOME>/.bravebot/model`, as `<provider>/<model>`. The server answers
+request *N* with the *N*th tool call from a list. Say in the steps that this server stands in
+for the model, give the command that starts it, and show the calls it makes in a fenced block
+under the steps, apart from what the person does. `contrib/README.md` and `contrib/drive_tui.py`
+have the rest. If the path cannot be reached even that way, write `Not reproducible locally:`
+with the reason.
+
+Say how the planner knows what the call needs. If the scripted call names `ref:1` and the
+planner was never told what `ref:1` is, the reproduction shows a sequence a real model would
+have to guess at, and the body has to say so.
+
 ## Upstream tests
 
 There is no upstream to inherit tests from. Every test in the repo is ours, so

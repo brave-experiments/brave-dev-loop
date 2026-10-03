@@ -84,6 +84,13 @@ TEST_INVOCATION = re.compile(
     re.X | re.I,
 )
 
+# A numbered step whose substance is a JSON payload in inline code. Where the
+# product hands work to a model or a service, the calls it makes are not something
+# a person can type, so a step made of one is the test's script rather than the
+# person's. A step that is a request to an API the person calls is left alone.
+PAYLOAD_STEP = re.compile(r"`[^`\n]*\{\s*\"[^\"\n]+\"\s*:[^`\n]*`")
+API_STEP = re.compile(r"\b(?:curl|wget|httpie?|GET|POST|PUT|PATCH|DELETE)\b|https?://")
+
 # Getting to where the reproduction starts. Neither a test invocation nor a
 # user-facing step, so these lines decide nothing either way.
 SETUP_COMMAND = re.compile(
@@ -416,6 +423,22 @@ def check(body, require_closes=True, test_only_change=False, ui_paths_changed=()
                 f"'## {heading}' gives a command but not the outcome: say what happens "
                 "today and what happens with this branch"
             )
+        if not has_excuse:
+            internals = [
+                line.strip()
+                for line in prose.splitlines()
+                if NUMBERED_STEP.match(line)
+                and PAYLOAD_STEP.search(line)
+                and not API_STEP.search(line)
+            ]
+            if internals:
+                warnings.append(
+                    f"'## {heading}' has a step that is a call payload "
+                    f"({internals[0][:60]}...): calls a program makes among itself are "
+                    "not something a person can do. Write what the person types or "
+                    "clicks; if a stand-in has to make the call, say what it is, give "
+                    "the command that starts it and show what it does in a code block"
+                )
         if not has_excuse and not test_only_change:
             claimed = reproduction_lines(text or "")
             if claimed and all(TEST_INVOCATION.search(ln) for ln in claimed):

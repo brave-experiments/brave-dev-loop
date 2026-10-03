@@ -118,6 +118,31 @@ Rules:
   - **Bad:** "2. Send a message. 3. Open the settings screen."
   - **Good:** "2. In the desktop application, type anything into the message box
     and press Enter. 3. Click Settings in the sidebar, then the Automation tab."
+- **A step is something the person does, not something the program does.**
+  Where the product hands work to a model, a plugin or another service, the
+  calls it makes among themselves are not steps: nobody can type them. Write the
+  message the person sends, the button they press, the command they run, and
+  let the observed result say what the program did in response.
+  - **Bad:** "2. The assistant calls `search_items` with `{"query":"shot"}`, then
+    `open_item` with `{"id":"item:1"}`."
+  - **Good:** "2. Type `what does shot.png say?` and press Enter."
+- **Complete from a cold start.** A reviewer who has only this section and a
+  clean machine must be able to reach the result without reading the diff or the
+  test. That takes the command that launches the program and its configuration,
+  the state it needs (which files exist and where, which settings are on, what
+  an answered prompt looked like), the exact input, and what appears. Everything
+  a step depends on is either written in the steps or said not to matter.
+  A step that quietly relies on a detail of the test's fixture -- the only file
+  in the directory, a fixed name, a fresh profile -- names that detail.
+- **Say what stands in for a choice the person cannot make.** Some bugs need the
+  model, the server or the scheduler to do one particular thing, and no input
+  from the person makes it. Do not write the steps as if ordinary use gets
+  there. Say what is scripted (a stand-in model, a stub server, an injected
+  delay), give the command that starts it, show what it does in a fenced block,
+  and keep the person's steps separate from it. If nothing reachable by use or
+  by a stand-in gets there, that is `Not reproducible locally:`, not steps that
+  only work inside the test. How to start a stand-in is project-specific: see
+  the profile's `docs/testing.md`.
 - **State both sides.** What you observed, and what you should have observed. A
   reproduction with no observed-vs-expected is a command, not evidence.
 - **Paste-able beats descriptive** wherever a command is part of it: the exact
