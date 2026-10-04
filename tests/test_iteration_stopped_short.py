@@ -414,10 +414,10 @@ class TestRunSh:
             in body
         )
 
-    def test_a_resume_is_logged_and_appended_to_what_the_completion_check_reads(self):
+    def test_a_resume_is_logged(self):
         body = run_sh()
         assert '{"type":"resume"' in body
-        assert 'tee -a "$ITERATION_LOG" >> "$TEMP_OUTPUT"' in body
+        assert '--resume "$SESSION_ID"' in body
 
 
 FAKE_CLAUDE = """#!/bin/bash

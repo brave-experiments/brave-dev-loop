@@ -107,10 +107,12 @@ class TestOrchestration:
     def test_the_comparison_runs_after_the_base_run(self):
         assert self._at("scripts/comparison-run.sh") > self._at("stop_title_watch\n")
 
-    def test_the_comparison_runs_before_the_completion_check(self):
-        """The last iteration is the one most worth evaluating, and the
-        completion check exits the loop."""
-        assert self._at("scripts/comparison-run.sh") < self._at("COMPLETION_CHECK=0")
+    def test_the_comparison_runs_before_the_iteration_ends(self):
+        """The comparison belongs to this iteration's story, so it runs before
+        the claim on that story is released."""
+        assert self._at("scripts/comparison-run.sh") < self._at(
+            "# The iteration is over: let another run pick this story up."
+        )
 
     def test_the_evaluator_only_runs_with_something_to_compare(self):
         body = run_sh_body()
@@ -145,7 +147,8 @@ class TestOrchestration:
         body = run_sh_body()
         block = body[body.index("Comparison run (step 2 of 3)") :]
         assert (
-            block[: block.index("COMPLETION_CHECK=0")].count("bot_slot_heartbeat") >= 2
+            block[: block.index("# The iteration is over")].count("bot_slot_heartbeat")
+            >= 2
         )
 
     def test_stdout_says_which_step_is_running(self):
