@@ -4757,12 +4757,13 @@ class TestAgentSelection:
                 continue  # the else branch, reached by whatever is left
             assert f'[ "$BOT_AGENT" = "{agent}" ]' in launch, agent
 
-    def test_every_accepted_agent_is_checked_for_completion(self):
-        check = self._region("COMPLETION_CHECK=0", 'if [ "$COMPLETION_CHECK" -gt 0 ]')
-        for agent in self._accepted():
-            if agent == "claude":
-                continue
-            assert f'[ "$BOT_AGENT" = "{agent}" ]' in check, agent
+    def test_nothing_the_agent_says_ends_the_run(self):
+        """An iteration sees one story. A completion marker in its reply once
+        ended a 30-iteration run at loop 2 with 77 stories still active; only
+        select-task.py, which reads the whole PRD, decides that work is done."""
+        assert "<promise>" not in self._body()
+        with open(os.path.join(SCRIPT_DIR, os.pardir, ".claude", "CLAUDE.md")) as f:
+            assert "<promise>" not in f.read()
 
     def test_every_accepted_agent_names_itself_at_startup(self):
         banner = self._region("Run slot $BOT_RUN_SLOT", "Logs will be saved to")

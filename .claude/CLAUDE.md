@@ -58,13 +58,6 @@ Each iteration, the story to work on is pre-selected by `scripts/select-task.py`
 2. Update the PRD and progress.txt
 3. **END THE ITERATION** - Run `/exit` to end the session so the next iteration can start
 
-## Stop Condition
-
-After completing a user story, check if ALL stories in `<bot-dir>/data/prd.json` have `status: "merged"`, `status: "skipped"`, or `status: "invalid"`.
-
-If ALL stories are merged, skipped, or invalid (no active stories remain), reply with:
-<promise>COMPLETE</promise>
-
 ## Important Reminders
 
 - Work on ONE story per iteration

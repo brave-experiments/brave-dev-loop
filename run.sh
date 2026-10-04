@@ -665,12 +665,6 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   fi
 
   # Run Claude Code with the agent prompt
-  # Use a temp file to capture output while allowing real-time streaming
-  TEMP_OUTPUT=$(mktemp)
-  # Codex and bravebot leave only their final agent message here (used for completion
-  # detection, so file contents read mid-iteration can never trip the
-  # <promise>COMPLETE</promise> check).
-  TEMP_LAST_MSG=$(mktemp)
   # The story a Claude session's Stop hook checks, and how often it has refused.
   STOP_CHECK=$(mktemp)
 
@@ -813,10 +807,9 @@ Additional context: $EXTRA_PROMPT"
       # TUI mode: let codex own the terminal directly (no piping).
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CODEX_BIN $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox "$AGENT_PROMPT" || true
     else
-      # Non-interactive: stream JSONL events to the iteration log; capture the
-      # final agent message separately for the completion check.
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CODEX_BIN exec $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check --output-last-message "$TEMP_LAST_MSG" "$AGENT_PROMPT" </dev/null 2>&1 \
-        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
+      # Non-interactive: stream JSONL events to the iteration log.
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CODEX_BIN exec $CODEX_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox --json --skip-git-repo-check "$AGENT_PROMPT" </dev/null 2>&1 \
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > /dev/null || true
     fi
   elif [ "$BOT_AGENT" = "bravebot" ]; then
     BRAVEBOT_MODEL_FLAG=""
@@ -829,12 +822,10 @@ Additional context: $EXTRA_PROMPT"
     if [ "$USE_TUI" = true ]; then
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" || true
     else
-      # bravebot keeps stdout to the final reply alone and puts progress on stderr,
-      # previews of quarantined content included. Since a preview can quote a file
-      # that documents <promise>COMPLETE</promise>, stderr goes straight to the log
-      # and only the reply reaches the file the completion check reads.
+      # bravebot keeps stdout to the final reply alone and puts progress on stderr;
+      # both go to the log.
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" </dev/null 2>>"$ITERATION_LOG" \
-        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_LAST_MSG" || true
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > /dev/null || true
     fi
   elif [ "$BOT_AGENT" = "cursor" ]; then
     CURSOR_MODEL_FLAG=""
@@ -847,10 +838,9 @@ Additional context: $EXTRA_PROMPT"
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CURSOR_BIN $CURSOR_MODEL_FLAG --force "$AGENT_PROMPT" || true
     else
       # Non-interactive: -p/--print with plain-text output. --force bypasses approvals,
-      # --trust trusts the workspace (headless only). cursor-agent has no --output-last-message,
-      # so the completion check greps the full captured output (see below).
+      # --trust trusts the workspace (headless only).
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_CURSOR_BIN -p --output-format text $CURSOR_MODEL_FLAG --force --trust "$AGENT_PROMPT" </dev/null 2>&1 \
-        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > /dev/null || true
     fi
   else
     CLAUDE_MODEL_FLAG=""
@@ -882,7 +872,7 @@ Additional context: $EXTRA_PROMPT"
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --strict-mcp-config --session-id "$SESSION_ID" "$AGENT_PROMPT" || AGENT_RC=$?
     else
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$ITERATION_SECONDS" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --strict-mcp-config --session-id "$SESSION_ID" "$AGENT_PROMPT" </dev/null 2>&1 \
-        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > "$TEMP_OUTPUT" || true
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > /dev/null || true
       AGENT_RC=${PIPESTATUS[0]}
     fi
   fi
@@ -930,7 +920,7 @@ Additional context: $EXTRA_PROMPT"
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --settings "$CLAUDE_SETTINGS" --strict-mcp-config --resume "$SESSION_ID" "$RESUME_PROMPT" || AGENT_RC=$?
     else
       "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "${CLAUDE_QUIET[@]}" "$LEFT" $BOT_CLAUDE_BIN $CLAUDE_MODEL_FLAG --dangerously-skip-permissions --print --verbose --output-format stream-json --settings "$CLAUDE_SETTINGS" --strict-mcp-config --resume "$SESSION_ID" "$RESUME_PROMPT" </dev/null 2>&1 \
-        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" >> "$TEMP_OUTPUT" || true
+        | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > /dev/null || true
       AGENT_RC=${PIPESTATUS[0]}
     fi
   done
@@ -1097,39 +1087,9 @@ Additional context: $EXTRA_PROMPT"
     rm -f "$COMPARISON_PROMPT_FILE" "$BASE_SESSION_FILE" "$COMPARISON_SESSION_FILE"
   fi
 
-  # Check for completion signal (print mode only — TUI mode skips this since user is watching).
-  # Match ONLY the agent's own final message, never raw tool/file output: the marker is
-  # documented verbatim in .claude/CLAUDE.md and docs/WORKFLOW.md, so grepping the full
-  # stream would false-positive the moment the agent reads one of those files.
-  COMPLETION_CHECK=0
-  if [ "$USE_TUI" != true ]; then
-    if [ "$BOT_AGENT" = "codex" ]; then
-      # Codex's --output-last-message file holds just the final agent message.
-      COMPLETION_CHECK=$(grep -c -F "<promise>COMPLETE</promise>" "$TEMP_LAST_MSG" 2>/dev/null | tail -1)
-    elif [ "$BOT_AGENT" = "cursor" ]; then
-      # cursor-agent has no --output-last-message; -p --output-format text prints the
-      # assistant's response text to stdout, captured in TEMP_OUTPUT. Grep that.
-      # (A logged-in maintainer can switch to --output-format stream-json parsing
-      # once its event schema is known, to avoid false positives from echoed doc text.)
-      COMPLETION_CHECK=$(grep -c -F "<promise>COMPLETE</promise>" "$TEMP_OUTPUT" 2>/dev/null | tail -1)
-    elif [ "$BOT_AGENT" = "bravebot" ]; then
-      # bravebot's stdout is the final agent message, captured on its own above.
-      COMPLETION_CHECK=$(grep -c -F "<promise>COMPLETE</promise>" "$TEMP_LAST_MSG" 2>/dev/null | tail -1)
-    else
-      # Claude stream-json: extract assistant text only, excluding tool_result events.
-      COMPLETION_CHECK=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' "$TEMP_OUTPUT" 2>/dev/null | grep -c -F "<promise>COMPLETE</promise>" 2>/dev/null | tail -1)
-    fi
-    COMPLETION_CHECK=$((COMPLETION_CHECK + 0))
-  fi
-  if [ "$COMPLETION_CHECK" -gt 0 ]; then
-    echo ""
-    echo "Agent completed all tasks!"
-    echo "Completed at work iteration $work_iteration (loop $loop_count of $MAX_ITERATIONS)"
-    rm -f "$TEMP_OUTPUT" "$TEMP_LAST_MSG" "$STOP_CHECK"
-    exit 0
-  fi
-
-  rm -f "$TEMP_OUTPUT" "$TEMP_LAST_MSG" "$STOP_CHECK"
+  # Nothing the agent says ends the run. It sees one story; whether any are
+  # left is select-task.py's answer at the top of the next loop.
+  rm -f "$STOP_CHECK"
 
   # The iteration is over: let another run pick this story up.
   release_claim
