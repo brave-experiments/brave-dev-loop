@@ -151,6 +151,8 @@ def test_colour_is_dropped_without_complaint(shot):
         f"{ESC}[?u",  # keyboard protocol
         f"{ESC}[c",  # ask the terminal what it is
         f"{ESC}]0;a title{ESC}\\",  # set the window title
+        f"{ESC}[22;0t",  # save the window title
+        f"{ESC}[23;0t",  # restore the window title
         f"{ESC}(B",  # select a character set
     ],
 )
@@ -174,6 +176,13 @@ def test_an_unmodelled_sequence_is_reported(shot):
     restores a saved cursor, which this does not track."""
     screen = shot.replay(f"a{ESC}[uz", 20, 2)
     assert screen.unmodelled == {f"{ESC}[u": 1}
+
+
+def test_a_window_resize_is_reported_unlike_the_title_stack(shot):
+    """Resizing the window changes the grid every later frame is laid out
+    against, so only the title's save and restore are passed over."""
+    screen = shot.replay(f"a{ESC}[8;10;40tz", 20, 2)
+    assert screen.unmodelled == {f"{ESC}[8;10;40t": 1}
 
 
 def test_selective_erase_is_reported_rather_than_guessed(shot):
