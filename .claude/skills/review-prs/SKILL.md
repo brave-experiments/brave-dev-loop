@@ -27,7 +27,7 @@ The review pipeline minimizes LLM token usage by pushing all heavy data through 
 4. **Validate subagents** (`review-prs-validate`, Opus) — one per PR; reads the candidates against the PR's source tree and writes the ones that hold up
 5. **collect-results.py** (zero LLM tokens) — reads the validated results, feeds them to post-review.py which handles prioritization, dedup, posting, approval, cache updates and notifications
 
-**Project review guidance.** A project profile (`projects/<profile>/profile.json`) may carry a `review` key, documented in [projects/README.md](../../../projects/README.md). Its `guidance` text is read by one extra detect subagent per PR (`chunk_id` `project`, launched like the others from `subagent_prompts`) and by the PR's validator. `prepare-review.py` and `select-candidates.py` add it to the prompts, so the main session does nothing differently. With `verdict`, `post-review.py` opens the review it posts with a recommendation. `collect-results.py` builds a collapsed section from the manifest (files read, rules compared, passes that ran, flagged versus kept) and `post-review.py` appends it under the recommendation. A profile without the key reviews as before.
+**Project review guidance.** A project profile (`projects/<profile>/profile.json`) may carry a `review` key, documented in [projects/README.md](../../../projects/README.md). Its `guidance` text is read by one extra detect subagent per PR (`chunk_id` `project`, launched like the others from `subagent_prompts`) and by the PR's validator. `prepare-review.py` and `select-candidates.py` add it to the prompts, so the main session does nothing differently. With `verdict`, `post-review.py` opens the review it posts with a recommendation. `collect-results.py` builds a collapsed section from the manifest (files read, rules compared, passes that ran, flagged versus kept) and `post-review.py` appends it under the recommendation. Above it the review says what the PR does, gives steps for trying it by hand when its description has none, and lists the parts of the required description shape (`docs/pr-descriptions.md`, checked with the helpers in `scripts/check-pr-body.py`) that it lacks. The first two come from one more subagent per PR, the manifest's `summary_prompt`; the last is computed without one. A profile without the key reviews as before.
 
 **Which best-practice docs a PR is checked against.** Each doc in the target repo's `best-practices/` declares it in an `<!-- applicability: CONDITION -->` comment in its first 10 lines: `always`, a file-type condition (`has_cpp_files`, `has_frontend_files`, … — see `discover-best-practices.py`), or `paths:ui/,crates/ui-bridge/`, which runs the doc only when a changed file is under one of those directories and shows it only those files.
 
@@ -66,6 +66,7 @@ Read the manifest file at `{work_dir}/manifest.json`. It contains:
   - `number`, `title`, `headRefOid`, `author`, `hasApproval`
   - `files_reviewed` of `files_total`: how many of the PR's files this run reviews
   - `subagent_prompts`: array of entries with `prompt_file` and `results_file` paths (NOT prompt text)
+  - `summary_prompt`: `null`, or one more entry with `prompt_file` and `results_file` for the subagent that describes the PR. Present only for a project whose profile sets `review.verdict`
 - **`cached_prs`**: PRs not reviewed this run — already reviewed at this commit, or no file changed since the last review (handled by the prepare script — just log results)
 - **`errors`**: per-PR errors encountered during preparation
 
@@ -90,6 +91,8 @@ Read your instructions from: {prompt_file}
 ```
 
 If the `review-prs-detect` agent type is not available, use `subagent_type: "general-purpose"` with `model: "sonnet"` and the same prompt.
+
+A PR's `summary_prompt`, when it is not `null`, gets a subagent in the same way, with the same `subagent_type`. It is not one of the detect prompts: `select-candidates.py` never reads it, and a PR whose summary subagent failed is still reviewed, with no description section.
 
 **Launch ALL detect subagents across ALL PRs in a single message** so they run concurrently.
 
