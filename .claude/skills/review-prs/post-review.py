@@ -213,6 +213,18 @@ def prioritize_violations(violations, has_approval, limit=MAX_COMMENTS_PER_PR):
     return kept, dropped
 
 
+SEVERITY_LABELS = {"high": "High", "medium": "Medium", "low": "Low"}
+
+
+def label_severity(violation):
+    """Open the comment with its severity, so the author can tell a bug from a
+    nit at a glance. Idempotent: a comment already labelled is left alone."""
+    label = SEVERITY_LABELS.get(violation.get("severity", ""))
+    draft = violation.get("draft_comment", "")
+    if label and not draft.startswith("**Severity:"):
+        violation["draft_comment"] = f"**Severity: {label}**\n\n{draft}"
+
+
 def validate_rule_link(violation):
     """Validate a violation's rule_link. Returns True if valid or no link.
 
@@ -747,9 +759,11 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
         for v in violations:
             validate_rule_link(v)
 
-        # 6. Embed rule_link into draft_comment for clickable links
+        # 6. Embed rule_link into draft_comment for clickable links, and open
+        # it with the severity
         for v in violations:
             embed_rule_link_in_comment(v)
+            label_severity(v)
 
         # 7. Deduplicate against existing comments
         existing_comments = fetch_existing_comments(repo, number)

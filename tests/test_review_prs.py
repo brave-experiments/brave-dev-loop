@@ -682,6 +682,34 @@ class TestVerdict:
         assert self._run(post, [dict(self.FINDING)])["status"] == "posted"
         assert sent == {"comment": "**Recommendation: request changes**"}
 
+    def test_each_comment_opens_with_its_severity(self, post, monkeypatch):
+        """The author should tell a bug from a style point before reading on."""
+        sent = {}
+        monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
+        monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
+        monkeypatch.setattr(
+            post,
+            "post_batch_review",
+            lambda repo, n, vs, sha, body="": sent.update(vs=vs) or ("url", len(vs)),
+        )
+        medium = dict(
+            self.FINDING,
+            file="b.rs",
+            severity="medium",
+            rule="Another rule",
+            rule_link=f"{LINK}#CS-001",
+        )
+        self._run(post, [dict(self.FINDING), medium])
+        bodies = {v["file"]: v["draft_comment"] for v in sent["vs"]}
+        assert bodies["a.rs"] == "**Severity: High**\n\nThe spec says otherwise."
+        assert bodies["b.rs"].startswith("**Severity: Medium**\n\n")
+
+    def test_a_labelled_comment_is_not_labelled_twice(self, post):
+        v = dict(self.FINDING)
+        post.label_severity(v)
+        post.label_severity(v)
+        assert v["draft_comment"].count("**Severity:") == 1
+
     def test_the_how_section_follows_the_recommendation(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", True)
         pr = dict(self.PR, violations=[], checks_details="<details>x</details>")
