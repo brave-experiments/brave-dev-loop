@@ -5399,6 +5399,26 @@ class TestProjectSchedules:
         poll = self._review_request_job(tmp_dir, "bravebot").split()[0].split(",")
         assert "30" not in poll
 
+    @pytest.mark.parametrize(
+        "profile", ["brave-core", "bravebot", "default", "brave-dev-loop"]
+    )
+    def test_review_jobs_run_as_the_reviewer_and_nothing_else_does(
+        self, tmp_dir, profile
+    ):
+        """The sweeps and the review-request poll act as the reviewer account;
+        run.sh and the maintenance jobs stay on the bot. The wrapper sits outside
+        the lock, so the lock line every other test reads is unchanged."""
+        jobs = self._jobs(self._render(tmp_dir, profile))
+        reviewing = [j for j in jobs if "with-lock.sh review-prs" in j]
+        assert reviewing
+        for job in reviewing:
+            assert (
+                "&& ./scripts/as-reviewer.sh -- ./scripts/with-lock.sh review-prs"
+                in job
+            ), job
+        for job in set(jobs) - set(reviewing):
+            assert "as-reviewer" not in job, job
+
     @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "default"])
     def test_every_job_runs_in_the_bot_dir_and_logs_there(self, tmp_dir, profile):
         for job in self._jobs(self._render(tmp_dir, profile)):
@@ -5528,6 +5548,133 @@ class TestProjectSchedules:
         result = self._group(tmp_dir, "bravebot", "nightly")
         assert result.returncode == 1
         assert "unknown group" in result.stderr
+
+
+class TestAsReviewer:
+    """Scheduled reviews act as a second GitHub account. The bot's token is
+    exported into every cron job by .envrc and outranks any gh config directory,
+    so the wrapper has to replace the token itself, and it must refuse rather
+    than fall back to the bot when the reviewer cannot be used."""
+
+    MARKER = "ran"
+
+    @staticmethod
+    def _bot(tmp_dir, reviewer=None, login=None, actual=None):
+        """A bot directory with a stub gh whose stored login is `actual`, or
+        none, and whose config names `reviewer`."""
+        bot = TestProjectSchedules._bot_dir(tmp_dir, "default")
+        cfg_dir = os.path.join(tmp_dir, "xdg", "gh-" + (reviewer or "x"))
+        os.makedirs(cfg_dir, exist_ok=True)
+        if actual:
+            with open(os.path.join(cfg_dir, "login"), "w") as f:
+                f.write(actual)
+        path = os.path.join(bot, "config.json")
+        with open(path) as f:
+            config = json.load(f)
+        if reviewer:
+            config["reviewer"] = {"username": reviewer, "ghConfigDir": cfg_dir}
+        with open(path, "w") as f:
+            json.dump(config, f)
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        with open(os.path.join(bindir, "gh"), "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                'case "$*" in\n'
+                '  "auth token"*) [ -n "${GH_TOKEN:-}" ] && { echo "$GH_TOKEN"; exit 0; }\n'
+                '     [ -f "$GH_CONFIG_DIR/login" ] || exit 1\n'
+                '     echo "token-of-$(cat "$GH_CONFIG_DIR/login")" ;;\n'
+                '  "api user"*) echo "${GH_TOKEN#token-of-}" ;;\n'
+                "  *) exit 1 ;;\n"
+                "esac\n"
+            )
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        return bot, bindir, cfg_dir
+
+    def _run(self, bot, bindir):
+        env = {
+            **os.environ,
+            "PATH": bindir + os.pathsep + os.environ["PATH"],
+            "GH_TOKEN": "bot-token",
+            "GH_CONFIG_DIR": "/the/bots/config",
+        }
+        return subprocess.run(
+            [
+                os.path.join(bot, "scripts", "as-reviewer.sh"),
+                "--",
+                "bash",
+                "-c",
+                'echo "$GH_TOKEN|$GH_CONFIG_DIR"',
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def test_without_a_reviewer_the_command_runs_as_the_bot(self, tmp_dir):
+        bot, bindir, _ = self._bot(tmp_dir)
+        result = self._run(bot, bindir)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "bot-token|/the/bots/config"
+
+    def test_with_a_reviewer_the_bots_token_is_replaced(self, tmp_dir):
+        bot, bindir, cfg_dir = self._bot(tmp_dir, "rev", actual="rev")
+        result = self._run(bot, bindir)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == f"token-of-rev|{cfg_dir}"
+
+    def test_a_reviewer_who_is_not_logged_in_is_not_replaced_by_the_bot(self, tmp_dir):
+        bot, bindir, _ = self._bot(tmp_dir, "rev")
+        result = self._run(bot, bindir)
+        assert result.returncode == 1
+        assert "bot-token" not in result.stdout
+        assert "make setup" in result.stderr
+
+    def test_a_directory_logged_in_as_someone_else_is_refused(self, tmp_dir):
+        bot, bindir, _ = self._bot(tmp_dir, "rev", actual="someone-else")
+        result = self._run(bot, bindir)
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "someone-else" in result.stderr
+
+    @pytest.mark.parametrize("reviewer, expected", [(None, "b"), ("rev", "rev")])
+    def test_review_requests_are_read_for_whoever_reviews(
+        self, tmp_dir, reviewer, expected
+    ):
+        bot, _, cfg_dir = self._bot(tmp_dir, reviewer)
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"source {bot}/scripts/lib/load-config.sh && "
+                'echo "$BOT_REVIEW_USERNAME|$BOT_REVIEWER_GH_CONFIG_DIR"',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == f"{expected}|{cfg_dir if reviewer else ''}"
+
+    def test_the_default_login_directory_is_under_config(self, tmp_dir):
+        bot, _, _ = self._bot(tmp_dir, "rev")
+        path = os.path.join(bot, "config.json")
+        with open(path) as f:
+            config = json.load(f)
+        config["reviewer"] = {"username": "rev"}
+        with open(path, "w") as f:
+            json.dump(config, f)
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"source {bot}/scripts/lib/load-config.sh && "
+                'echo "$BOT_REVIEWER_GH_CONFIG_DIR"',
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "XDG_CONFIG_HOME": "/xdg"},
+        )
+        assert result.stdout.strip() == "/xdg/gh-rev"
 
 
 class TestRemoveSchedules:

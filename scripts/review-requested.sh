@@ -83,18 +83,18 @@ still_requested() {
   local requested
   requested=$(gh pr view "$1" --repo "$BOT_PR_REPO" --json reviewRequests \
     --jq '.reviewRequests[].login' 2>/dev/null) || return 1
-  grep -qxF "$BOT_USERNAME" <<< "$requested"
+  grep -qxF "$BOT_REVIEW_USERNAME" <<< "$requested"
 }
 
 if ! PRS=$(bot_review_requested_prs); then
-  echo "Could not query review requests for $BOT_USERNAME." >&2
+  echo "Could not query review requests for $BOT_REVIEW_USERNAME." >&2
   exit 1
 fi
 
 if [ -z "$PRS" ]; then
   # The gate already asked, but the queue is GitHub's and it moves: another
   # machine may have answered every one of these in between.
-  echo "No review requests for $BOT_USERNAME in $BOT_PR_REPO — nothing to do."
+  echo "No review requests for $BOT_REVIEW_USERNAME in $BOT_PR_REPO — nothing to do."
   exit 0
 fi
 
@@ -127,7 +127,7 @@ for PR in $PRS; do
   RC=0
   (
     bot_acquire_lock "$LOCK_DIR/.review-pr-$PR.lock" || exit "$PR_BUSY_RC"
-    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] reviewing #$PR — review requested from $BOT_USERNAME"
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] reviewing #$PR — review requested from $BOT_REVIEW_USERNAME"
     "$BOT_CLAUDE_BIN" -p "/review-prs #$PR open auto" --model "$BOT_REVIEW_MODEL" \
       --allowedTools "$BOT_AGENT_TOOLS" --strict-mcp-config 200>&-
   ) || RC=$?

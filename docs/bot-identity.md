@@ -30,6 +30,29 @@ gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
 
 **Checking a signature locally.** Signing a commit and being able to read that signature back are separate settings, and without the second git prints an error and `No signature` for a good one — the same words it uses for a commit that was never signed. So setup writes `<target-repo>/.git/allowed_signers`, naming the bot's address and signing key, and points `gpg.ssh.allowedSignersFile` at it. `git log --show-signature` then reports the bot's commits as good, and a commit by anybody else as having no matching principal, which is a different sentence from having no signature. GitHub is not the place to find this out: it shows a signature it cannot attribute as Unverified, on a page nobody opens until a reviewer does.
 
+## Reviewer account
+
+The bot opens PRs, and GitHub does not let an account approve its own. So scheduled reviews can run as a second account, the reviewer. `make setup` asks for its username (blank keeps reviewing as the bot), saves it as `reviewer.username` in `config.json`, and then walks you through the login:
+
+```bash
+GH_CONFIG_DIR=~/.config/gh-<reviewer> gh auth login --hostname github.com --web --skip-ssh-key
+```
+
+Setup offers to run that for you. Sign in to github.com as the reviewer first (a private window if you are signed in as someone else); gh prints a one-time code to enter at github.com/login/device. Setup then checks the login resolves to the reviewer, and reports the reviewer's access to the PR repository: approvals only count toward required reviews from an account with write access.
+
+The login lives in its own gh config directory, `~/.config/gh-<reviewer>` by default (`reviewer.ghConfigDir` overrides it), so it never enters your gh config or the bot's. Nothing global changes.
+
+| Runs as | Jobs |
+| --- | --- |
+| Reviewer | the `/review-prs` sweeps and the review-request poll (`check-review-requests.sh`, `review-requested.sh`) |
+| Bot | `run.sh`, the PRD sync, maintenance jobs, and the git fetches that precede a review |
+
+The cron lines for the first row go through `scripts/as-reviewer.sh`, which reads `config.json` when the job fires. Once the jobs have been installed with the wrapper (`make schedules-review`), adding, changing or removing the reviewer needs no further re-sync. The wrapper sets `GH_TOKEN` to the reviewer's token as well as `GH_CONFIG_DIR`, because `.envrc` exports the bot's `GH_TOKEN` into every cron job and a token outranks a config directory.
+
+It does not fall back. With a reviewer configured, a missing login, or a directory logged in as a different account, stops the job with an error in its log; quietly reviewing as the bot would defeat the account's purpose. Clear `reviewer.username` to go back to the bot.
+
+Review requests are polled for the reviewer, not the bot: a human asks for a review from the account that will answer it. To run any command by hand as the reviewer, `./scripts/as-reviewer.sh -- <command>`.
+
 ## Hooks
 
 Three hooks are installed by `make setup` — into the target repo, and `pre-commit` into this repo as well — and every run reinstalls the target-repo ones whose installed copy differs from this checkout's. `make setup` runs once per machine, so without that a hook added here afterwards reaches a repo configured before it existed only if somebody remembers to run setup again, and until they do nothing reports the gap: the repo pushes exactly as it always did, with one fewer check than this checkout believes it has. The signature refusal below landed that way and sat uninstalled for a week in the repository it was written for.

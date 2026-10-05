@@ -83,7 +83,10 @@ line says only what is particular to it. The gate runs before the git sync: a
 job with nothing to do costs no fetches. `bot_cron_agent <lock> '<prompt>'
 [slots] [model]` builds the command for a job that starts an agent session,
 held under a named lock; a `/review-prs` job passes `"$BOT_REVIEW_MODEL"` as
-its model.
+its model. A job that reviews (a sweep, or the review-request poll) wraps its
+command in `bot_cron_as_reviewer '<command>'`, so it acts as the reviewer account
+when the deployment has one and as the bot when it does not — see
+[Reviewer account](../docs/bot-identity.md#reviewer-account).
 
 Cron reads the machine's local clock, so an hour in a schedule is an hour in the
 machine's time zone.

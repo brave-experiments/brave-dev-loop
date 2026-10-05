@@ -46,11 +46,11 @@ schedule_review() {
   echo "# every time a poll happened to be holding it."
   echo "# Weekdays: 3x/day"
   bot_cron_job "0 13,20 * * 1-5" "./scripts/check-new-prs.sh" \
-    "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")" \
+    "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")")" \
     "review-prs-cron.log"
   echo "# Weekends: once/day at noon"
   bot_cron_job "0 12 * * 0,6" "./scripts/check-new-prs.sh" \
-    "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")" \
+    "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")")" \
     "review-prs-cron.log"
 
   echo ""
@@ -61,7 +61,7 @@ schedule_review() {
   echo "# three review-prs slots, shared with the sweep above, and a lock per PR"
   echo "# inside the job so two runs never review the same one."
   bot_cron_job "4,9,14,19,24,29,34,39,44,49,54,59 * * * *" "./scripts/check-review-requests.sh" \
-    "./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh" \
+    "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh")" \
     "review-requested-cron.log"
 }
 

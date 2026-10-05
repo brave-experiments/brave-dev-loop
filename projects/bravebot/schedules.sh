@@ -55,11 +55,11 @@ schedule_review() {
   echo "# Times are the machine's local clock, which cron reads; it is on Eastern time."
   echo "# Daytime: 8x/day between 06:30 and 22:30, two or three hours apart"
   bot_cron_job "30 6,8,10,13,15,17,20,22 * * *" "./scripts/check-new-prs.sh" \
-    "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")" \
+    "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")")" \
     "review-prs-cron.log"
   echo "# Overnight: 1x, 02:30, halfway between the last daytime sweep and the first"
   bot_cron_job "30 2 * * *" "./scripts/check-new-prs.sh" \
-    "./scripts/sync-target-repo.sh && $(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")" \
+    "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "$(bot_cron_agent review-prs '/review-prs 1d open auto reviewer-priority' 3 "$BOT_REVIEW_MODEL")")" \
     "review-prs-cron.log"
 
   echo ""
@@ -72,6 +72,6 @@ schedule_review() {
   echo "# Minutes are offset from brave-core's copy of this job, which can be"
   echo "# deployed on the same machine."
   bot_cron_job "3,8,13,18,23,28,33,38,43,48,53,58 * * * *" "./scripts/check-review-requests.sh" \
-    "./scripts/sync-target-repo.sh && ./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh" \
+    "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh")" \
     "review-requested-cron.log"
 }
