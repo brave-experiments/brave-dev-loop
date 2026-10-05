@@ -222,6 +222,23 @@ def test_warns_that_the_push_may_dismiss_an_approval(world):
     assert world.pushed() != world.head
 
 
+def test_the_reviewer_is_asked_again_after_the_push(world):
+    """The stub config names no reviewer, so request-review.sh says so; what
+    this pins is that the push is followed by the request at all."""
+    result = world.run()
+
+    assert world.pushed() != world.head
+    assert "No reviewer account configured" in result.stderr
+
+
+def test_nothing_is_requested_when_there_is_nothing_to_push(world):
+    world.run()
+
+    result = world.run()
+
+    assert "reviewer" not in result.stderr
+
+
 def test_a_second_run_finds_nothing_to_push(world):
     world.run()
     rebased = world.pushed()

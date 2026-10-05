@@ -53,6 +53,8 @@ It does not fall back. With a reviewer configured, a missing login, or a directo
 
 Review requests are polled for the reviewer, not the bot: a human asks for a review from the account that will answer it. To run any command by hand as the reviewer, `./scripts/as-reviewer.sh -- <command>`.
 
+The bot asks the reviewer for a fresh review after each follow-up push to an open PR (`scripts/request-review.sh <pr>`, run as the bot, the PR's author), because GitHub removes a reviewer from the request list once they have reviewed. With no reviewer configured it does nothing.
+
 ## Hooks
 
 Three hooks are installed by `make setup` — into the target repo, and `pre-commit` into this repo as well — and every run reinstalls the target-repo ones whose installed copy differs from this checkout's. `make setup` runs once per machine, so without that a hook added here afterwards reaches a repo configured before it existed only if somebody remembers to run setup again, and until they do nothing reports the gap: the repo pushes exactly as it always did, with one fewer check than this checkout believes it has. The signature refusal below landed that way and sat uninstalled for a week in the repository it was written for.

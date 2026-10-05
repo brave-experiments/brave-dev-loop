@@ -125,6 +125,8 @@ The PR branch is behind and has conflicts. Rebase it on the upstream default bra
    git push --force-with-lease
    ```
 
+   Then re-request the review (see [Re-request the review after every push](#re-request-the-review-after-every-push)).
+
 4. Document the rebase in `$BOT_DIR/data/progress.txt`, then **continue the normal merge readiness check below** — the PR may now be mergeable.
 
 **If `mergeable` is `UNKNOWN`:** GitHub hasn't computed mergeability yet. Treat as non-conflicting and proceed with the normal workflow.
@@ -356,6 +358,16 @@ python3 $BOT_DIR/scripts/business-hours-elapsed.py <reference-timestamp> [thresh
 - **END THE ITERATION** - Stop processing, don't continue to the next story
 - This story will be checked again in the next iteration for merge readiness or new review comments
 
+## Re-request the review after every push
+
+GitHub removes a reviewer from the request list once they submit a review, so a follow-up push does not put the PR back in their queue. After **every** push to an open PR's branch (review fixes, a CI fix, a manual rebase):
+
+```bash
+$BOT_DIR/scripts/request-review.sh <pr-number>
+```
+
+It asks the configured reviewer account (`reviewer.username`) for a review, and does nothing when none is configured or the PR is no longer open. `scripts/rebase-pr.py` and the `rebase-bot-prs` skill call it themselves after their force-push; do not call it again for those. If the script fails, note it in progress.txt and continue; the push stands.
+
 ## Review Response Workflow (when there are new reviewer comments)
 
 **IMPLEMENTATION SUB-CYCLE** (same rigor as initial development):
@@ -472,7 +484,7 @@ If violations are found, fix them and re-run only the affected chunks to confirm
 
 - **ALWAYS create a NEW separate commit** for review feedback changes (never amend existing commits)
   - Use a clear commit message describing what feedback was addressed (e.g., "Address review: remove unnecessary thread hop")
-  - Push: `git push`
+  - Push: `git push`, then re-request the review (see [Re-request the review after every push](#re-request-the-review-after-every-push))
   - Separate commits let reviewers see exactly what changed in response to their feedback
   - Without commit history, it's easy to miss unrelated changes that may have been introduced
 - Post a reply to the review comment on GitHub using gh CLI:

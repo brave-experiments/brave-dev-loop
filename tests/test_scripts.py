@@ -5677,6 +5677,64 @@ class TestAsReviewer:
         assert result.stdout.strip() == "/xdg/gh-rev"
 
 
+class TestRequestReview:
+    """After a follow-up push the reviewer must be asked again: GitHub drops a
+    reviewer from the request list once they have reviewed."""
+
+    @staticmethod
+    def _run(tmp_dir, reviewer, state="OPEN", *args):
+        bot, bindir, _ = TestAsReviewer._bot(tmp_dir, reviewer, actual=reviewer)
+        calls = os.path.join(tmp_dir, "calls")
+        with open(os.path.join(bindir, "gh"), "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                'echo "$*" >> "$GH_CALLS"\n'
+                'case "$1" in pr) echo "$GH_STATE" ;; esac\n'
+            )
+        result = subprocess.run(
+            [os.path.join(bot, "scripts", "request-review.sh"), *(args or ("7",))],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PATH": bindir + os.pathsep + os.environ["PATH"],
+                "GH_CALLS": calls,
+                "GH_STATE": state,
+            },
+        )
+        made = open(calls).read().splitlines() if os.path.exists(calls) else []
+        return result, made
+
+    def test_the_configured_reviewer_is_requested(self, tmp_dir):
+        result, calls = self._run(tmp_dir, "rev")
+        assert result.returncode == 0, result.stderr
+        post = [c for c in calls if c.startswith("api")]
+        assert len(post) == 1
+        assert "--method POST" in post[0]
+        assert "/pulls/7/requested_reviewers" in post[0]
+        assert "reviewers[]=rev" in post[0]
+
+    def test_a_named_repository_is_used(self, tmp_dir):
+        _, calls = self._run(tmp_dir, "rev", "OPEN", "--repo", "o/r", "7")
+        assert any("repos/o/r/pulls/7/requested_reviewers" in c for c in calls)
+
+    def test_without_a_reviewer_nothing_is_requested(self, tmp_dir):
+        result, calls = self._run(tmp_dir, None)
+        assert result.returncode == 0, result.stderr
+        assert not any(c.startswith("api") for c in calls)
+        assert "No reviewer account" in result.stdout
+
+    def test_a_pr_that_is_not_open_is_skipped(self, tmp_dir):
+        result, calls = self._run(tmp_dir, "rev", "MERGED")
+        assert result.returncode == 0, result.stderr
+        assert not any(c.startswith("api") for c in calls)
+
+    def test_a_non_numeric_pr_is_refused(self, tmp_dir):
+        result, calls = self._run(tmp_dir, "rev", "OPEN", "abc")
+        assert result.returncode == 2
+        assert calls == []
+
+
 class TestRemoveSchedules:
     """remove-schedules.sh strips this project's block and nothing else. The
     suite runs on the machine whose schedules these are, so crontab is a fake
