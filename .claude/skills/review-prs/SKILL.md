@@ -21,7 +21,7 @@ Scan recent open PRs in the configured PR repository for violations of documente
 
 The review pipeline minimizes LLM token usage by pushing all heavy data through files, not context:
 
-1. **prepare-review.py** (zero LLM tokens) — fetches PRs, diffs, comments; works out which files changed since the last review; writes one detect prompt per rule chunk, plus one for bugs, to a temp work directory; outputs a tiny JSON pointer to the work dir
+1. **prepare-review.py** (zero LLM tokens) — fetches PRs, diffs, comments; works out which files changed since the last review; writes one detect prompt per rule chunk, plus one for bugs, to a temp work directory (more than one per check when a large diff is split into parts); outputs a tiny JSON pointer to the work dir
 2. **Detect subagents** (`review-prs-detect`, Sonnet) — each reads its prompt from a file, checks the diff against its rules, and writes candidate findings to a JSON file. They never read source files, except the ones a project's review guidance names (below).
 3. **select-candidates.py** (zero LLM tokens) — drops the candidates post-review.py would drop anyway (no rule link, a rule id that does not exist, duplicates, lines already commented on, everything past twice the per-PR cap) and writes one validate prompt per PR that has any left
 4. **Validate subagents** (`review-prs-validate`, Opus) — one per PR; reads the candidates against the PR's source tree and writes the ones that hold up
@@ -91,6 +91,8 @@ Read your instructions from: {prompt_file}
 ```
 
 If the `review-prs-detect` agent type is not available, use `subagent_type: "general-purpose"` with `model: "sonnet"` and the same prompt.
+
+Every prompt file fits in one Read call. When a check's diff does not fit alongside its rules, `prepare-review.py` writes the diff into page files that each fit one read, lists them in the prompt (and in the entry's `read_files`), and gives each subagent at most four pages, splitting a larger diff into entries with `part` and `total_parts`. Each part is a separate entry, launched like any other. The subagent reads the pages itself; do not read them for it.
 
 A PR's `summary_prompt`, when it is not `null`, gets a subagent in the same way, with the same `subagent_type`. It is not one of the detect prompts: `select-candidates.py` never reads it, and a PR whose summary subagent failed is still reviewed, with no description section.
 

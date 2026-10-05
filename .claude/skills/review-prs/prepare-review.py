@@ -47,6 +47,7 @@ from lib.load_config import (
     review_guidance,
     review_verdict,
 )
+from lib.pr_diff import NO_PATCH, fetch_pr_diff
 from lib.repo_lock import repo_lock
 
 # Import fetch-prs functions (the module uses if __name__ guard)
@@ -384,84 +385,7 @@ def is_feature_branch(base_ref):
 
 
 def fetch_diff(pr_number):
-    result = subprocess.run(
-        ["gh", "pr", "diff", "--repo", PR_REPO, str(pr_number)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        if diff_too_large(result.stderr):
-            log(
-                f"    Diff of #{pr_number} is over GitHub's limit; fetching it file by file"
-            )
-            return fetch_diff_by_file(pr_number)
-        raise RuntimeError(f"Failed to fetch diff: {result.stderr.strip()}")
-    return result.stdout
-
-
-def diff_too_large(stderr):
-    """GitHub refuses a whole-PR diff past 300 files (HTTP 406, "too_large")."""
-    return "too_large" in stderr or "HTTP 406" in stderr
-
-
-# A file whose patch GitHub left out of the files API (binary, or a text diff
-# too big to render). omitted_reason() turns the section into a stub line.
-_NO_PATCH = "Patch not available from GitHub"
-
-
-def fetch_diff_by_file(pr_number):
-    """The PR's diff rebuilt from the paginated files API.
-
-    Covers PRs past the 300-file limit of the diff endpoint, up to the 3000
-    files the files API lists. The patch of each file is the same hunk text the
-    diff carries; the headers are rebuilt from the file's status."""
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            f"repos/{PR_REPO}/pulls/{pr_number}/files?per_page=100",
-            "--jq",
-            ".[]",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to fetch files: {result.stderr.strip()}")
-    files = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-    if len(files) >= 3000:
-        raise RuntimeError(
-            f"PR lists {len(files)} files, the files API's limit; the diff would be incomplete"
-        )
-    return join_sections(file_section(f) for f in files)
-
-
-def file_section(f):
-    """One file's section of a unified diff, from a files API entry."""
-    path = f["filename"]
-    old = f.get("previous_filename") or path
-    status = f.get("status")
-    lines = [f"diff --git a/{old} b/{path}"]
-    if status == "added":
-        lines.append("new file mode 100644")
-    elif status == "removed":
-        lines.append("deleted file mode 100644")
-    elif status == "renamed":
-        lines += [f"rename from {old}", f"rename to {path}"]
-    patch = f.get("patch")
-    if patch is None:
-        # A pure rename has no patch to lose. Anything else does, whatever
-        # `changes` says: GitHub reports 0 for some text it will not render.
-        if not (status == "renamed" and f.get("changes", 0) == 0):
-            lines.append(f"{_NO_PATCH}: a/{old} b/{path}")
-        return "\n".join(lines)
-    lines.append("--- /dev/null" if status == "added" else f"--- a/{old}")
-    lines.append("+++ /dev/null" if status == "removed" else f"+++ b/{path}")
-    lines.append(patch.rstrip("\n"))
-    return "\n".join(lines)
+    return fetch_pr_diff(PR_REPO, pr_number, log)
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +518,7 @@ def omitted_reason(path, section):
         return "lockfile"
     if re.search(r"^(Binary files |GIT binary patch)", section, re.MULTILINE):
         return "binary"
-    if re.search(rf"^{_NO_PATCH}", section, re.MULTILINE):
+    if re.search(rf"^{NO_PATCH}", section, re.MULTILINE):
         return "no patch from GitHub"
     if fl.endswith(_OMITTED_SUFFIXES):
         return "asset"
@@ -711,13 +635,36 @@ def classify_files(files):
 
 
 # A family's doc skips other families' source but keeps neutral files (BUILD.gn, .grd).
+# Patches are a family of their own: a .patch file is a hunk of upstream code
+# with Brave's change in it, which only the patch rules read. A Chromium
+# upgrade rebases hundreds of them, and every other doc was paying for them.
 _FAMILY_PREDICATES = {
-    "has_cpp_files": lambda f: f.lower().endswith(
-        (".cc", ".h", ".mm", ".c", ".cpp", ".mojom")
+    "has_cpp_files": lambda f: (
+        f.lower().endswith((".cc", ".h", ".mm", ".c", ".cpp", ".mojom"))
+        and not _is_patch(f)
     ),
-    "has_android_files": _is_android,
-    "has_ios_files": _is_ios,
-    "has_frontend_files": _is_frontend,
+    "has_android_files": lambda f: _is_android(f) and not _is_patch(f),
+    "has_ios_files": lambda f: _is_ios(f) and not _is_patch(f),
+    "has_frontend_files": lambda f: _is_frontend(f) and not _is_patch(f),
+    "has_patch_files": _is_patch,
+}
+
+
+def _in_test_scope(path):
+    """Tests and what they lean on: fixtures, test utilities, filter files."""
+    return _is_test(path) or (
+        re.search(r"test", path.lower()) is not None and not _is_patch(path)
+    )
+
+
+# A doc tagged with one of these is about that kind of file only, so it sees
+# those files and nothing else.
+_SCOPE_PREDICATES = {
+    "has_test_files": _in_test_scope,
+    "has_chromium_src": _is_chromium_src,
+    "has_build_files": _is_build,
+    "has_localization_files": _is_localization,
+    "has_nala_files": _is_nala,
 }
 
 
@@ -737,6 +684,9 @@ def files_in_scope(condition, paths):
     prefixes = path_prefixes(condition)
     if prefixes is not None:
         return [p for p in paths if _under(p, prefixes)]
+    narrow = _SCOPE_PREDICATES.get(condition)
+    if narrow is not None:
+        return [p for p in paths if narrow(p)]
     own = _FAMILY_PREDICATES.get(condition)
     if own is None:
         return list(paths)
@@ -1289,6 +1239,18 @@ def _prompt_header(ctx, base_note=True):
         parts.append("The PR is already approved: report only high-severity findings.")
     if ctx.get("rereview_note"):
         parts.append(ctx["rereview_note"])
+    if ctx.get("part_note"):
+        parts.append(ctx["part_note"])
+    if ctx.get("read_files"):
+        parts += [
+            "",
+            "The diff is too long to include in this prompt, so it is in the files "
+            "below. Before you judge anything, read every one of them with the Read "
+            "tool, one call per file and all the way through: each fits in a single "
+            "call. A file you skip is code nobody reviews.",
+            "",
+        ]
+        parts += [f"- {path}" for path in ctx["read_files"]]
     parts.append("")
     return parts
 
@@ -1319,6 +1281,14 @@ def _diff_parts(diff_text, stubs, ranges):
 def _prior_parts(ctx):
     if not ctx.get("prior_comments"):
         return []
+    if ctx.get("prior_comments_file"):
+        return [
+            "## Prior Review Comments",
+            "",
+            f"They are in `{ctx['prior_comments_file']}`, in the list of files "
+            "to read above.",
+            "",
+        ]
     return [
         "## Prior Review Comments",
         "",
@@ -1575,6 +1545,115 @@ def _scoped_diff(paths, sections, omitted):
     return diff_text, stubs, parse_diff_line_ranges(diff_text)
 
 
+# A detect subagent reads files with the Read tool, and one call stops at
+# 25,000 tokens, 256KB or 2,000 lines, whichever comes first. Handed a prompt
+# past that, it reads a page or two and reports the rest clean: on brave-core
+# #39947 (1,195 files) every subagent read 6-25% of a 1.8MB prompt. So a prompt
+# that will not fit in one call keeps only its instructions and rules, and the
+# diff goes into pages that each fit one call, which the prompt tells it to
+# read in full. Diff text runs about 3 characters a token.
+MAX_PROMPT_CHARS = 60_000
+MAX_PROMPT_LINES = 1_800
+# A subagent reads at most this many pages; a diff with more is split across
+# subagents. Four pages is about 80K tokens of diff.
+PAGES_PER_PART = 4
+
+
+def _split_hunks(section, budget):
+    """One file's section cut at hunk boundaries into pieces of about `budget`
+    characters, each with the file's headers so it parses as its own section."""
+    lines = section.split("\n")
+    first = next((i for i, line in enumerate(lines) if line.startswith("@@")), None)
+    if first is None:
+        return [section]
+    header, hunks, current = lines[:first], [], []
+    for line in lines[first:]:
+        if line.startswith("@@") and current:
+            hunks.append(current)
+            current = []
+        current.append(line)
+    hunks.append(current)
+    pieces, piece = [], []
+    for hunk in hunks:
+        if piece and len("\n".join(header + piece + hunk)) > budget:
+            pieces.append("\n".join(header + piece))
+            piece = []
+        piece += hunk
+    pieces.append("\n".join(header + piece))
+    return pieces
+
+
+def _parts(paths, sections, omitted, budget_chars, budget_lines):
+    """The files in `paths` packed into parts that each fit the budget, in diff
+    order. Each part is (diff_text, stubs, ranges). A file too big for one part
+    is split at its hunks, and its pieces go out as parts of their own."""
+    units = []  # (shown section or None, stub or None)
+    for p in paths:
+        if omitted.get(p):
+            units.append((None, section_stub(p, sections[p], omitted[p])))
+        elif len(sections[p]) > budget_chars:
+            units += [
+                (piece, None) for piece in _split_hunks(sections[p], budget_chars)
+            ]
+        else:
+            units.append((sections[p], None))
+
+    def cost(unit):
+        shown, stub = unit
+        if stub is not None:
+            return len(stub) + 3, 1
+        # The section, plus its line in the ranges table.
+        return len(shown) + 80, shown.count("\n") + 2
+
+    groups, group, chars, lines = [], [], 0, 0
+    for unit in units:
+        c, n = cost(unit)
+        if group and (chars + c > budget_chars or lines + n > budget_lines):
+            groups.append(group)
+            group, chars, lines = [], 0, 0
+        group.append(unit)
+        chars += c
+        lines += n
+    if group:
+        groups.append(group)
+    parts = []
+    for group in groups:
+        diff_text = join_sections(shown for shown, _ in group if shown is not None)
+        stubs = [stub for _, stub in group if stub is not None]
+        parts.append((diff_text, stubs, parse_diff_line_ranges(diff_text)))
+    return parts or [("", [], {})]
+
+
+def _part_note(index, total):
+    if total == 1:
+        return None
+    return (
+        f"This PR's diff is too large for one reviewer, so it is split into "
+        f"{total} parts. This is part {index + 1} of {total}: review only the "
+        "files and hunks in it. The other parts are checked separately, so say "
+        "nothing about files you cannot see."
+    )
+
+
+def _fits_one_read(text):
+    return len(text) <= MAX_PROMPT_CHARS and text.count("\n") < MAX_PROMPT_LINES
+
+
+def _text_pages(text):
+    """`text` cut at line boundaries into pieces that each fit one read."""
+    pages, page, chars = [], [], 0
+    for line in text.split("\n"):
+        if page and (
+            chars + len(line) + 1 > MAX_PROMPT_CHARS or len(page) >= MAX_PROMPT_LINES
+        ):
+            pages.append("\n".join(page))
+            page, chars = [], 0
+        page.append(line)
+        chars += len(line) + 1
+    pages.append("\n".join(page))
+    return pages
+
+
 def process_pr(
     pr, bot_username, org_members, work_dir, auto_mode=False, prior_hashes=None
 ):
@@ -1716,81 +1795,165 @@ def process_pr(
             f.write(prompt)
         return prompt_file, results_file, prompt
 
+    # The prior comments as a file of their own, written the first time a
+    # prompt cannot carry them inline.
+    prior_pages = []
+
+    def prior_files():
+        if ctx.get("prior_comments") and not prior_pages:
+            for i, text in enumerate(_text_pages("\n".join(_prior_parts(ctx)))):
+                path = os.path.join(pr_work_dir, f"prior_comments_{i + 1}.txt")
+                with open(path, "w") as f:
+                    f.write(text)
+                prior_pages.append(path)
+        return prior_pages
+
+    def write_parts(kind, base_id, paths, omit, build, chunk=None):
+        """The prompts one check needs: one carrying its diff when that fits a
+        single read, else pages of diff in files, PAGES_PER_PART per prompt.
+
+        `build(ctx, diff_text, stubs, ranges, results_file, chunk_id)`."""
+        diff_text, stubs, ranges = _scoped_diff(paths, sections, omit)
+        if _fits_one_read(build(ctx, diff_text, stubs, ranges, "", base_id)):
+            groups = [None]
+        else:
+            pages = _parts(
+                paths, sections, omit, MAX_PROMPT_CHARS - 2_000, MAX_PROMPT_LINES - 50
+            )
+            groups = [
+                pages[i : i + PAGES_PER_PART]
+                for i in range(0, len(pages), PAGES_PER_PART)
+            ]
+        for i, group in enumerate(groups):
+            chunk_id = base_id if len(groups) == 1 else f"{base_id}_p{i + 1}"
+            if group is None:
+                part_ctx, args = ctx, (diff_text, stubs, ranges)
+            else:
+                files = list(prior_files())
+                for k, page in enumerate(group):
+                    path = os.path.join(pr_work_dir, f"{chunk_id}_diff_{k + 1}.txt")
+                    with open(path, "w") as f:
+                        f.write("\n".join(_diff_parts(*page)))
+                    files.append(path)
+                part_ctx = dict(
+                    ctx,
+                    part_note=_part_note(i, len(groups)),
+                    read_files=files,
+                    prior_comments_file=prior_pages[0] if prior_pages else None,
+                )
+                args = ("", [], {})
+            prompt_file, results_file, prompt = write_prompt(
+                chunk_id, lambda rf: build(part_ctx, *args, rf, chunk_id)
+            )
+            if not _fits_one_read(prompt):
+                log(
+                    f"  WARNING: {chunk_id} prompt is {len(prompt):,} chars even "
+                    "without its diff; the subagent will need more than one read"
+                )
+            entry = _prompt_entry(
+                kind, chunk_id, prompt_file, results_file, prompt, chunk
+            )
+            if group is not None:
+                entry["read_files"] = part_ctx["read_files"]
+                cost = entry["cost_estimate"]
+                cost["prompt_chars"] += sum(os.path.getsize(f) for f in files)
+                cost["prompt_tokens_approx"] = cost["prompt_chars"] // 4
+            if len(groups) > 1:
+                entry.update({"part": i + 1, "total_parts": len(groups)})
+            subagent_prompts.append(entry)
+
     for doc_info in applicable_docs:
         scope = files_in_scope(doc_info.get("condition"), changed)
         if not scope:
             continue
-        doc_diff, stubs, ranges = _scoped_diff(scope, sections, omitted)
         try:
             chunks = chunk_doc(doc_info["path"])
         except Exception as e:
             log(f"  WARNING: chunking failed for {doc_info['doc']}: {e}")
             continue
         for chunk in chunks:
-            chunk_id = f"{doc_info['doc']}_{chunk['chunk_index']}"
-            prompt_file, results_file, prompt = write_prompt(
-                chunk_id,
-                lambda rf, chunk=chunk, chunk_id=chunk_id: build_detect_prompt(
-                    ctx, chunk, doc_diff, stubs, ranges, rf, chunk_id
+            write_parts(
+                "rules",
+                f"{doc_info['doc']}_{chunk['chunk_index']}",
+                scope,
+                omitted,
+                lambda c, d, st, r, rf, cid, chunk=chunk: build_detect_prompt(
+                    c, chunk, d, st, r, rf, cid
                 ),
-            )
-            subagent_prompts.append(
-                _prompt_entry(
-                    "rules", chunk_id, prompt_file, results_file, prompt, chunk
-                )
+                chunk,
             )
 
-    code_diff, _, code_ranges = _scoped_diff(changed, sections, omitted)
-    if code_diff:
-        prompt_file, results_file, prompt = write_prompt(
+    code_paths = [p for p in changed if not omitted.get(p)]
+    if code_paths:
+        write_parts(
             "correctness",
-            lambda rf: build_correctness_prompt(
-                ctx, code_diff, code_ranges, rf, "correctness"
-            ),
-        )
-        subagent_prompts.append(
-            _prompt_entry(
-                "correctness", "correctness", prompt_file, results_file, prompt
-            )
+            "correctness",
+            code_paths,
+            {},
+            lambda c, d, st, r, rf, cid: build_correctness_prompt(c, d, r, rf, cid),
         )
         if REVIEW_GUIDANCE:
-            prompt_file, results_file, prompt = write_prompt(
+            write_parts(
                 "project",
-                lambda rf: build_project_prompt(
-                    ctx,
-                    code_diff,
-                    code_ranges,
-                    worktree_path or TARGET_REPO_PATH,
-                    rf,
-                    "project",
+                "project",
+                code_paths,
+                {},
+                lambda c, d, st, r, rf, cid: build_project_prompt(
+                    c, d, r, worktree_path or TARGET_REPO_PATH, rf, cid
                 ),
-            )
-            subagent_prompts.append(
-                _prompt_entry("project", "project", prompt_file, results_file, prompt)
             )
 
     summary_prompt = None
     if REVIEW_SUMMARY:
+        # One subagent describes the whole PR, so it cannot be split. Past one
+        # read, the files that do not fit are listed by name instead.
         every_file = list(sections)
-        all_diff, all_stubs, _ = _scoped_diff(
-            every_file,
-            sections,
-            {p: omitted_reason(p, sections[p]) for p in every_file},
-        )
+        summary_omit = {p: omitted_reason(p, sections[p]) for p in every_file}
+        shown_chars = 0
+        for p in every_file:
+            if summary_omit[p]:
+                continue
+            shown_chars += len(sections[p])
+            if shown_chars > PAGES_PER_PART * MAX_PROMPT_CHARS:
+                summary_omit[p] = "too large to show in one read"
+        all_diff, all_stubs, _ = _scoped_diff(every_file, sections, summary_omit)
         body = fetch_pr_body(pr_number)
         body_file = os.path.join(pr_work_dir, "pr_body.md")
         with open(body_file, "w") as f:
             f.write(body)
         prompt_file = os.path.join(pr_work_dir, "summary_prompt.txt")
         results_file = os.path.join(pr_work_dir, "summary.json")
+        summary_ctx = dict(ctx, rereview_note=None, has_approval=False)
         prompt = build_summary_prompt(
-            dict(ctx, rereview_note=None, has_approval=False),
+            summary_ctx,
             body,
             all_diff,
             all_stubs,
             worktree_path or TARGET_REPO_PATH,
             results_file,
         )
+        if not _fits_one_read(prompt):
+            files = []
+            pages = _parts(
+                every_file,
+                sections,
+                summary_omit,
+                MAX_PROMPT_CHARS - 2_000,
+                MAX_PROMPT_LINES - 50,
+            )
+            for k, page in enumerate(pages):
+                path = os.path.join(pr_work_dir, f"summary_diff_{k + 1}.txt")
+                with open(path, "w") as f:
+                    f.write("\n".join(_diff_parts(*page)))
+                files.append(path)
+            prompt = build_summary_prompt(
+                dict(summary_ctx, read_files=files),
+                body,
+                "",
+                [],
+                worktree_path or TARGET_REPO_PATH,
+                results_file,
+            )
         with open(prompt_file, "w") as f:
             f.write(prompt)
         summary_prompt = {

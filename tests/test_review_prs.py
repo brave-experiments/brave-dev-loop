@@ -24,6 +24,14 @@ def post():
 
 
 @pytest.fixture(scope="module")
+def pr_diff(prep):
+    """scripts/lib/pr_diff.py, importable once prepare-review put scripts/ on the path."""
+    import lib.pr_diff
+
+    return lib.pr_diff
+
+
+@pytest.fixture(scope="module")
 def sel():
     return _load_module(
         "select_candidates", os.path.join(SKILL_DIR, "select-candidates.py")
@@ -133,14 +141,14 @@ class TestDiffPastTheFileLimit:
             prep.fetch_diff(1)
         assert len(calls) == 1
 
-    def test_headers_follow_the_status(self, prep):
-        added = prep.file_section(
+    def test_headers_follow_the_status(self, prep, pr_diff):
+        added = pr_diff.file_section(
             {"filename": "n.cc", "status": "added", "patch": "@@ -0,0 +1 @@\n+x"}
         )
-        removed = prep.file_section(
+        removed = pr_diff.file_section(
             {"filename": "o.cc", "status": "removed", "patch": "@@ -1 +0,0 @@\n-x"}
         )
-        moved = prep.file_section(
+        moved = pr_diff.file_section(
             {
                 "filename": "b.cc",
                 "previous_filename": "a.cc",
@@ -157,10 +165,10 @@ class TestDiffPastTheFileLimit:
         assert prep.split_diff(moved + "\n") == {"b.cc": moved}
         assert prep.omitted_reason("b.cc", moved) is None
 
-    def test_a_file_without_a_patch_becomes_a_stub(self, prep):
+    def test_a_file_without_a_patch_becomes_a_stub(self, prep, pr_diff):
         """GitHub leaves out the patch of a binary or of text too big to render,
         and reports 0 changes for some of the latter."""
-        s = prep.file_section(
+        s = pr_diff.file_section(
             {
                 "filename": "fr.lproj/Localizable.strings",
                 "status": "modified",
@@ -171,6 +179,29 @@ class TestDiffPastTheFileLimit:
             prep.omitted_reason("fr.lproj/Localizable.strings", s)
             == "no patch from GitHub"
         )
+
+    def test_post_review_places_findings_against_the_same_diff(
+        self, prep, post, monkeypatch
+    ):
+        """post-review.py reads the diff again to check each finding's line.
+        If it still asked the diff endpoint, every finding on a PR past 300
+        files was dropped as "file not in diff" and nothing was posted."""
+        a = section("browser/a.cc", ["int x;"])
+        patch = a.split("\n", 4)[4]
+        self._gh(
+            monkeypatch,
+            prep,
+            [
+                {
+                    "filename": "browser/a.cc",
+                    "status": "modified",
+                    "changes": 1,
+                    "patch": patch,
+                }
+            ],
+        )
+        monkeypatch.setattr(post, "_diff_line_cache", {})
+        assert post.fetch_diff_line_ranges("o/r", 1) == {"browser/a.cc": [(1, 3)]}
 
     def test_a_pr_at_the_files_api_limit_is_refused(self, prep, monkeypatch):
         """Past 3000 the API stops listing, and a review of part of a PR would
@@ -240,9 +271,35 @@ class TestScope:
             "app/generated_resources.grd",
         ]
 
-    def test_other_docs_read_everything(self, prep):
-        for condition in ("has_test_files", "has_build_files", "always", None):
+    def test_docs_without_a_file_type_read_everything(self, prep):
+        for condition in ("always", None):
             assert prep.files_in_scope(condition, self.FILES) == self.FILES
+
+    def test_a_doc_about_one_kind_of_file_reads_only_those(self, prep):
+        files = self.FILES + [
+            "browser/a_unittest.cc",
+            "test/data/page.html",
+            "chromium_src/chrome/x.cc",
+            "patches/chrome-browser-test-foo.cc.patch",
+        ]
+        assert prep.files_in_scope("has_build_files", files) == ["browser/BUILD.gn"]
+        assert prep.files_in_scope("has_test_files", files) == [
+            "browser/a_unittest.cc",
+            "test/data/page.html",
+        ]
+        assert prep.files_in_scope("has_chromium_src", files) == [
+            "chromium_src/chrome/x.cc"
+        ]
+
+    def test_patches_go_to_the_patch_rules_not_the_language_docs(self, prep):
+        """A Chromium upgrade rebases hundreds of .patch files. Each is upstream
+        code with Brave's change in it, which only the patch rules judge."""
+        files = ["browser/a.cc", "patches/chrome-browser-ui-foo.cc.patch"]
+        assert prep.files_in_scope("has_cpp_files", files) == ["browser/a.cc"]
+        assert prep.files_in_scope("has_patch_files", files) == [
+            "patches/chrome-browser-ui-foo.cc.patch"
+        ]
+        assert prep.files_in_scope("always", files) == files
 
     def test_docs_for_flags_drops_unmet_conditions(self, prep):
         docs = [
@@ -266,6 +323,60 @@ class TestScope:
 
     def test_a_paths_doc_reads_only_the_files_under_it(self, prep):
         assert prep.files_in_scope("paths:ui/", self.FILES) == ["ui/b.ts"]
+
+
+class TestParts:
+    """A detect subagent reads its prompt in one Read call. Past that it reads
+    a page or two and reports the rest clean, so a large diff is split."""
+
+    def test_a_small_diff_is_one_part(self, prep):
+        a = section("a.cc", ["int x;"])
+        parts = prep._parts(["a.cc"], {"a.cc": a}, {}, 10_000, 1_000)
+        assert len(parts) == 1
+        assert parts[0][0] == diff_of(a)
+
+    def test_files_are_packed_into_parts_that_fit(self, prep):
+        sections = {f"f{i}.cc": section(f"f{i}.cc", ["x" * 900]) for i in range(10)}
+        parts = prep._parts(list(sections), sections, {}, 3_000, 1_000)
+        assert len(parts) > 1
+        assert all(len(d) <= 3_000 for d, _, _ in parts)
+        seen = [p for d, _, _ in parts for p in prep.split_diff(d)]
+        assert seen == list(sections), "every file once, in diff order"
+
+    def test_the_line_budget_splits_too(self, prep):
+        sections = {f"f{i}.cc": section(f"f{i}.cc", ["x"] * 50) for i in range(4)}
+        parts = prep._parts(list(sections), sections, {}, 1_000_000, 60)
+        assert len(parts) == 4
+
+    def test_a_file_too_big_for_a_part_is_split_at_its_hunks(self, prep):
+        hunks = [
+            f"@@ -{i * 100},1 +{i * 100},2 @@\n ctx\n+" + "y" * 900 for i in range(1, 6)
+        ]
+        big = "diff --git a/big.cc b/big.cc\n--- a/big.cc\n+++ b/big.cc\n" + "\n".join(
+            hunks
+        )
+        parts = prep._parts(["big.cc"], {"big.cc": big}, {}, 2_500, 1_000)
+        assert len(parts) > 1
+        for diff_text, _, ranges in parts:
+            assert diff_text.startswith("diff --git a/big.cc b/big.cc")
+            assert list(ranges) == ["big.cc"]
+        all_ranges = [r for _, _, ranges in parts for r in ranges["big.cc"]]
+        assert all_ranges == prep.parse_diff_line_ranges(big)["big.cc"]
+
+    def test_stubs_ride_along_without_content(self, prep):
+        lock = section("package-lock.json", ["{}"])
+        parts = prep._parts(
+            ["package-lock.json"],
+            {"package-lock.json": lock},
+            {"package-lock.json": "lockfile"},
+            10_000,
+            1_000,
+        )
+        assert parts[0][0] == "" and "lockfile" in parts[0][1][0]
+
+    def test_a_split_prompt_says_which_part_it_is(self, prep):
+        assert prep._part_note(0, 1) is None
+        assert "part 2 of 3" in prep._part_note(1, 3)
 
 
 class TestDiscoverBestPractices:
@@ -366,6 +477,45 @@ class TestProcessPr:
         assert "+{}" not in cpp_prompt
         with open(result["file_hashes_file"]) as f:
             assert json.load(f) == self._hashes(prep)
+
+    def test_a_diff_past_one_read_goes_into_pages_the_prompt_names(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        """On brave-core #39947 the subagents read 6-25% of 1.8MB prompts and
+        reported the rest clean. A prompt now fits one read, the diff is in
+        pages that each fit one read, and every file is in some page."""
+        monkeypatch.setattr(prep, "MAX_PROMPT_CHARS", 1_500)
+        monkeypatch.setattr(prep, "PAGES_PER_PART", 2)
+        files = [
+            section(f"browser/f{i}.cc", [f"int v{i} = {'x' * 400};"]) for i in range(8)
+        ]
+        stubbed["text"] = diff_of(*files)
+        monkeypatch.setattr(
+            prep,
+            "fetch_prior_comments",
+            lambda *a, **k: ("Earlier: please rename v0.", True),
+        )
+        result, error = self._run(prep, tmp_dir)
+        assert error is None
+        correctness = [
+            p for p in result["subagent_prompts"] if p["kind"] == "correctness"
+        ]
+        assert len(correctness) > 1, "eight files over a 1.5K budget is one part"
+        assert [p["part"] for p in correctness] == list(range(1, len(correctness) + 1))
+        seen = []
+        for entry in correctness:
+            with open(entry["prompt_file"]) as f:
+                prompt = f.read()
+            assert "+int v" not in prompt, "the diff belongs in the pages"
+            assert f"part {entry['part']} of {len(correctness)}" in prompt
+            for path in entry["read_files"]:
+                assert f"- {path}" in prompt
+                with open(path) as f:
+                    page = f.read()
+                assert len(page) <= 1_500
+                seen += list(prep.split_diff(page))
+            assert "please rename v0" in open(entry["read_files"][0]).read()
+        assert seen == [f"browser/f{i}.cc" for i in range(8)]
 
     def test_no_changed_file_stops_before_any_other_call(
         self, prep, stubbed, tmp_dir, monkeypatch
@@ -965,6 +1115,14 @@ class TestDescribeChecks:
         assert "**Bugs.**" in text
         assert "  - Whether the tests can fail." in text
         assert "nothing to double-check" in text
+
+    def test_a_chunk_split_into_parts_counts_its_rules_once(self, collect, tmp_dir):
+        """Three parts of the diff checked against the same 10 rules is still 10
+        rules, not 30."""
+        pr = self._pr(tmp_dir, [("rules", "specs.md", 10)] * 3, files_reviewed=3)
+        for entry in pr["subagent_prompts"]:
+            entry["chunk_index"] = 0
+        assert "compared with 10 rules" in collect.describe_checks(pr, [])
 
     def test_a_re_review_says_it_read_only_the_changed_files(self, collect, tmp_dir):
         text = collect.describe_checks(
