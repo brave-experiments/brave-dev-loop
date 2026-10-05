@@ -50,7 +50,7 @@ CHECK_CAN_APPROVE = os.path.join(BOT_DIR, "scripts", "check-can-approve.py")
 UPDATE_CACHE = os.path.join(SCRIPT_DIR, "update-cache.py")
 SIGNAL_NOTIFY = os.path.join(BOT_DIR, "scripts", "signal-notify.sh")
 
-MAX_COMMENTS_PER_PR = 5
+MAX_COMMENTS_PER_PR = 25
 NITS_THRESHOLD = 3  # Drop nits if >= this many higher-severity comments
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}

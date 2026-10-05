@@ -134,7 +134,7 @@ python3 $BOT_DIR/.claude/skills/review-prs/collect-results.py --work-dir "$WORK_
 
 Pass `--auto` if `auto_mode` is true.
 
-The script handles everything: collecting violations from result files, prioritization/capping (5 per PR), rule link validation, deduplication, posting inline reviews, approval for clean PRs, cache updates, Signal notification, and the final summary block. A PR whose detect subagents all failed, or whose validator wrote nothing, is left out: nothing is posted and it is not cached, so the next run reviews it again.
+The script handles everything: collecting violations from result files, prioritization/capping (25 per PR), rule link validation, deduplication, posting inline reviews, approval for clean PRs, cache updates, Signal notification, and the final summary block. A PR whose detect subagents all failed, or whose validator wrote nothing, is left out: nothing is posted and it is not cached, so the next run reviews it again.
 
 For **interactive mode** (no `--auto`): before running collect-results.py, read each validator's results from `{work_dir}/pr_{number}/validated.json`, present each violation to the user for approval, write only approved violations back to that file, then run collect-results.py.
 
