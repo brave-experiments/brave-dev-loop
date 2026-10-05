@@ -180,11 +180,13 @@ def prioritize_violations(violations, has_approval, limit=MAX_COMMENTS_PER_PR):
     violations.sort(key=lambda v: SEVERITY_ORDER.get(v.get("severity", "low"), 2))
 
     if has_approval:
-        # Approved PRs: high-severity only
-        kept = [v for v in violations if v.get("severity") == "high"]
-        dropped = len(violations) - len(kept)
+        # Approved PRs: high and medium, never nits. Someone already said yes,
+        # so a style preference is noise, but a substantive violation is still
+        # worth a comment before it merges.
+        kept = [v for v in violations if v.get("severity") in ("high", "medium")]
+        dropped = len(violations) - len(kept[:limit])
         if dropped:
-            log(f"CAPPED: dropped {dropped} medium/low violations (PR has approval)")
+            log(f"CAPPED: dropped {dropped} violations (PR has approval: no nits)")
         return kept[:limit], dropped
 
     high = [v for v in violations if v.get("severity") == "high"]
