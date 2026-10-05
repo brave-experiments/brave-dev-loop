@@ -4178,8 +4178,11 @@ class TestCheckNewPrsGate:
     GATE = os.path.join(SCRIPT_DIR, "check-new-prs.sh")
 
     @staticmethod
-    def _run(tmp_dir, failures, answer='[{"number":7}]', attempts=3):
-        """A gh that fails its first `failures` calls, then answers."""
+    def _run(tmp_dir, failures, answer=None, attempts=3):
+        """A gh that fails its first `failures` calls, then answers with the
+        updatedAt of each open PR, one per line."""
+        if answer is None:
+            answer = TestNewPrsGate._iso(hours=1)
         bindir = os.path.join(tmp_dir, "bin")
         os.makedirs(bindir, exist_ok=True)
         calls = os.path.join(tmp_dir, "calls")
@@ -4214,7 +4217,7 @@ class TestCheckNewPrsGate:
     def test_no_recent_prs_closes_the_gate_quietly(self, tmp_dir):
         """A routine skip writes nothing to stderr, which the cron line sends
         to the job's log."""
-        result, _ = self._run(tmp_dir, failures=0, answer="[]")
+        result, _ = self._run(tmp_dir, failures=0, answer="")
         assert result.returncode == 1
         assert result.stderr == ""
 
@@ -4227,7 +4230,7 @@ class TestCheckNewPrsGate:
         result, calls = self._run(tmp_dir, failures=99)
         assert result.returncode == 1
         assert calls == 3
-        assert "could not search" in result.stderr
+        assert "could not query" in result.stderr
         assert "gh: HTTP 403: rate limit" in result.stderr
         assert "No open PRs" not in result.stdout
 
@@ -4592,6 +4595,69 @@ class TestReviewRequestQueue:
         result, _, _ = self._run(self.JOB, tmp_dir, bindir)
         assert "Review of #901 failed" in result.stderr
         assert not os.path.exists(attempts)
+
+
+class TestNewPrsGate:
+    """scripts/check-new-prs.sh, the gate in front of the scheduled sweep."""
+
+    GATE = os.path.join(SCRIPT_DIR, "check-new-prs.sh")
+
+    @staticmethod
+    def _gh(tmp_dir, updated=(), rc=0):
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        gh = os.path.join(bindir, "gh")
+        lines = "".join(f"echo {u}\n" for u in updated)
+        with open(gh, "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                'echo "$*" >> "$GH_LOG"\n'
+                f"[ {rc} -eq 0 ] || {{ echo 'gh: API rate limit exceeded' >&2; exit {rc}; }}\n"
+                + lines
+            )
+        os.chmod(gh, 0o755)
+        return bindir
+
+    def _run(self, tmp_dir, bindir):
+        log = os.path.join(tmp_dir, "gh.log")
+        result = subprocess.run(
+            [self.GATE],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "GH_LOG": log},
+        )
+        with open(log) as f:
+            return result, f.read()
+
+    @staticmethod
+    def _iso(**delta):
+        from datetime import datetime, timedelta, timezone
+
+        return (datetime.now(timezone.utc) - timedelta(**delta)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+    def test_a_pr_updated_today_opens_the_gate(self, tmp_dir):
+        bindir = self._gh(tmp_dir, [self._iso(days=5), self._iso(hours=3)])
+        result, gh_log = self._run(tmp_dir, bindir)
+        assert result.returncode == 0, result.stderr
+        assert "pr list" in gh_log
+
+    def test_only_old_prs_stop_at_the_gate(self, tmp_dir):
+        bindir = self._gh(tmp_dir, [self._iso(days=5), self._iso(hours=25)])
+        result, _ = self._run(tmp_dir, bindir)
+        assert result.returncode == 1
+        assert "skipping review-prs" in result.stdout
+
+    def test_no_open_prs_stop_at_the_gate(self, tmp_dir):
+        result, _ = self._run(tmp_dir, self._gh(tmp_dir))
+        assert result.returncode == 1
+
+    def test_does_not_use_the_search_api(self, tmp_dir):
+        """`gh search` has a rate limit of its own, shared with the
+        review-request poll."""
+        _, gh_log = self._run(tmp_dir, self._gh(tmp_dir, [self._iso(hours=1)]))
+        assert "search" not in gh_log.split()
 
 
 class TestRunLocking:
