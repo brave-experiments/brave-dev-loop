@@ -4199,9 +4199,18 @@ class TestReviewRequestQueue:
         return result.stdout
 
     @staticmethod
-    def _stubs(tmp_dir, queue="101\n102\n103", gh_rc=0, failing_pr=None):
+    def _stubs(
+        tmp_dir,
+        queue="101\n102\n103",
+        gh_rc=0,
+        failing_pr=None,
+        head="",
+        requested="",
+    ):
         """A gh that answers the queue query and a claude that records its
-        prompt, both ahead of the real ones on PATH."""
+        prompt, both ahead of the real ones on PATH. `head` is every PR's head
+        commit and `requested` the reviewers still asked for after a session;
+        with no head the job has nothing to count attempts against."""
         bindir = os.path.join(tmp_dir, "bin")
         os.makedirs(bindir, exist_ok=True)
         gh = os.path.join(bindir, "gh")
@@ -4210,6 +4219,10 @@ class TestReviewRequestQueue:
                 "#!/bin/bash\n"
                 'echo "$*" >> "$GH_LOG"\n'
                 f"[ {gh_rc} -eq 0 ] || {{ echo 'gh: bad credentials' >&2; exit {gh_rc}; }}\n"
+                'case "$*" in\n'
+                f"  *'pr view'*headRefOid*) echo '{head}'; exit 0 ;;\n"
+                f"  *'pr view'*reviewRequests*) printf '%s\\n' {requested!r}; exit 0 ;;\n"
+                "esac\n"
                 f"printf '%s' '{queue}'\n"
                 f"[ -z '{queue}' ] || echo\n"
             )
@@ -4450,6 +4463,74 @@ class TestReviewRequestQueue:
         assert claude_log == []
         assert result.returncode == 0
         assert "nothing to do" in result.stdout
+
+    @pytest.fixture
+    def attempts(self):
+        """The attempt count of PR 901, which lives in the repo's .ignore beside
+        the PR locks. Removed afterwards so no run on this checkout skips it."""
+        path = os.path.join(REPO_ROOT, ".ignore", ".review-pr-901.attempts")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path):
+            os.remove(path)
+        yield path
+        if os.path.exists(path):
+            os.remove(path)
+
+    def test_a_pr_left_unanswered_is_given_up_on_at_the_cap(self, tmp_dir, attempts):
+        """A PR the skill cannot review stays in the queue, and the poll comes
+        back every five minutes. #39947 started over a thousand sessions that
+        way before anyone noticed."""
+        bindir = self._stubs(
+            tmp_dir, queue="901", head="abc123", requested=self._configured_bot()
+        )
+        for _ in range(3):
+            result, _, _ = self._run(self.JOB, tmp_dir, bindir)
+            assert "still waiting on a review" in result.stderr
+        result, _, claude_log = self._run(self.JOB, tmp_dir, bindir)
+        assert len(claude_log) == 3, "the fourth poll started another session"
+        assert result.returncode == 0, "giving up is not a failed review"
+        assert "Gave up" in result.stdout and "#901" in result.stdout
+
+    def test_the_cap_is_configurable(self, tmp_dir, attempts):
+        bindir = self._stubs(
+            tmp_dir, queue="901", head="abc123", requested=self._configured_bot()
+        )
+        env = {"REVIEW_REQUESTED_MAX_ATTEMPTS": "1"}
+        self._run(self.JOB, tmp_dir, bindir, env)
+        _, _, claude_log = self._run(self.JOB, tmp_dir, bindir, env)
+        assert len(claude_log) == 1
+
+    def test_a_push_starts_the_count_over(self, tmp_dir, attempts):
+        """The author pushing is the likeliest thing to make the next attempt
+        go differently, so it earns a fresh set."""
+        with open(attempts, "w") as f:
+            f.write("abc123 3\n")
+        bindir = self._stubs(
+            tmp_dir, queue="901", head="def456", requested=self._configured_bot()
+        )
+        _, _, claude_log = self._run(self.JOB, tmp_dir, bindir)
+        assert len(claude_log) == 1
+        with open(attempts) as f:
+            assert f.read().split() == ["def456", "1"]
+
+    def test_a_submitted_review_clears_the_count(self, tmp_dir, attempts):
+        """A later re-request is a new question, not a fourth try at the old one."""
+        with open(attempts, "w") as f:
+            f.write("abc123 2\n")
+        bindir = self._stubs(tmp_dir, queue="901", head="abc123", requested="")
+        _, _, claude_log = self._run(self.JOB, tmp_dir, bindir)
+        assert len(claude_log) == 1
+        assert not os.path.exists(attempts)
+
+    def test_a_failed_exit_on_an_answered_pr_is_not_an_attempt(self, tmp_dir, attempts):
+        """What counts is whether the review was submitted, not how the
+        session exited: one that posted and then crashed did its job."""
+        bindir = self._stubs(
+            tmp_dir, queue="901", failing_pr=901, head="abc123", requested=""
+        )
+        result, _, _ = self._run(self.JOB, tmp_dir, bindir)
+        assert "Review of #901 failed" in result.stderr
+        assert not os.path.exists(attempts)
 
 
 class TestRunLocking:
