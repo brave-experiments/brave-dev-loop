@@ -23,8 +23,8 @@ The review pipeline minimizes LLM token usage by pushing all heavy data through 
 
 1. **prepare-review.py** (zero LLM tokens) — fetches PRs, diffs, comments; works out which files changed since the last review; writes one detect prompt per rule chunk, plus one for bugs, to a temp work directory (more than one per check when a large diff is split into parts); outputs a tiny JSON pointer to the work dir
 2. **Detect subagents** (`review-prs-detect`, Sonnet) — each reads its prompt from a file, checks the diff against its rules, and writes candidate findings to a JSON file. They never read source files, except the ones a project's review guidance names (below).
-3. **select-candidates.py** (zero LLM tokens) — drops the candidates post-review.py would drop anyway (no rule link, a rule id that does not exist, duplicates, lines already commented on, everything past twice the per-PR cap) and writes one validate prompt per PR that has any left
-4. **Validate subagents** (`review-prs-validate`, Opus) — one per PR; reads the candidates against the PR's source tree and writes the ones that hold up
+3. **select-candidates.py** (zero LLM tokens) — drops the candidates post-review.py would drop anyway (no rule link, a rule id that does not exist, duplicates, lines already commented on, everything past twice the per-PR cap) and writes one validate prompt per PR that has any left, or that has earlier bot comments still unresolved
+4. **Validate subagents** (`review-prs-validate`, Opus) — one per PR; reads the candidates against the PR's source tree and writes the ones that hold up. It also rules on each of the bot's earlier unresolved comments: addressed or not, with a reason
 5. **collect-results.py** (zero LLM tokens) — reads the validated results, feeds them to post-review.py which handles prioritization, dedup, posting, approval, cache updates and notifications
 
 **Project review guidance.** A project profile (`projects/<profile>/profile.json`) may carry a `review` key, documented in [projects/README.md](../../../projects/README.md). Its `guidance` text is read by one extra detect subagent per PR (`chunk_id` `project`, launched like the others from `subagent_prompts`) and by the PR's validator. `prepare-review.py` and `select-candidates.py` add it to the prompts, so the main session does nothing differently. With `verdict`, `post-review.py` opens the review it posts with a recommendation. `collect-results.py` builds a collapsed section from the manifest (files read, rules compared, passes that ran, flagged versus kept) and `post-review.py` appends it under the recommendation. Above it the review says what the PR does, gives steps for trying it by hand when its description has none, and lists the parts of the required description shape (`docs/pr-descriptions.md`, checked with the helpers in `scripts/check-pr-body.py`) that it lacks. The first two come from one more subagent per PR, the manifest's `summary_prompt`; the last is computed without one. A profile without the key reviews as before.
@@ -74,7 +74,7 @@ Print the `progress_lines`. Log any errors.
 
 For each cached PR, log:
 - If `approved` is true: `APPROVE: [PR #N](url) (title) - all threads resolved, approved`
-- If `thread_resolution.unresolved_bot_threads > 0`: `CACHED: [PR #N](url) (title) - N threads still unresolved`
+- If `thread_resolution.unresolved_bot_threads > 0`: `CACHED: [PR #N](url) (title) - N threads still unresolved` (a cached PR only has threads resolved by a person's reply; the validator rules on the rest when a file changes)
 
 If no PRs to review (empty `prs` array), skip to Step 6.
 
@@ -134,7 +134,7 @@ python3 $BOT_DIR/.claude/skills/review-prs/collect-results.py --work-dir "$WORK_
 
 Pass `--auto` if `auto_mode` is true.
 
-The script handles everything: collecting violations from result files, prioritization/capping (25 per PR), rule link validation, deduplication, posting inline reviews, approval for clean PRs, cache updates, Signal notification, and the final summary block. A PR whose detect subagents all failed, or whose validator wrote nothing, is left out: nothing is posted and it is not cached, so the next run reviews it again.
+The script handles everything. A re-review always ends in a verdict: threads the validator found addressed are resolved, and a thread it did not rule on stays open. With nothing new and nothing open the bot approves; with an earlier comment still open it posts a "request changes" review that names each one and why, and does not approve. Collecting violations from result files, prioritization/capping (25 per PR), rule link validation, deduplication, posting inline reviews, approval for clean PRs, cache updates, Signal notification, and the final summary block. A PR whose detect subagents all failed, or whose validator wrote nothing, is left out: nothing is posted and it is not cached, so the next run reviews it again.
 
 For **interactive mode** (no `--auto`): before running collect-results.py, read each validator's results from `{work_dir}/pr_{number}/validated.json`, present each violation to the user for approval, write only approved violations back to that file, then run collect-results.py.
 

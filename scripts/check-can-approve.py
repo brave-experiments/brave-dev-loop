@@ -151,6 +151,16 @@ def fetch_pr_data(pr_number, bot_username, repo_owner="brave", repo_name="brave-
         "review via brave-dev-bot",
     }
 
+    # The verdict reviews of a project that asks for them. Their substance is
+    # in the inline threads, which are counted below, so the body text is not a
+    # second, unresolvable comment; counting it blocked every approval after the
+    # bot's first review.
+    VERDICT_BODY_PREFIXES = (
+        "**recommendation:",
+        "reviewed again at ",
+        "no issues found at ",
+    )
+
     body_comments = []
     already_approved = False
     for review in reviews:
@@ -161,7 +171,9 @@ def fetch_pr_data(pr_number, bot_username, repo_owner="brave", repo_name="brave-
         # excluding known harmless bot signatures.
         if state == "COMMENTED" and review.get("body", "").strip():
             body_text = review["body"].strip()
-            if body_text.lower() not in HARMLESS_BODY_PATTERNS:
+            if body_text.lower() not in HARMLESS_BODY_PATTERNS and not (
+                body_text.lower().startswith(VERDICT_BODY_PREFIXES)
+            ):
                 body_comments.append(
                     {
                         "review_id": review.get("id"),
