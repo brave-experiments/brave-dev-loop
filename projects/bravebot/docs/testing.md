@@ -30,9 +30,20 @@ cargo test --all <filter>     # one test, by substring of its path
 cargo test -p <crate>         # one crate
 ```
 
-`cargo test --all --locked` is what CI runs. Use `--locked` for the run that
-decides whether a story passes, so a stale `Cargo.lock` fails here rather than
-in CI.
+`cargo test --all --locked` is what CI runs, and `make check` runs it, so the
+run that decides whether a story passes is the one inside `make check-affected`
+below. Do not run the whole workspace yourself first: that is the same suite on
+the same tree, twice. While working, run the crate or test you changed; `--locked`
+on that run makes a stale `Cargo.lock` fail here rather than in CI.
+
+## What runs once
+
+`make check` already does `cargo fmt --check`, clippy over every target and the whole
+test suite, and compiles everything doing so, so a separate `cargo build` adds
+nothing. Run `cargo fmt --all` once before the gates (it writes; the gates only check)
+and do not repeat it after them, since an edit after the gates is a tree they did not
+see. The duplicates that remain are deliberate: `check-linux` repeats fmt, clippy and
+the suite on another platform, and `check-msrv` builds with another toolchain.
 
 ## Presubmit
 
