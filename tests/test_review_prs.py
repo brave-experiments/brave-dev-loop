@@ -803,6 +803,30 @@ class TestPrioritize:
         kept, _ = post.prioritize_violations(list(vs), False, limit=10)
         assert len(kept) == 10
 
+    def test_an_approved_pr_gets_high_and_medium_but_no_nits(self, post):
+        """Someone already said yes, so nits are noise; a substantive violation
+        is still worth saying before it merges."""
+        vs = [
+            {"file": "a", "line": 1, "severity": "low"},
+            {"file": "b", "line": 1, "severity": "medium"},
+            {"file": "c", "line": 1, "severity": "high"},
+        ]
+        kept, dropped = post.prioritize_violations(list(vs), True)
+        assert [v["severity"] for v in kept] == ["high", "medium"]
+        assert dropped == 1
+
+    def test_an_approved_pr_still_has_the_cap(self, post):
+        vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(8)]
+        kept, dropped = post.prioritize_violations(list(vs), True)
+        assert len(kept) == post.MAX_COMMENTS_PER_PR
+        assert dropped == 8 - post.MAX_COMMENTS_PER_PR
+
+    def test_the_detect_prompt_asks_an_approved_pr_for_medium_too(self, prep):
+        header = "\n".join(
+            prep._prompt_header({"number": 1, "title": "t", "has_approval": True})
+        )
+        assert "high- and medium-severity" in header and "no low-severity" in header
+
 
 BP_DOC = """# C++
 

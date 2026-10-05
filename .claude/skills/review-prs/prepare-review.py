@@ -1236,7 +1236,10 @@ def _prompt_header(ctx, base_note=True):
             "never claim a symbol, file, include or dependency is missing."
         )
     if ctx.get("has_approval"):
-        parts.append("The PR is already approved: report only high-severity findings.")
+        parts.append(
+            "The PR is already approved: report only high- and medium-severity "
+            "findings, no low-severity nits."
+        )
     if ctx.get("rereview_note"):
         parts.append(ctx["rereview_note"])
     if ctx.get("part_note"):
