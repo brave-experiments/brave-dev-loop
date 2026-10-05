@@ -1,4 +1,4 @@
-.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules schedules-run schedules-review remove-schedules remove-schedules-run remove-schedules-review view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase unmount-worktrees
+.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules schedules-run schedules-review remove-schedules remove-schedules-run remove-schedules-review view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase approve merge unmount-worktrees
 
 # Prefer .venv when it exists so no target needs an activated shell. PEP 668
 # interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
@@ -158,6 +158,23 @@ worktree:
 # No model is involved.
 rebase:
 	@python3 scripts/rebase-pr.py $(if $(PR),"$(PR)")
+
+# Approve a pull request, and optionally merge it:
+#
+#   make approve PR=https://github.com/brave/bravebot/pull/351
+#   make merge PR=351          # approve, then squash and merge
+#   make merge                 # asks which pull request
+#
+# Both act as project.botOwnerGithubHandle, not as the bot, whatever gh account
+# or GH_TOKEN this shell has. `merge` uses the project's merge method, squash,
+# pinned to the commit it approved, and forces nothing: a pull request GitHub
+# will not merge yet is reported as it words it, with the approval left in place.
+# No model is involved.
+approve:
+	@python3 scripts/merge-pr.py approve $(if $(PR),"$(PR)")
+
+merge:
+	@python3 scripts/merge-pr.py merge $(if $(PR),"$(PR)")
 
 # Remove the target repository's story worktrees and the directories they live
 # in -- the `../<repo>-<issue>` checkouts a worktree profile leaves behind, each
