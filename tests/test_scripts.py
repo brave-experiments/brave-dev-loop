@@ -4171,6 +4171,67 @@ class TestBotConfigBool:
         assert self._read(tmp_dir, False, "bot_config") == ""
 
 
+class TestCheckNewPrsGate:
+    """The review sweep's gate. A gh failure used to be read as "0 PRs", so two
+    sweeps in a row were skipped with nothing in any log."""
+
+    GATE = os.path.join(SCRIPT_DIR, "check-new-prs.sh")
+
+    @staticmethod
+    def _run(tmp_dir, failures, answer='[{"number":7}]', attempts=3):
+        """A gh that fails its first `failures` calls, then answers."""
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        calls = os.path.join(tmp_dir, "calls")
+        gh = os.path.join(bindir, "gh")
+        with open(gh, "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                f'echo x >> "{calls}"\n'
+                f'n=$(wc -l < "{calls}")\n'
+                f"[ \"$n\" -gt {failures} ] || {{ echo 'HTTP 403: rate limit' >&2; exit 1; }}\n"
+                f"printf '%s' '{answer}'\n"
+            )
+        os.chmod(gh, 0o755)
+        env = {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "CHECK_NEW_PRS_ATTEMPTS": str(attempts),
+            "CHECK_NEW_PRS_RETRY_DELAY": "0",
+        }
+        result = subprocess.run(
+            [TestCheckNewPrsGate.GATE], capture_output=True, text=True, env=env
+        )
+        with open(calls) as f:
+            return result, len(f.read().splitlines())
+
+    def test_recent_prs_open_the_gate_quietly(self, tmp_dir):
+        result, calls = self._run(tmp_dir, failures=0)
+        assert result.returncode == 0
+        assert result.stderr == ""
+        assert calls == 1
+
+    def test_no_recent_prs_closes_the_gate_quietly(self, tmp_dir):
+        """A routine skip writes nothing to stderr, which the cron line sends
+        to the job's log."""
+        result, _ = self._run(tmp_dir, failures=0, answer="[]")
+        assert result.returncode == 1
+        assert result.stderr == ""
+
+    def test_a_transient_gh_failure_is_retried(self, tmp_dir):
+        result, calls = self._run(tmp_dir, failures=2)
+        assert result.returncode == 0, result.stderr
+        assert calls == 3
+
+    def test_a_persistent_gh_failure_is_reported_not_read_as_empty(self, tmp_dir):
+        result, calls = self._run(tmp_dir, failures=99)
+        assert result.returncode == 1
+        assert calls == 3
+        assert "could not search" in result.stderr
+        assert "gh: HTTP 403: rate limit" in result.stderr
+        assert "No open PRs" not in result.stdout
+
+
 class TestReviewRequestQueue:
     """The queue is GitHub's own: a PR where the bot is a requested reviewer.
     Nothing local records what has been answered, which is what makes the answer
@@ -5186,6 +5247,23 @@ class TestProjectSchedules:
         }
         assert not (mine & theirs)
 
+    @pytest.mark.parametrize("profile", ["brave-core", "bravebot", "brave-dev-loop"])
+    def test_a_gate_reports_into_its_jobs_log(self, tmp_dir, profile):
+        """A gate that skipped because it could not ask GitHub has to say so
+        somewhere. Its stdout is the routine "nothing to do" and stays out; its
+        stderr goes to the same log the job writes."""
+        gated = [
+            j
+            for j in self._jobs(self._render(tmp_dir, profile))
+            if "./scripts/check-" in j
+        ]
+        assert gated
+        for job in gated:
+            log = re.search(r">> (\S+) 2>&1$", job).group(1)
+            assert re.search(
+                rf"\./scripts/check-[\w-]+\.sh 2>> {re.escape(log)} && \{{", job
+            ), job
+
     @pytest.mark.parametrize("profile", ["brave-core", "bravebot"])
     def test_a_review_requested_of_the_bot_is_polled_for(self, tmp_dir, profile):
         """Someone clicking "Request review" (or the re-request arrow) is an ask
@@ -5193,7 +5271,10 @@ class TestProjectSchedules:
         goes through the gate so the 96 polls a day that find nothing cost
         nothing — no agent session appears in the crontab line at all."""
         job = self._review_request_job(tmp_dir, profile)
-        assert "./scripts/check-review-requests.sh && { git fetch origin" in job
+        assert (
+            "./scripts/check-review-requests.sh 2>> {BOT}/logs/review-requested-cron.log"
+            " && { git fetch origin" in job
+        )
         assert "-- ./scripts/review-requested.sh" in job
         assert "/usr/bin/claude" not in job
 
