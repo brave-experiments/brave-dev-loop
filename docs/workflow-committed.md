@@ -178,6 +178,14 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
 
    This makes it clear who is responsible for the PR and helps with tracking.
 
+   **Request the reviewer account, when one is configured.** If the bot config has `reviewer.username` (set by `make setup`), request it on every PR you open, right after creating it:
+
+   ```bash
+   gh pr edit <pr-number> --add-reviewer <reviewer.username>
+   ```
+
+   The review-request poll then picks the PR up within minutes rather than at the next sweep. Do this after `gh pr create`, not as a `--reviewer` flag on it: a reviewer the repository does not know fails the whole creation, as a missing label does. If this command fails, the PR still stands: record the error in `$BOT_DIR/data/progress.txt` and carry on. With no `reviewer.username`, skip this.
+
 7. **Set appropriate labels on the PR and linked issues:**
 
    Labels should have been applied during PR creation in step 5 via `--label` flags. If any labels were missed, add them now:
@@ -208,7 +216,7 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
      ```bash
      gh pr view <pr-number> --json state,isDraft,reviewRequests,assignees,labels
      ```
-     Record the values it returns, not the flags you passed. If `isDraft` disagrees with the profile's `prDraft`, or a label or assignee from steps 5-7 is missing, fix it now and read again.
+     Record the values it returns, not the flags you passed. If `isDraft` disagrees with the profile's `prDraft`, or a label or assignee from steps 5-7 is missing, fix it now and read again. The same goes for the reviewer account when one is configured: it should appear in `reviewRequests`.
    - Update the PRD status:
      ```bash
      python3 $BOT_DIR/scripts/update-prd-status.py pushed <story-id> --pr-number <number>
