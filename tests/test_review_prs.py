@@ -80,6 +80,113 @@ class TestDiffSections:
         )
 
 
+class TestDiffPastTheFileLimit:
+    """GitHub refuses the whole-PR diff past 300 files, which a Chromium
+    upgrade always is. The files API pages through up to 3000, each with the
+    same hunk text, and the diff is rebuilt from it."""
+
+    @staticmethod
+    def _gh(
+        monkeypatch,
+        prep,
+        files,
+        diff_stderr="HTTP 406: Sorry, the diff exceeded the maximum number of files (300). (too_large)",
+    ):
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["gh", "pr", "diff"]:
+                return subprocess.CompletedProcess(args, 1, "", diff_stderr)
+            out = "".join(json.dumps(f) + "\n" for f in files)
+            return subprocess.CompletedProcess(args, 0, out, "")
+
+        monkeypatch.setattr(prep.subprocess, "run", run)
+        return calls
+
+    def test_a_diff_too_large_is_rebuilt_file_by_file(self, prep, monkeypatch):
+        a = section("browser/a.cc", ["int x;"])
+        patch = a.split("\n", 4)[4]
+        calls = self._gh(
+            monkeypatch,
+            prep,
+            [
+                {
+                    "filename": "browser/a.cc",
+                    "status": "modified",
+                    "changes": 1,
+                    "patch": patch,
+                }
+            ],
+        )
+        text = prep.fetch_diff(1)
+        assert "--paginate" in calls[1]
+        sections = prep.split_diff(text)
+        assert prep.section_hash(sections["browser/a.cc"]) == prep.section_hash(a)
+        assert prep.parse_diff_line_ranges(text) == prep.parse_diff_line_ranges(
+            diff_of(a)
+        )
+
+    def test_any_other_failure_is_still_an_error(self, prep, monkeypatch):
+        calls = self._gh(monkeypatch, prep, [], diff_stderr="HTTP 404: Not Found")
+        with pytest.raises(RuntimeError, match="Not Found"):
+            prep.fetch_diff(1)
+        assert len(calls) == 1
+
+    def test_headers_follow_the_status(self, prep):
+        added = prep.file_section(
+            {"filename": "n.cc", "status": "added", "patch": "@@ -0,0 +1 @@\n+x"}
+        )
+        removed = prep.file_section(
+            {"filename": "o.cc", "status": "removed", "patch": "@@ -1 +0,0 @@\n-x"}
+        )
+        moved = prep.file_section(
+            {
+                "filename": "b.cc",
+                "previous_filename": "a.cc",
+                "status": "renamed",
+                "changes": 0,
+            }
+        )
+        assert (
+            "new file mode" in added
+            and "--- /dev/null" in added
+            and "+++ b/n.cc" in added
+        )
+        assert "deleted file mode" in removed and "+++ /dev/null" in removed
+        assert prep.split_diff(moved + "\n") == {"b.cc": moved}
+        assert prep.omitted_reason("b.cc", moved) is None
+
+    def test_a_file_without_a_patch_becomes_a_stub(self, prep):
+        """GitHub leaves out the patch of a binary or of text too big to render,
+        and reports 0 changes for some of the latter."""
+        s = prep.file_section(
+            {
+                "filename": "fr.lproj/Localizable.strings",
+                "status": "modified",
+                "changes": 0,
+            }
+        )
+        assert (
+            prep.omitted_reason("fr.lproj/Localizable.strings", s)
+            == "no patch from GitHub"
+        )
+
+    def test_a_pr_at_the_files_api_limit_is_refused(self, prep, monkeypatch):
+        """Past 3000 the API stops listing, and a review of part of a PR would
+        read as a review of all of it."""
+        self._gh(
+            monkeypatch,
+            prep,
+            [
+                {"filename": f"f{i}", "status": "modified", "patch": "@@ -1 +1 @@\n+x"}
+                for i in range(3000)
+            ],
+        )
+        with pytest.raises(RuntimeError, match="limit"):
+            prep.fetch_diff(1)
+
+
 class TestOmission:
     @pytest.mark.parametrize(
         "path,body,reason",
