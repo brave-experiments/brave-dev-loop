@@ -16,7 +16,7 @@ source "$SCRIPT_DIR/lib/review-requests.sh"
 if ! PRS=$(bot_review_requested_prs); then
   # A failed query is not an empty queue, but the safe direction is the same:
   # never start a paid session on an answer we do not have.
-  echo "Could not query review requests for $BOT_USERNAME — skipping." >&2
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Could not query review requests for $BOT_USERNAME — skipping." >&2
   exit 1
 fi
 
