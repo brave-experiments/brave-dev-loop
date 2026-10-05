@@ -167,7 +167,12 @@ def describe_checks(pr, violations, project_checks=()):
     docs = [p for p in finished if p.get("kind") == "rules"]
     if docs:
         names = sorted({os.path.splitext(p["doc"])[0] for p in docs})
-        rules = sum(p.get("rule_count", 0) for p in docs)
+        # A chunk split into parts of the diff is still one set of rules.
+        rules = sum(
+            {
+                (p["doc"], p.get("chunk_index")): p.get("rule_count", 0) for p in docs
+            }.values()
+        )
         checked.append(
             f"**Written best practices.** The changes were compared with "
             f"{_count(rules, 'rule')} from this project's best-practice documents "
