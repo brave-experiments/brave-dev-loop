@@ -63,19 +63,17 @@
     "Read {bestPractices} and the documents it names that bear on this change \u2014 they are what the pull request is reviewed against, and they hold only what no check can decide"
   ],
   "validations": [
-    "Build the project: cargo build --all --locked (must pass)",
-    "Format the code: cargo fmt --all (must pass)",
+    "Format the code: cargo fmt --all, so the fmt --check inside the gates below has nothing to report (must pass)",
     "{testStep}",
     "Hold the final diff to agents/skills/testing-preflight/SKILL.md: for every new, changed or relaxed test, name the plausible wrong implementation it rejects, then restore that fault in the tree, watch that test fail for that reason, restore the tree and re-run it (must pass; required for a change to a security boundary, cancellation, concurrency or usage accounting, and skipped only with the reason written down)",
     "Carry that evidence into the pull request body: per behaviour, the test, the fault it rejects, and whether the failure was demonstrated or the coverage is reasoned only — a passing test count is not evidence that a test can fail (must pass)",
     "Run BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make check-affected — the host gates this branch needs, chosen from the paths it touches the way bravebot's CI chooses its jobs: check-scripts, check-spec, check-security, check-locales, check-versions and check-reviewdog every time, then make check (fmt --check, clippy -D warnings, tests, toolchain age), check-ui, check-docs, check-npm and check-deps wherever a touched path could fail them. It prints each area and the path that needs it, and keeps going past a failure; fix every failure and every finding check-reviewdog reports (must pass)",
-    "Run the Docker gates python3 contrib/affected-checks.py --containers names — check-msrv, check-windows and check-linux for any change to Rust, none otherwise — together in one wait-gate invocation of their own, each as BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make <target>; the classifier exiting non-zero is a failed gate, not an empty list (must pass; needs Docker)",
-    "Run cargo fmt --all one final time; if it makes any changes, amend the last commit with the formatting fixes"
+    "Run the Docker gates python3 contrib/affected-checks.py --containers names — check-msrv, check-windows and check-linux for any change to Rust, none otherwise — together in one wait-gate invocation of their own, each as BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1 make <target>; the classifier exiting non-zero is a failed gate, not an empty list (must pass; needs Docker)"
   ],
   "testSteps": {
     "testFix": "Run the failing test: cargo test --all {testFilter} (must pass — run it 3 times to confirm it is not flaky)",
     "disabledTest": "Run the re-enabled test: cargo test --all {testFilter} (must pass — run it 3 times to confirm it is not flaky)",
-    "generic": "Add or update the tests that cover the change, then run cargo test --all --locked (must pass)"
+    "generic": "Add or update the tests that cover the change, then run just those: cargo test -p <crate> <filter> --locked (must pass). The whole suite runs once, inside make check-affected below, so do not run cargo test --all here"
   },
   "testTargets": {},
   "labels": {
