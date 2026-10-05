@@ -27,6 +27,10 @@
     "cursorBin": null,
     "ghConfigDir": null
   },
+  "reviewer": {
+    "username": null,
+    "ghConfigDir": null
+  },
   "labels": {
     "prLabels": [
       "ai-generated"

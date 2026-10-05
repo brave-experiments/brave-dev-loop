@@ -16,14 +16,14 @@ source "$SCRIPT_DIR/lib/review-requests.sh"
 if ! PRS=$(bot_review_requested_prs); then
   # A failed query is not an empty queue, but the safe direction is the same:
   # never start a paid session on an answer we do not have.
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Could not query review requests for $BOT_USERNAME — skipping." >&2
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Could not query review requests for $BOT_REVIEW_USERNAME — skipping." >&2
   exit 1
 fi
 
 if [ -z "$PRS" ]; then
-  echo "No review requests for $BOT_USERNAME in $BOT_PR_REPO — nothing to do."
+  echo "No review requests for $BOT_REVIEW_USERNAME in $BOT_PR_REPO — nothing to do."
   exit 1
 fi
 
-echo "Review requested from $BOT_USERNAME on: $(echo "$PRS" | tr '\n' ' ')"
+echo "Review requested from $BOT_REVIEW_USERNAME on: $(echo "$PRS" | tr '\n' ' ')"
 exit 0

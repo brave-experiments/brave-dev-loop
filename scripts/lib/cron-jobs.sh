@@ -61,3 +61,13 @@ bot_cron_agent() {
     "$1" "${slots:+ --slots $slots}" "$CLAUDE_BIN" "$2" \
     "${model:+ --model $model}" "$CLAUDE_TOOLS"
 }
+
+# Wrap a command so it runs as the reviewer account (scripts/as-reviewer.sh):
+# the review sweeps and the review-request poll use it, the run.sh jobs do not.
+# Always emitted, configured or not -- the wrapper reads config.json when the
+# job fires, so adding a reviewer later takes effect without re-syncing cron.
+#
+#   bot_cron_as_reviewer '<command>'
+bot_cron_as_reviewer() {
+  printf './scripts/as-reviewer.sh -- %s' "$1"
+}

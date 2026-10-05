@@ -50,6 +50,8 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_SSH_KEY=$(_prev '.bot.sshKeyPath')
     PREV_GH_ACCOUNT=$(_prev '.bot.ghAccount')
     PREV_PROFILE=$(_prev '.project.profile')
+    PREV_REVIEWER_USER=$(_prev '.reviewer.username')
+    PREV_REVIEWER_DIR=$(_prev '.reviewer.ghConfigDir')
   fi
 
   prompt_required() {
@@ -238,6 +240,45 @@ if [ "$WRITE_CONFIG" = true ]; then
     done
   fi
 
+  echo ""
+  echo "─── Reviewer Account ───"
+  echo "Scheduled /review-prs jobs can run as a second GitHub account, so the bot"
+  echo "that writes PRs is not the one that reviews them. GitHub does not let an"
+  echo "account approve its own PR. ./run.sh keeps using $CFG_BOT_USER either way."
+  echo "Its gh login is kept in its own directory under ~/.config, apart from your"
+  echo "own gh config and the bot's."
+  echo ""
+  while true; do
+    if [ -n "$PREV_REVIEWER_USER" ]; then
+      read -p "Reviewer GitHub username ('-' to review as $CFG_BOT_USER) [$PREV_REVIEWER_USER]: " CFG_REVIEWER_USER
+      CFG_REVIEWER_USER="${CFG_REVIEWER_USER:-$PREV_REVIEWER_USER}"
+    else
+      read -p "Reviewer GitHub username (blank to review as $CFG_BOT_USER): " CFG_REVIEWER_USER
+    fi
+    if [ -z "$CFG_REVIEWER_USER" ] || [ "$CFG_REVIEWER_USER" = "-" ]; then
+      CFG_REVIEWER_USER=""
+      echo "  Scheduled reviews will run as $CFG_BOT_USER."
+      break
+    fi
+    if ! [[ "$CFG_REVIEWER_USER" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
+      echo "  ⚠️  '$CFG_REVIEWER_USER' is not a GitHub username."
+      continue
+    fi
+    if [ "$(tr '[:upper:]' '[:lower:]' <<< "$CFG_REVIEWER_USER")" = "$(tr '[:upper:]' '[:lower:]' <<< "$CFG_BOT_USER")" ]; then
+      echo "  ⚠️  That is the bot account. The reviewer must be a different one."
+      continue
+    fi
+    break
+  done
+  CFG_REVIEWER_DIR=""
+  if [ -n "$CFG_REVIEWER_USER" ]; then
+    CFG_REVIEWER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gh-$CFG_REVIEWER_USER"
+    if [ "$CFG_REVIEWER_USER" = "${PREV_REVIEWER_USER:-}" ] && [ -n "${PREV_REVIEWER_DIR:-}" ]; then
+      CFG_REVIEWER_DIR="$PREV_REVIEWER_DIR"
+    fi
+    echo "  gh login for $CFG_REVIEWER_USER: $CFG_REVIEWER_DIR"
+  fi
+
   # Values go through the environment, not argv or string interpolation, so no
   # user input can be read as JSON or as shell.
   CFG_PROJECT_NAME="$CFG_PROJECT_NAME" \
@@ -254,6 +295,8 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_BOT_EMAIL="$CFG_BOT_EMAIL" \
   CFG_SSH_KEY="$CFG_SSH_KEY" \
   CFG_GH_ACCOUNT="${PREV_GH_ACCOUNT:-}" \
+  CFG_REVIEWER_USER="$CFG_REVIEWER_USER" \
+  CFG_REVIEWER_DIR="$CFG_REVIEWER_DIR" \
   CONFIG_FILE="$CONFIG_FILE" \
   BOT_ROOT="$PROJECT_ROOT" \
   python3 -c "
@@ -266,9 +309,12 @@ target_repo = os.environ['CFG_TARGET_REPO']
 bot_root = os.environ['BOT_ROOT']
 
 existing_labels = {'prLabels': ['ai-generated'], 'issueLabels': [], 'disabledTestLabel': ''}
+existing_bot = {}
 try:
     with open(os.environ['CONFIG_FILE']) as _f:
-        existing_labels = json.load(_f).get('labels') or existing_labels
+        _existing = json.load(_f)
+    existing_labels = _existing.get('labels') or existing_labels
+    existing_bot = _existing.get('bot') or {}
 except (OSError, ValueError):
     pass
 
@@ -301,19 +347,29 @@ config = {
         'prdMode': os.environ.get('CFG_PRD_MODE') or 'curated',
         'botOwnerGithubHandle': val('CFG_OWNER_HANDLE'),
     },
+    # What the wizard does not ask about (ghConfigDir, signingKeyPath,
+    # maxConcurrentRuns, agent, models, ...) is carried forward from the config
+    # being rewritten; a re-run to change one answer must not reset the rest.
     'bot': {
+        **{
+            'ghConfigDir': None,
+            'agent': 'claude',
+            'claudeModel': 'opus',
+            'claudeBin': None,
+            'codexModel': None,
+            'codexBin': None,
+            'cursorModel': None,
+            'cursorBin': None,
+        },
+        **existing_bot,
         'username': os.environ['CFG_BOT_USER'],
         'email': os.environ['CFG_BOT_EMAIL'],
         'sshKeyPath': val('CFG_SSH_KEY'),
         'ghAccount': val('CFG_GH_ACCOUNT'),
-        'ghConfigDir': None,
-        'agent': 'claude',
-        'claudeModel': 'opus',
-        'claudeBin': None,
-        'codexModel': None,
-        'codexBin': None,
-        'cursorModel': None,
-        'cursorBin': None,
+    },
+    'reviewer': {
+        'username': val('CFG_REVIEWER_USER'),
+        'ghConfigDir': val('CFG_REVIEWER_DIR'),
     },
     # Labels belong to the project profile (projects/<name>/profile.json), which
     # is where anything actually reads them from. This block is carried forward
@@ -814,6 +870,89 @@ else
 fi
 echo ""
 
+# ─── Step 6b: Reviewer gh account ────────────────────────────────────────────
+# Scheduled /review-prs jobs run through scripts/as-reviewer.sh, which reads the
+# login from the directory below. It is a gh config directory of its own, so the
+# login never enters your gh config or the bot's.
+
+REVIEWER_LOGGED_IN=false
+if [ -n "$BOT_REVIEWER_USERNAME" ]; then
+  reviewer_gh() {
+    env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
+      GH_CONFIG_DIR="$BOT_REVIEWER_GH_CONFIG_DIR" gh "$@"
+  }
+  reviewer_login() { reviewer_gh api user --jq .login 2>/dev/null || true; }
+  same_login() {
+    [ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" = "$(tr '[:upper:]' '[:lower:]' <<< "$2")" ]
+  }
+
+  mkdir -p "$BOT_REVIEWER_GH_CONFIG_DIR"
+  chmod 700 "$BOT_REVIEWER_GH_CONFIG_DIR"
+
+  REVIEWER_LOGIN=""
+  if reviewer_gh auth token --hostname github.com >/dev/null 2>&1; then
+    REVIEWER_LOGIN=$(reviewer_login)
+  fi
+
+  if [ -z "$REVIEWER_LOGIN" ]; then
+    echo "Reviewer account: $BOT_REVIEWER_USERNAME has no gh login yet."
+    echo ""
+    echo "  The login is stored in $BOT_REVIEWER_GH_CONFIG_DIR"
+    echo "  (GH_CONFIG_DIR points gh there; your own gh config is not touched)."
+    echo ""
+    echo "  1. Open https://github.com in a browser signed in as $BOT_REVIEWER_USERNAME."
+    echo "     If you are signed in as someone else, use a private window."
+    echo "  2. Run:"
+    echo "       GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth login --hostname github.com --web --skip-ssh-key"
+    echo "  3. gh prints a one-time code and opens github.com/login/device."
+    echo "     Enter the code as $BOT_REVIEWER_USERNAME and authorize."
+    echo ""
+    echo "  To use a personal access token instead (classic, 'repo' scope):"
+    echo "       GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth login --hostname github.com --with-token"
+    echo ""
+    if [ -t 0 ]; then
+      read -p "  Run step 2 now? (Y/n) " -n 1 -r
+      echo
+      if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        reviewer_gh auth login --hostname github.com --web --skip-ssh-key || true
+        REVIEWER_LOGIN=$(reviewer_login)
+      fi
+    fi
+  fi
+
+  if [ -z "$REVIEWER_LOGIN" ]; then
+    echo "⚠️  Reviewer '$BOT_REVIEWER_USERNAME' is not logged in. Scheduled reviews will"
+    echo "   fail until it is (they do not fall back to the bot). Run the command above,"
+    echo "   or re-run 'make setup'."
+  elif ! same_login "$REVIEWER_LOGIN" "$BOT_REVIEWER_USERNAME"; then
+    echo "⚠️  $BOT_REVIEWER_GH_CONFIG_DIR is logged in as '$REVIEWER_LOGIN', not"
+    echo "   '$BOT_REVIEWER_USERNAME'. Scheduled reviews refuse to run as the wrong account."
+    echo "   Log that one out, then sign in again as $BOT_REVIEWER_USERNAME:"
+    echo "     GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth logout --hostname github.com"
+    echo "     GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth login --hostname github.com --web --skip-ssh-key"
+  else
+    REVIEWER_LOGGED_IN=true
+    echo "✓ Reviewer '$REVIEWER_LOGIN' is logged in ($BOT_REVIEWER_GH_CONFIG_DIR)"
+    echo "  Scheduled /review-prs jobs and the review-request poll run as this account;"
+    echo "  ./run.sh keeps using $BOT_GH_ACCOUNT. Review requests are now answered for"
+    echo "  $BOT_REVIEWER_USERNAME, not $BOT_USERNAME."
+    REVIEWER_PERMS=$(reviewer_gh api "repos/$BOT_PR_REPO" --jq '.permissions | if .admin or .maintain or .push then "write" elif .triage then "triage" elif .pull then "read" else "none" end' 2>/dev/null || echo "")
+    case "$REVIEWER_PERMS" in
+      write) echo "  ✓ Has write access to $BOT_PR_REPO: its approvals count." ;;
+      triage|read)
+        echo "  ⚠️  Has only $REVIEWER_PERMS access to $BOT_PR_REPO. Its reviews post, but an"
+        echo "     approval from an account without write access does not satisfy required reviews."
+        ;;
+      none) echo "  ⚠️  Cannot see $BOT_PR_REPO. Invite $BOT_REVIEWER_USERNAME as a collaborator." ;;
+      *) echo "  ℹ️  Could not read $BOT_REVIEWER_USERNAME's access to $BOT_PR_REPO." ;;
+    esac
+  fi
+else
+  echo "✓ No reviewer account: scheduled reviews run as $BOT_USERNAME"
+  echo "  (re-run 'make setup' to add one)"
+fi
+echo ""
+
 # ─── Step 7: Environment checks ──────────────────────────────────────────────
 
 if [[ "$(uname)" == "Linux" ]]; then
@@ -849,6 +988,13 @@ if [ "$SKIP_GIT" = true ] && [ -z "${GIT_REPO_RAW:-}" ]; then
   NEXT+=("Re-run 'make setup' and provide the target repo path to configure git identity, remotes, and hooks")
 elif [ "$SKIP_GIT" = true ]; then
   NEXT+=("Ensure $GIT_REPO_RAW exists as a git repository, then re-run 'make setup'")
+fi
+
+if [ -n "$BOT_REVIEWER_USERNAME" ]; then
+  if [ "$REVIEWER_LOGGED_IN" != true ]; then
+    NEXT+=("Log in the reviewer: GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth login --hostname github.com --web --skip-ssh-key")
+  fi
+  NEXT+=("Run 'make schedules-review' once so the review jobs go through scripts/as-reviewer.sh (the reviewer itself is read when a job fires)")
 fi
 
 if [ ${#NEXT[@]} -gt 0 ]; then
