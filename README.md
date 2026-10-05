@@ -164,6 +164,20 @@ commits the pull request has never had, and a conflict aborts the rebase and
 leaves the worktree usable. Where the repository signs commits, the rebase
 writes new ones and needs the signing key available. No model is involved.
 
+To approve a pull request, or approve it and squash-merge it:
+
+```bash
+make approve PR=https://github.com/brave/bravebot/pull/351
+make merge PR=351                # approve, then squash and merge
+make merge                       # asks which pull request
+```
+
+Both act as `project.botOwnerGithubHandle` using that account's stored `gh` login,
+whatever account or `GH_TOKEN` the shell has, and stop if gh does not resolve to it.
+The merge is pinned to the commit that was approved and forces nothing: a pull
+request GitHub will not merge yet is reported as it words it, and the approval stays.
+No model is involved.
+
 Scheduled jobs are per-project: `make schedules` installs the crontab blocks for
 the project in `config.json` and leaves any other deployment's blocks alone, and
 what goes in them comes from `projects/<profile>/schedules.sh` — see
