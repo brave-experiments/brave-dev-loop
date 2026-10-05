@@ -574,9 +574,88 @@ def with_details(text, pr_data):
     return "\n\n".join([text] + [e for e in extras if e])
 
 
-def verdict_body(verdict, pr_data):
+def verdict_body(verdict, pr_data, note=""):
     """A review body that opens with the verdict and ends with how it was reached."""
-    return with_details(verdict, pr_data) if VERDICT else ""
+    if not VERDICT:
+        return ""
+    return with_details(f"{verdict}\n\n{note}" if note else verdict, pr_data)
+
+
+def resolve_review_thread(thread_id):
+    """Resolve a review thread. Returns whether GitHub now reports it resolved."""
+    rc, out, _ = run_cmd(
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            "query=mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) "
+            "{ thread { isResolved } } }",
+            "-f",
+            f"id={thread_id}",
+        ],
+        timeout=30,
+    )
+    if rc != 0:
+        return False
+    try:
+        return json.loads(out)["data"]["resolveReviewThread"]["thread"]["isResolved"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return False
+
+
+def settle_open_threads(threads):
+    """Resolve the threads the validator found addressed. Returns (resolved, still_open).
+
+    A thread that is not explicitly addressed stays open, and so does one
+    GitHub would not resolve.
+    """
+    resolved, still_open = [], []
+    for t in threads:
+        if not t.get("addressed"):
+            still_open.append(t)
+        elif resolve_review_thread(t["thread_id"]):
+            resolved.append(t)
+        else:
+            still_open.append(
+                {
+                    **t,
+                    "reason": "The code now answers this comment, but GitHub would "
+                    "not resolve the thread.",
+                }
+            )
+    return resolved, still_open
+
+
+def _plural(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def resolved_note(resolved):
+    if not resolved:
+        return ""
+    return (
+        f"{_plural(len(resolved), 'earlier comment was', 'earlier comments were')} "
+        "addressed and resolved."
+    )
+
+
+def still_open_note(resolved, still_open):
+    """What the review says when earlier comments still apply: which, and why."""
+    n = len(still_open)
+    lines = [
+        f"Not approved: {_plural(n, 'earlier comment is', 'earlier comments are')} "
+        "still open."
+    ]
+    for t in still_open:
+        where = t.get("path") or "the pull request"
+        if t.get("line"):
+            where += f":{t['line']}"
+        link = f"[`{where}`]({t['url']})" if t.get("url") else f"`{where}`"
+        reason = t.get("reason") or "The review could not confirm it was fixed."
+        lines.append(f"- {link}: {reason}")
+    done = resolved_note(resolved)
+    return "\n".join(lines) + (f"\n\n{done}" if done else "")
 
 
 def own_pr_body(bot_username, head_sha, pr_data):
@@ -769,6 +848,33 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
         existing_comments = fetch_existing_comments(repo, number)
         violations = deduplicate_violations(violations, existing_comments)
 
+        # The comments the bot left earlier: resolve what the code now
+        # answers, and keep the rest in the verdict. The approval gate below
+        # reads GitHub again, so this must come first.
+        resolved, still_open = settle_open_threads(pr_data.get("open_threads", []))
+        for t in resolved:
+            log(f"RESOLVED: {t.get('path')}:{t.get('line')} — addressed")
+        for t in still_open:
+            log(f"STILL OPEN: {t.get('path')}:{t.get('line')} — {t.get('reason')}")
+
+        if not violations and still_open:
+            note = still_open_note(resolved, still_open)
+            url = submit_comment_review(
+                repo,
+                number,
+                head_sha,
+                verdict_body(VERDICT_CHANGES, pr_data, note) or note,
+            )
+            if url is not None:
+                result["status"] = "posted"
+                result["review_url"] = url
+                log(
+                    f"AUTO: {link} - {len(still_open)} earlier comments still open - {url}"
+                )
+            else:
+                log(f"AUTO: {link} - SKIPPED: open-comments review failed")
+            return result
+
         if not violations:
             # No violations — attempt approval
             can_approve = check_can_approve(number, bot_username)
@@ -790,7 +896,9 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                     log(f"AUTO: {link} - SKIPPED: clean-review comment failed")
             elif can_approve:
                 approval_url = submit_approval(
-                    repo, number, verdict_body(VERDICT_APPROVE, pr_data)
+                    repo,
+                    number,
+                    verdict_body(VERDICT_APPROVE, pr_data, resolved_note(resolved)),
                 )
                 if approval_url is not None:
                     update_cache(number, head_sha, approve=True)
@@ -815,7 +923,12 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                         number,
                         head_sha,
                         with_details(
-                            f"Reviewed again at {head_sha[:8]} as requested: no new issues.",
+                            f"{VERDICT_APPROVE}\n\nReviewed again at {head_sha[:8]} "
+                            "as requested: no new issues, and no earlier comment is "
+                            "still open."
+                            if VERDICT
+                            else f"Reviewed again at {head_sha[:8]} as requested: "
+                            "no new issues.",
                             pr_data,
                         ),
                     )
@@ -831,7 +944,11 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 number,
                 violations,
                 head_sha,
-                verdict_body(VERDICT_CHANGES, pr_data),
+                verdict_body(
+                    VERDICT_CHANGES,
+                    pr_data,
+                    still_open_note(resolved, still_open) if still_open else "",
+                ),
             )
             result["status"] = "posted"
             result["comments_posted"] = posted

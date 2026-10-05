@@ -5,7 +5,9 @@ Usage:
     python3 select-candidates.py --work-dir /var/tmp/review-prs/review-prs-XXXXX
 
 Prints {"work_dir", "validators": [{"pr", "prompt_file", "results_file",
-"candidates"}], "incomplete": [<pr>]} on stdout.
+"candidates", "threads"}], "incomplete": [<pr>]} on stdout. A PR with no
+candidates and none of the bot's earlier comments still open is clean and gets no
+validator.
 """
 
 import argparse
@@ -135,7 +137,26 @@ def validator_diff(diff_file, files):
     return text, _prep.parse_diff_line_ranges(text)
 
 
-def write_validator(pr, candidates, bot_username, bp_dir):
+def load_open_threads(pr):
+    """The bot's unresolved threads as the validator sees them: a short id and
+    the comment, without GitHub's node id."""
+    try:
+        with open(pr.get("open_threads_file") or "") as f:
+            threads = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [
+        {
+            "id": f"t{i}",
+            "file": t.get("path", ""),
+            "line": t.get("line"),
+            "comment": t.get("body", ""),
+        }
+        for i, t in enumerate(threads, 1)
+    ]
+
+
+def write_validator(pr, candidates, bot_username, bp_dir, threads=()):
     pr_work_dir = os.path.dirname(pr["file_hashes_file"])
     numbered = []
     for i, v in enumerate(candidates, 1):
@@ -174,6 +195,7 @@ def write_validator(pr, candidates, bot_username, bp_dir):
         pr.get("images", []),
         pr.get("source_path") or pr.get("worktree_path") or _prep.TARGET_REPO_PATH,
         results_file,
+        threads,
     )
     with open(prompt_file, "w") as f:
         f.write(prompt)
@@ -181,6 +203,7 @@ def write_validator(pr, candidates, bot_username, bp_dir):
         "prompt_file": prompt_file,
         "results_file": results_file,
         "candidates": len(numbered),
+        "threads": len(threads),
         "prompt_chars": len(prompt),
     }
 
@@ -218,10 +241,13 @@ def main():
         candidates = select(pr, violations, existing, _prep.BP_DIR)
         pr["detected"] = len(violations)
         log(f"PR #{number}: {len(violations)} detected, {len(candidates)} to validate")
-        if not candidates:
+        threads = load_open_threads(pr)
+        if not candidates and not threads:
             pr["validation"] = None
             continue
-        pr["validation"] = write_validator(pr, candidates, bot_username, _prep.BP_DIR)
+        pr["validation"] = write_validator(
+            pr, candidates, bot_username, _prep.BP_DIR, threads
+        )
         validators.append({"pr": number, **pr["validation"]})
 
     write_manifest(manifest_path, manifest)

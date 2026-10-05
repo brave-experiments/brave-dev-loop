@@ -952,6 +952,76 @@ def resolve_bot_threads(pr_number, bot_username):
         return {"resolved": 0, "unresolved_bot_threads": 0, "total_bot_threads": 0}
 
 
+_OPEN_THREADS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          comments(first: 1) {
+            nodes { author { login } path line originalLine url body }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_open_bot_threads(pr_number, bot_username):
+    """The bot's review threads still unresolved, as [{thread_id, path, line, url, body}].
+
+    Run after resolve_bot_threads, so the threads a person replied to are gone.
+    Raises when GitHub cannot say: a PR whose open threads are unknown must not
+    be approved on the strength of an empty list.
+    """
+    owner, name = PR_REPO.split("/", 1)
+    result = subprocess.run(
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={_OPEN_THREADS_QUERY}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            "-F",
+            f"number={pr_number}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "gh api graphql failed")
+    nodes = json.loads(result.stdout)["data"]["repository"]["pullRequest"][
+        "reviewThreads"
+    ]["nodes"]
+    threads = []
+    for node in nodes:
+        if node.get("isResolved"):
+            continue
+        first = (node.get("comments") or {}).get("nodes") or []
+        if not first or (first[0].get("author") or {}).get("login") != bot_username:
+            continue
+        c = first[0]
+        threads.append(
+            {
+                "thread_id": node["id"],
+                "path": c.get("path") or "",
+                "line": c.get("line") or c.get("originalLine"),
+                "url": c.get("url") or "",
+                "body": c.get("body") or "",
+            }
+        )
+    return threads
+
+
 # ---------------------------------------------------------------------------
 # Check-can-approve (subprocess — exits non-zero when can't approve)
 # ---------------------------------------------------------------------------
@@ -1441,22 +1511,44 @@ Reviewers who read only the diff proposed the candidates above. For each one:
   - VALIDATED_ENHANCED: <file>:<line> — improved with <context>
   - VALIDATED_DROP: <file>:<line> — <reason>
 
-Write the results with the Write tool to: {results_file}
+{threads_note}Write the results with the Write tool to: {results_file}
 {{
   "violations": [
     {{"file": "path/to/file.cc", "line": 42, "severity": "high", "rule": "Rule heading", "rule_link": "https://...", "issue": "brief description", "draft_comment": "1-3 sentence comment to post"}}
   ],
-  "validation_log": ["VALIDATED: file.cc:42 — confirmed", "VALIDATED_DROP: bar.cc:10 — false positive"]
+  "validation_log": ["VALIDATED: file.cc:42 — confirmed", "VALIDATED_DROP: bar.cc:10 — false positive"]{threads_output}
 }}
 Write the file even when every candidate is dropped.
 
 {never_post} {gh_note}When the file is written, reply with one line and nothing else: `PR #{pr_number}: <kept> of <total> candidates kept`."""
 
 
+_THREADS_NOTE = """\
+Earlier review comments:
+The "Earlier review comments" above are the bot's own comments that are still unresolved. For each one, read the source at the PR head (the whole function or clause the comment is about, not only the flagged line) and decide whether the problem it describes is gone:
+- addressed: true when the code or text now does what the comment asked for, or the comment's claim no longer holds. A reply from the author in the prior comments that shows the comment was mistaken also counts.
+- addressed: false when the problem is still there, is only partly fixed, or you cannot tell. Say what is still missing in `reason`.
+`reason` is one plain sentence a reader of the review can act on. Give every thread an entry, keyed by its id. Do not add a candidate for a thread you judge still open: it is reported already.
+
+"""
+
+_THREADS_OUTPUT = """,
+  "threads": [{{"id": "t1", "addressed": true, "reason": "one sentence"}}]"""
+
+
 def build_validate_prompt(
-    ctx, candidates, cited_rules, diff_text, ranges, images, source_path, results_file
+    ctx,
+    candidates,
+    cited_rules,
+    diff_text,
+    ranges,
+    images,
+    source_path,
+    results_file,
+    threads=(),
 ):
-    """The prompt for one PR's validator: which candidates the source bears out."""
+    """The prompt for one PR's validator: which candidates the source bears out,
+    and which of the bot's earlier comments the source now answers."""
     parts = _prompt_header(ctx, base_note=False)
     parts += [
         "## Candidates",
@@ -1465,6 +1557,14 @@ def build_validate_prompt(
         "```",
         "",
     ]
+    if threads:
+        parts += [
+            "## Earlier review comments",
+            "```json",
+            json.dumps(list(threads), indent=2),
+            "```",
+            "",
+        ]
     if cited_rules:
         parts.append("## Rules the candidates cite")
         parts.append("")
@@ -1508,6 +1608,8 @@ def build_validate_prompt(
             gh_note=gh_note,
             guidance_note=_GUIDANCE_VALIDATION if ctx.get("guidance") else "",
             pr_number=ctx["number"],
+            threads_note=_THREADS_NOTE if threads else "",
+            threads_output=_THREADS_OUTPUT.format() if threads else "",
         )
     )
     return "\n".join(parts)
@@ -1736,6 +1838,18 @@ def process_pr(
             "total_bot_threads": 0,
         }
         log(f"  WARNING: thread resolution failed for #{pr_number}: {e}")
+
+    open_threads_file = None
+    open_threads_failed = False
+    try:
+        open_threads = fetch_open_bot_threads(pr_number, bot_username)
+        if open_threads:
+            open_threads_file = os.path.join(pr_work_dir, "open_threads.json")
+            with open(open_threads_file, "w") as f:
+                json.dump(open_threads, f, indent=2)
+    except Exception as e:
+        open_threads_failed = True
+        log(f"  WARNING: open threads failed for #{pr_number}: {e}")
 
     try:
         applicable_docs = docs_for_flags(
@@ -1983,6 +2097,8 @@ def process_pr(
         "file_hashes_file": hashes_file,
         "diff_file": diff_file,
         "prior_comments_file": prior_comments_file,
+        "open_threads_file": open_threads_file,
+        "open_threads_failed": open_threads_failed,
         "files_reviewed": len(changed),
         "files_total": len(sections),
         "rereview": bool(prior_hashes),

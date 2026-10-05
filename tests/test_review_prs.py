@@ -1386,3 +1386,257 @@ class TestSweepCutoff:
         }
         to_review, *_ = fetch.filter_prs([pr], "days", 1, cache, {"member"})
         assert [p["number"] for p in to_review] == [1630]
+
+
+class TestEarlierComments:
+    """The bot's own unresolved comments. A re-review that finds nothing new
+    must still say whether they are fixed: resolve the ones the code answers and
+    approve, or name the ones that remain and not approve."""
+
+    PR = {"number": 7, "title": "t", "headRefOid": "abcdef1234567890"}
+
+    @staticmethod
+    def thread(n, addressed, reason=""):
+        return {
+            "thread_id": f"T{n}",
+            "path": f"f{n}.rs",
+            "line": n,
+            "url": f"https://x/{n}",
+            "addressed": addressed,
+            "reason": reason,
+        }
+
+    @pytest.fixture
+    def sent(self, post, monkeypatch):
+        sent = {"resolved": []}
+        monkeypatch.setattr(post, "VERDICT", True)
+        monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
+        monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b: True)
+        monkeypatch.setattr(
+            post,
+            "resolve_review_thread",
+            lambda tid: sent["resolved"].append(tid) or tid != "T9",
+        )
+        monkeypatch.setattr(
+            post,
+            "submit_approval",
+            lambda repo, n, body="": sent.update(approve=body) or "url",
+        )
+        monkeypatch.setattr(
+            post,
+            "submit_comment_review",
+            lambda repo, n, sha, body: sent.update(comment=body) or "url",
+        )
+        monkeypatch.setattr(
+            post,
+            "post_batch_review",
+            lambda repo, n, vs, sha, body="": sent.update(batch=body) or ("url", 1),
+        )
+        return sent
+
+    def _run(self, post, threads, violations=()):
+        return post.process_pr(
+            dict(self.PR, open_threads=threads, violations=list(violations)),
+            "o/r",
+            "bot",
+            True,
+        )
+
+    def test_everything_addressed_resolves_and_approves(self, post, sent):
+        result = self._run(post, [self.thread(1, True), self.thread(2, True)])
+        assert result["status"] == "approved"
+        assert sent["resolved"] == ["T1", "T2"]
+        assert sent["approve"].startswith("**Recommendation: approve**")
+        assert "2 earlier comments were addressed and resolved." in sent["approve"]
+        assert "comment" not in sent
+
+    def test_an_open_comment_is_named_and_blocks_approval(
+        self, post, sent, monkeypatch
+    ):
+        monkeypatch.setattr(
+            post, "submit_approval", lambda *a: pytest.fail("a comment is still open")
+        )
+        result = self._run(
+            post,
+            [self.thread(1, True), self.thread(2, False, "The message still says X.")],
+        )
+        assert result["status"] == "posted" and result["review_url"] == "url"
+        assert sent["resolved"] == ["T1"]
+        body = sent["comment"]
+        assert body.startswith("**Recommendation: request changes**")
+        assert "1 earlier comment is still open" in body
+        assert "[`f2.rs:2`](https://x/2): The message still says X." in body
+        assert "f1.rs" not in body
+        assert "1 earlier comment was addressed and resolved." in body
+
+    def test_a_thread_without_a_verdict_is_never_resolved(self, post, sent):
+        self._run(post, [self.thread(3, False)])
+        assert sent["resolved"] == []
+        assert "could not confirm it was fixed" in sent["comment"]
+
+    def test_a_thread_github_will_not_resolve_stays_open(self, post, sent):
+        result = self._run(post, [self.thread(9, True)])
+        assert result["status"] == "posted"
+        assert "would not resolve the thread" in sent["comment"]
+
+    def test_new_findings_also_list_what_is_still_open(self, post, sent):
+        finding = {
+            "file": "a.rs",
+            "line": 3,
+            "severity": "high",
+            "rule": "r",
+            "draft_comment": "Broken.",
+        }
+        result = self._run(post, [self.thread(2, False, "Still wrong.")], [finding])
+        assert result["status"] == "posted"
+        assert "request changes" in sent["batch"]
+        assert "1 earlier comment is still open" in sent["batch"]
+
+    def test_no_earlier_comments_approves_as_before(self, post, sent):
+        assert self._run(post, [])["status"] == "approved"
+        assert sent["approve"] == "**Recommendation: approve**"
+        assert sent["resolved"] == []
+
+    def test_a_refused_gate_still_gives_a_verdict(self, post, sent, monkeypatch):
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b: False)
+        monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: True)
+        self._run(post, [])
+        assert sent["comment"].startswith("**Recommendation: approve**")
+        assert "no earlier comment is still open" in sent["comment"]
+
+
+class TestEarlierCommentsHandoff:
+    def test_the_validator_is_asked_about_each_thread(self, prep):
+        ctx = {"number": 1, "title": "t", "bot_username": "bot"}
+        threads = [{"id": "t1", "file": "a.rs", "line": 3, "comment": "Fix X."}]
+        args = ([], [], "", {}, [], "/src", "/out.json")
+        prompt = prep.build_validate_prompt(ctx, *args, threads)
+        assert "## Earlier review comments" in prompt and "Fix X." in prompt
+        assert '"threads": [{"id": "t1", "addressed": true' in prompt
+        plain = prep.build_validate_prompt(ctx, *args)
+        assert "Earlier review comments" not in plain and '"threads"' not in plain
+
+    def test_a_pr_with_only_open_threads_still_gets_a_validator(
+        self, sel, tmp_dir, monkeypatch, capsys
+    ):
+        work = os.path.join(tmp_dir, "work")
+        pr_dir = os.path.join(work, "pr_4")
+        os.makedirs(pr_dir)
+        results = os.path.join(pr_dir, "cpp.md_0_candidates.json")
+        with open(results, "w") as f:
+            json.dump({"violations": []}, f)
+        threads = os.path.join(pr_dir, "open_threads.json")
+        with open(threads, "w") as f:
+            json.dump(
+                [{"thread_id": "NODE", "path": "a.rs", "line": 3, "body": "Fix X."}], f
+            )
+        pr = {
+            "number": 4,
+            "title": "t",
+            "file_hashes_file": os.path.join(pr_dir, "h.json"),
+            "diff_file": os.path.join(pr_dir, "diff.patch"),
+            "source_path": "/src",
+            "open_threads_file": threads,
+            "subagent_prompts": [{"chunk_id": "cpp.md_0", "results_file": results}],
+        }
+        with open(os.path.join(work, "manifest.json"), "w") as f:
+            json.dump({"pr_repo": "o/r", "bot_username": "bot", "prs": [pr]}, f)
+        monkeypatch.setattr(sys, "argv", ["select-candidates.py", "--work-dir", work])
+        sel.main()
+        out = json.loads(capsys.readouterr().out)
+        [validator] = out["validators"]
+        assert validator["candidates"] == 0 and validator["threads"] == 1
+        with open(validator["prompt_file"]) as f:
+            prompt = f.read()
+        assert "Fix X." in prompt and "NODE" not in prompt
+
+    def test_collect_maps_verdicts_back_and_defaults_to_open(self, collect, tmp_dir):
+        threads = os.path.join(tmp_dir, "open_threads.json")
+        with open(threads, "w") as f:
+            json.dump(
+                [
+                    {"thread_id": "A", "path": "a.rs", "line": 1, "url": "u1"},
+                    {"thread_id": "B", "path": "b.rs", "line": 2, "url": "u2"},
+                    {"thread_id": "C", "path": "c.rs", "line": 3, "url": "u3"},
+                ],
+                f,
+            )
+        validated = os.path.join(tmp_dir, "validated.json")
+        with open(validated, "w") as f:
+            json.dump(
+                {
+                    "violations": [],
+                    "threads": [
+                        {"id": "t1", "addressed": True, "reason": "fixed"},
+                        {"id": "t2", "addressed": "yes", "reason": "odd"},
+                    ],
+                },
+                f,
+            )
+        pr = {"open_threads_file": threads, "validation": {"results_file": validated}}
+        got = collect.collect_open_threads(pr)
+        assert [(t["thread_id"], t["addressed"]) for t in got] == [
+            ("A", True),
+            ("B", False),
+            ("C", False),
+        ]
+        assert got[0]["reason"] == "fixed"
+
+    def test_a_pr_whose_threads_could_not_be_listed_is_left_for_next_run(self, collect):
+        _, _, reason = collect.collect_violations(
+            {"open_threads_failed": True, "validation": None}
+        )
+        assert reason
+
+
+class TestApprovalGateVerdictBodies:
+    """With a verdict profile every review the bot posts has a body. Counted as
+    unresolvable comments, they blocked every approval after the first review."""
+
+    @pytest.fixture(scope="class")
+    def gate(self):
+        return _load_module(
+            "check_can_approve",
+            os.path.join(ROOT_DIR, "scripts", "check-can-approve.py"),
+        )
+
+    def _fetch(self, gate, monkeypatch, bodies):
+        monkeypatch.setattr(
+            gate,
+            "gh_graphql",
+            lambda q, v: {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "headRefOid": "sha",
+                            "reviewThreads": {"nodes": []},
+                        }
+                    }
+                }
+            },
+        )
+        monkeypatch.setattr(
+            gate,
+            "gh_api",
+            lambda e: [
+                {"user": {"login": "bot"}, "state": "COMMENTED", "body": b, "id": i}
+                for i, b in enumerate(bodies)
+            ],
+        )
+        return gate.fetch_pr_data(1, "bot")[2]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "**Recommendation: request changes**\n\nWhat this pull request does...",
+            "Reviewed again at 77d2e544 as requested: no new issues.",
+            "No issues found at 77d2e544. bot opened this PR.",
+        ],
+    )
+    def test_the_bots_verdict_reviews_do_not_block(self, gate, monkeypatch, body):
+        assert self._fetch(gate, monkeypatch, [body]) == []
+
+    def test_other_body_text_still_blocks(self, gate, monkeypatch):
+        got = self._fetch(gate, monkeypatch, ["Please also rename the flag."])
+        assert len(got) == 1

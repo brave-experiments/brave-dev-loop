@@ -40,6 +40,8 @@ def collect_violations(pr):
     """(violations, validation_log, skip_reason); skip_reason is set only for an unfinished review."""
     if pr.get("review_incomplete"):
         return [], [], "no detect subagent wrote results"
+    if pr.get("open_threads_failed"):
+        return [], [], "GitHub would not list the bot's open review threads"
     if "validation" not in pr:
         return [], [], "select-candidates.py did not run"
     validation = pr["validation"]
@@ -52,6 +54,42 @@ def collect_violations(pr):
     except (OSError, json.JSONDecodeError) as e:
         return [], [], f"the validator wrote no results ({e})"
     return data.get("violations", []), data.get("validation_log", []), None
+
+
+def collect_open_threads(pr):
+    """The bot's unresolved threads with the validator's verdict on each.
+
+    A thread the validator did not rule on stays open: only an explicit
+    `addressed: true` lets the bot resolve it.
+    """
+    try:
+        with open(pr.get("open_threads_file") or "") as f:
+            threads = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    verdicts = {}
+    try:
+        with open((pr.get("validation") or {}).get("results_file", "")) as f:
+            for v in json.load(f).get("threads", []) or []:
+                if isinstance(v, dict) and isinstance(v.get("id"), str):
+                    verdicts[v["id"]] = v
+    except (OSError, json.JSONDecodeError):
+        pass
+    collected = []
+    for i, t in enumerate(threads, 1):
+        v = verdicts.get(f"t{i}", {})
+        reason = v.get("reason")
+        collected.append(
+            {
+                "thread_id": t["thread_id"],
+                "path": t.get("path", ""),
+                "line": t.get("line"),
+                "url": t.get("url", ""),
+                "addressed": v.get("addressed") is True,
+                "reason": reason.strip() if isinstance(reason, str) else "",
+            }
+        )
+    return collected
 
 
 _PR_BODY_RULES = []
@@ -256,6 +294,7 @@ def build_post_review_input(manifest, project_checks=()):
                 "hasApproval": pr.get("hasApproval", False),
                 "fileHashesFile": pr.get("file_hashes_file"),
                 "violations": violations,
+                "open_threads": collect_open_threads(pr),
                 "validation_log": validation_log,
                 "checks_details": describe_checks(pr, violations, project_checks),
                 "description_details": describe_pr(pr),
