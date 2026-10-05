@@ -36,6 +36,7 @@ from lib.load_config import (
     resolve_docs_dir,
     review_verdict,
 )
+from lib.pr_diff import fetch_pr_diff
 
 CACHE_PATH = os.path.join(BOT_DIR, ".ignore", "review-prs-cache.json")
 _config = load_config()
@@ -94,12 +95,10 @@ def fetch_diff_line_ranges(repo, pr_number):
     if pr_number in _diff_line_cache:
         return _diff_line_cache[pr_number]
 
-    rc, out, err = run_cmd(
-        ["gh", "pr", "diff", "--repo", repo, str(pr_number)],
-        timeout=120,
-    )
-    if rc != 0:
-        log(f"WARNING: failed to fetch diff for PR #{pr_number}: {err}")
+    try:
+        out = fetch_pr_diff(repo, pr_number, log)
+    except Exception as e:
+        log(f"WARNING: failed to fetch diff for PR #{pr_number}: {e}")
         _diff_line_cache[pr_number] = {}
         return {}
 

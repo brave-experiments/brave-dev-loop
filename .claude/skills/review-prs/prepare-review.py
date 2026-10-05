@@ -47,6 +47,7 @@ from lib.load_config import (
     review_guidance,
     review_verdict,
 )
+from lib.pr_diff import NO_PATCH, fetch_pr_diff
 from lib.repo_lock import repo_lock
 
 # Import fetch-prs functions (the module uses if __name__ guard)
@@ -384,84 +385,7 @@ def is_feature_branch(base_ref):
 
 
 def fetch_diff(pr_number):
-    result = subprocess.run(
-        ["gh", "pr", "diff", "--repo", PR_REPO, str(pr_number)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        if diff_too_large(result.stderr):
-            log(
-                f"    Diff of #{pr_number} is over GitHub's limit; fetching it file by file"
-            )
-            return fetch_diff_by_file(pr_number)
-        raise RuntimeError(f"Failed to fetch diff: {result.stderr.strip()}")
-    return result.stdout
-
-
-def diff_too_large(stderr):
-    """GitHub refuses a whole-PR diff past 300 files (HTTP 406, "too_large")."""
-    return "too_large" in stderr or "HTTP 406" in stderr
-
-
-# A file whose patch GitHub left out of the files API (binary, or a text diff
-# too big to render). omitted_reason() turns the section into a stub line.
-_NO_PATCH = "Patch not available from GitHub"
-
-
-def fetch_diff_by_file(pr_number):
-    """The PR's diff rebuilt from the paginated files API.
-
-    Covers PRs past the 300-file limit of the diff endpoint, up to the 3000
-    files the files API lists. The patch of each file is the same hunk text the
-    diff carries; the headers are rebuilt from the file's status."""
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            f"repos/{PR_REPO}/pulls/{pr_number}/files?per_page=100",
-            "--jq",
-            ".[]",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to fetch files: {result.stderr.strip()}")
-    files = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-    if len(files) >= 3000:
-        raise RuntimeError(
-            f"PR lists {len(files)} files, the files API's limit; the diff would be incomplete"
-        )
-    return join_sections(file_section(f) for f in files)
-
-
-def file_section(f):
-    """One file's section of a unified diff, from a files API entry."""
-    path = f["filename"]
-    old = f.get("previous_filename") or path
-    status = f.get("status")
-    lines = [f"diff --git a/{old} b/{path}"]
-    if status == "added":
-        lines.append("new file mode 100644")
-    elif status == "removed":
-        lines.append("deleted file mode 100644")
-    elif status == "renamed":
-        lines += [f"rename from {old}", f"rename to {path}"]
-    patch = f.get("patch")
-    if patch is None:
-        # A pure rename has no patch to lose. Anything else does, whatever
-        # `changes` says: GitHub reports 0 for some text it will not render.
-        if not (status == "renamed" and f.get("changes", 0) == 0):
-            lines.append(f"{_NO_PATCH}: a/{old} b/{path}")
-        return "\n".join(lines)
-    lines.append("--- /dev/null" if status == "added" else f"--- a/{old}")
-    lines.append("+++ /dev/null" if status == "removed" else f"+++ b/{path}")
-    lines.append(patch.rstrip("\n"))
-    return "\n".join(lines)
+    return fetch_pr_diff(PR_REPO, pr_number, log)
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +518,7 @@ def omitted_reason(path, section):
         return "lockfile"
     if re.search(r"^(Binary files |GIT binary patch)", section, re.MULTILINE):
         return "binary"
-    if re.search(rf"^{_NO_PATCH}", section, re.MULTILINE):
+    if re.search(rf"^{NO_PATCH}", section, re.MULTILINE):
         return "no patch from GitHub"
     if fl.endswith(_OMITTED_SUFFIXES):
         return "asset"
