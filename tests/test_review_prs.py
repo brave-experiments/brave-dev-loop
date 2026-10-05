@@ -797,11 +797,13 @@ class TestPrRemote:
 
 class TestPrioritize:
     def test_limit_widens_the_cap(self, post):
-        vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(12)]
+        n = 2 * post.MAX_COMMENTS_PER_PR + 2
+        vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(n)]
         kept, _ = post.prioritize_violations(list(vs), False)
         assert len(kept) == post.MAX_COMMENTS_PER_PR
-        kept, _ = post.prioritize_violations(list(vs), False, limit=10)
-        assert len(kept) == 10
+        wider = post.MAX_COMMENTS_PER_PR * 2
+        kept, _ = post.prioritize_violations(list(vs), False, limit=wider)
+        assert len(kept) == wider
 
     def test_an_approved_pr_gets_high_and_medium_but_no_nits(self, post):
         """Someone already said yes, so nits are noise; a substantive violation
@@ -816,10 +818,11 @@ class TestPrioritize:
         assert dropped == 1
 
     def test_an_approved_pr_still_has_the_cap(self, post):
-        vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(8)]
+        n = post.MAX_COMMENTS_PER_PR + 3
+        vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(n)]
         kept, dropped = post.prioritize_violations(list(vs), True)
         assert len(kept) == post.MAX_COMMENTS_PER_PR
-        assert dropped == 8 - post.MAX_COMMENTS_PER_PR
+        assert dropped == 3
 
     def test_the_detect_prompt_asks_an_approved_pr_for_medium_too(self, prep):
         header = "\n".join(
@@ -895,7 +898,7 @@ class TestSelectCandidates:
                 "severity": "medium",
                 "rule_link": f"{LINK}#CS-001",
             }
-            for i in range(30)
+            for i in range(sel.CANDIDATE_LIMIT + 5)
         ]
         kept = sel.select({"hasApproval": False}, vs, [], bp_dir)
         assert len(kept) == sel.CANDIDATE_LIMIT
