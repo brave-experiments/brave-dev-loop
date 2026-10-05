@@ -41,6 +41,21 @@ def run(cmd, cwd=None, check=True, capture=True):
     return res.returncode, (res.stdout or "").strip(), (res.stderr or "").strip()
 
 
+def request_review(pr_repo, num):
+    """Ask the reviewer account to look again. The push already landed, so a
+    failure is reported and not fatal."""
+    script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "..",
+        "..",
+        "scripts",
+        "request-review.sh",
+    )
+    rc, out, err = run([script, "--repo", pr_repo, str(num)], check=False)
+    print(f"  {out}" if rc == 0 else f"  Warning: could not re-request a review: {err}")
+
+
 def load_config():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     bot_dir = os.path.realpath(os.path.join(script_dir, "..", "..", ".."))
@@ -259,6 +274,7 @@ def main():
 
             results.append((num, branch, "REBASED", f"force-pushed to {pr_remote}"))
             print(f"  REBASED and force-pushed to {pr_remote}.")
+            request_review(pr_repo, num)
     finally:
         print(f"\nRestoring original branch: {original}")
         run(["git", "checkout", original], cwd=target, check=False, capture=False)

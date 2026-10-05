@@ -133,6 +133,27 @@ def force_push(work, remote, branch, lease):
         die(f"the push to {remote} failed; {remote}/{branch} still has the old commits")
 
 
+def request_review(bot, repo, number):
+    """Ask the reviewer account to look again at the pushed head.
+
+    The push has already landed, so a failure here is reported and not fatal.
+    """
+    result = subprocess.run(  # nosemgrep
+        [
+            os.path.join(bot, "scripts", "request-review.sh"),
+            "--repo",
+            repo,
+            str(number),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        say(f"  {result.stdout.strip()}")
+    else:
+        say(f"  Warning: could not re-request a review: {result.stderr.strip()}")
+
+
 def main_entry():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pr", nargs="?", help="pull request URL or number")
@@ -203,6 +224,7 @@ def main_entry():
 
     rebase(work, base)
     force_push(work, push_remote, branch, remote_head)
+    request_review(bot, repo, number)
     say(f"  {repo}#{number} is now {run('git', '-C', work, 'rev-parse', 'HEAD')[:9]}")
 
 
