@@ -235,17 +235,23 @@ def should_skip_title(title):
 def get_cutoff(mode, days, cache):
     """Determine the cutoff time for filtering PRs.
 
-    Uses the last successful run timestamp from the cache if available,
-    falling back to N days ago. This prevents gaps if a cron run is missed.
+    N days ago, or the last run's timestamp from the cache when that is
+    earlier, so a run missed for longer than the window leaves no gap.
+
+    Never later than N days ago: update-cache.py stamps _last_run after any
+    review, including the single-PR runs the review-request poll makes every
+    few minutes, so a cutoff taken from it alone shrinks the sweep's window to
+    the minutes since someone last asked for a review.
     """
     if mode != "days":
         return None
 
+    window = datetime.now(timezone.utc) - timedelta(days=days)
     last_run = cache.get("_last_run")
     if last_run:
-        return datetime.fromisoformat(last_run)
+        return min(window, datetime.fromisoformat(last_run))
 
-    return datetime.now(timezone.utc) - timedelta(days=days)
+    return window
 
 
 def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):

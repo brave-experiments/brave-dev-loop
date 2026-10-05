@@ -1341,3 +1341,48 @@ class TestCleanReviewTheGateRefuses:
         monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: False)
         post.process_pr(dict(self.PR), "o/r", "bot", True)
         assert posted == []
+
+
+class TestSweepCutoff:
+    """fetch-prs.py's window for `/review-prs <N>d`."""
+
+    @pytest.fixture(scope="class")
+    def fetch(self):
+        return _load_module("fetch_prs", os.path.join(SKILL_DIR, "fetch-prs.py"))
+
+    @staticmethod
+    def _ago(**delta):
+        from datetime import datetime, timedelta, timezone
+
+        return datetime.now(timezone.utc) - timedelta(**delta)
+
+    def test_a_recent_last_run_does_not_shrink_the_window(self, fetch):
+        """The review-request poll stamps _last_run after reviewing one PR.
+        Taken as the cutoff, that dropped every other PR the sweep had not yet
+        seen."""
+        cache = {"_last_run": self._ago(minutes=5).isoformat()}
+        cutoff = fetch.get_cutoff("days", 1, cache)
+        assert cutoff <= self._ago(hours=23, minutes=59)
+
+    def test_a_last_run_older_than_the_window_widens_it(self, fetch):
+        """A sweep missed for two days still covers the PRs updated in them."""
+        last_run = self._ago(days=3)
+        cache = {"_last_run": last_run.isoformat()}
+        assert fetch.get_cutoff("days", 1, cache) == last_run
+
+    def test_no_last_run_is_the_window(self, fetch):
+        cutoff = fetch.get_cutoff("days", 2, {})
+        assert self._ago(days=2, minutes=1) < cutoff <= self._ago(days=2)
+
+    def test_a_pr_updated_before_a_recent_last_run_is_reviewed(self, fetch):
+        cache = {"_last_run": self._ago(minutes=5).isoformat()}
+        pr = {
+            "number": 1630,
+            "title": "agent: pin the shape of a check's request",
+            "headRefOid": "abc",
+            "baseRefName": "main",
+            "author": {"login": "member"},
+            "updatedAt": self._ago(hours=2).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        to_review, *_ = fetch.filter_prs([pr], "days", 1, cache, {"member"})
+        assert [p["number"] for p in to_review] == [1630]
