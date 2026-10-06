@@ -534,6 +534,29 @@ class TestProcessPr:
         assert result["unchanged"] is True
         assert result["headRefOid"] == "abc123"
 
+    def test_a_re_request_with_no_changed_file_goes_to_the_validator(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        """#1678, #1676 and #1668 were re-requested after a rebase. Returning
+        `unchanged` posted nothing, so the request stood and the poll spent three
+        sessions on each before giving up. The open threads now reach a
+        validator and the PR gets a verdict."""
+        thread = {"thread_id": "T1", "path": "browser/a.cc", "line": 1, "body": "x"}
+        monkeypatch.setattr(prep, "fetch_open_bot_threads", lambda *a: [thread])
+        work = os.path.join(tmp_dir, "work")
+        os.makedirs(work, exist_ok=True)
+        pr = dict(PR, reviewRequested=True)
+        result, error = prep.process_pr(
+            pr, "bot", set(), work, True, self._hashes(prep)
+        )
+        assert error is None
+        assert "unchanged" not in result
+        assert result["reviewRequested"] is True
+        assert result["subagent_prompts"] == []
+        assert result["files_reviewed"] == 0
+        with open(result["open_threads_file"]) as f:
+            assert json.load(f) == [thread]
+
     def test_a_re_review_reads_only_the_changed_files(self, prep, stubbed, tmp_dir):
         prior = self._hashes(prep)
         stubbed["text"] = diff_of(self.CC, section("ui/b.ts", ["let y = 2"]), self.LOCK)
@@ -656,7 +679,7 @@ class TestVerdict:
         sent = {}
         monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
         monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
-        monkeypatch.setattr(post, "check_can_approve", lambda n, b: True)
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: True)
         monkeypatch.setattr(
             post,
             "submit_approval",
@@ -805,7 +828,7 @@ class TestCleanReviewOfTheBotsOwnPr:
         reviews = []
         monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
         monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
-        monkeypatch.setattr(post, "check_can_approve", lambda n, b: True)
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: True)
         monkeypatch.setattr(
             post,
             "submit_approval",
@@ -1403,7 +1426,7 @@ class TestCleanReviewTheGateRefuses:
         reviews = []
         monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
         monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
-        monkeypatch.setattr(post, "check_can_approve", lambda n, b: False)
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: False)
         monkeypatch.setattr(
             post,
             "submit_approval",
@@ -1424,6 +1447,21 @@ class TestCleanReviewTheGateRefuses:
         assert [(n, sha) for n, sha, _ in posted] == [(7, "abcdef1234567890")]
         assert "no new issues" in posted[0][2]
         assert result["status"] == "approved" and result["review_url"] == "url"
+
+    def test_a_requested_pass_is_approved_again(self, post, posted, monkeypatch):
+        """The gate refuses a second approval, which left a re-request answered by
+        a comment. Whoever asked wants an approval if the PR passes."""
+        approved = []
+        monkeypatch.setattr(
+            post, "check_can_approve", lambda n, b, reapprove=False: reapprove
+        )
+        monkeypatch.setattr(
+            post, "submit_approval", lambda repo, n, body="": approved.append(n) or "u"
+        )
+        pr = dict(self.PR, reviewRequested=True)
+        result = post.process_pr(pr, "o/r", "bot", True)
+        assert approved == [7] and posted == []
+        assert result["status"] == "approved" and result["review_url"] == "u"
 
     def test_an_unrequested_pr_gets_nothing(self, post, posted, monkeypatch):
         """The sweep reviews PRs nobody asked the bot about. A comment there
@@ -1502,7 +1540,7 @@ class TestEarlierComments:
         monkeypatch.setattr(post, "VERDICT", True)
         monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
         monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
-        monkeypatch.setattr(post, "check_can_approve", lambda n, b: True)
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: True)
         monkeypatch.setattr(
             post,
             "resolve_review_thread",
@@ -1594,7 +1632,7 @@ class TestEarlierComments:
         assert sent["resolved"] == []
 
     def test_a_refused_gate_still_gives_a_verdict(self, post, sent, monkeypatch):
-        monkeypatch.setattr(post, "check_can_approve", lambda n, b: False)
+        monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: False)
         monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: True)
         self._run(post, [])
         assert sent["comment"].startswith("**Recommendation: approve**")
@@ -1735,3 +1773,30 @@ class TestApprovalGateVerdictBodies:
     def test_other_body_text_still_blocks(self, gate, monkeypatch):
         got = self._fetch(gate, monkeypatch, ["Please also rename the flag."])
         assert len(got) == 1
+
+    @pytest.mark.parametrize("on_github", [True, False])
+    def test_reapprove_passes_an_earlier_approval_and_nothing_else(
+        self, gate, monkeypatch, tmp_dir, capsys, on_github
+    ):
+        cache = os.path.join(tmp_dir, "cache.json")
+        with open(cache, "w") as f:
+            json.dump({"_approved": [] if on_github else ["1"]}, f)
+        monkeypatch.setattr(gate, "REVIEW_CACHE_PATH", cache)
+        monkeypatch.setattr(gate, "load_config", lambda: {})
+        monkeypatch.setattr(gate, "require_config", lambda c, k: "o/r")
+        threads = {"total_bot_threads": 1, "unresolved_bot_threads": 0}
+        monkeypatch.setattr(
+            gate, "fetch_pr_data", lambda *a: ("sha", dict(threads), [], on_github)
+        )
+
+        def run(*flags):
+            monkeypatch.setattr(sys, "argv", ["gate", "1", "bot", *flags])
+            with pytest.raises(SystemExit) as e:
+                gate.main()
+            capsys.readouterr()
+            return e.value.code
+
+        assert run() == 1
+        assert run("--reapprove") == 0
+        threads["unresolved_bot_threads"] = 1
+        assert run("--reapprove") == 1, "an open thread still blocks"

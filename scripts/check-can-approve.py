@@ -205,6 +205,13 @@ def main():
     parser.add_argument("pr_number", type=int, help="PR number")
     parser.add_argument("bot_username", help="Bot's GitHub username")
     parser.add_argument("--repo", default=pr_repo, help="owner/repo for PRs")
+    parser.add_argument(
+        "--reapprove",
+        action="store_true",
+        help="Allow an approval the bot already gave. Someone who asked for the "
+        "review again wants an answer, and an approval is the only one that "
+        "says the PR passed",
+    )
     args = parser.parse_args()
 
     if "/" in args.repo:
@@ -243,7 +250,7 @@ def main():
         )
 
     # Bot must not have already approved at this SHA.
-    if already_approved:
+    if already_approved and not args.reapprove:
         fail(
             "Bot already approved at this SHA",
             head_sha=head_sha,
@@ -255,7 +262,9 @@ def main():
     try:
         with open(REVIEW_CACHE_PATH) as f:
             cache = json.load(f)
-        if str(args.pr_number) in set(cache.get("_approved", [])):
+        if not args.reapprove and str(args.pr_number) in set(
+            cache.get("_approved", [])
+        ):
             fail(
                 "PR already marked as approved in local cache",
                 head_sha=head_sha,

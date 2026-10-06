@@ -755,12 +755,12 @@ def submit_comment_review(repo, pr_number, head_sha, body, event="COMMENT"):
     return None
 
 
-def check_can_approve(pr_number, bot_username):
+def check_can_approve(pr_number, bot_username, reapprove=False):
     """Run the approval gate script. Returns True if approval is allowed."""
-    rc, out, err = run_cmd(
-        ["python3", CHECK_CAN_APPROVE, str(pr_number), bot_username],
-        timeout=60,
-    )
+    cmd = ["python3", CHECK_CAN_APPROVE, str(pr_number), bot_username]
+    if reapprove:
+        cmd.append("--reapprove")
+    rc, out, err = run_cmd(cmd, timeout=60)
     return rc == 0
 
 
@@ -898,8 +898,13 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             return result
 
         if not violations:
-            # No violations — attempt approval
-            can_approve = check_can_approve(number, bot_username)
+            # No violations — attempt approval. A PR someone asked the bot to
+            # review again is approved again even when the bot approved it
+            # before: they asked for an answer, and a comment saying "no new
+            # issues" does not tell them, or GitHub, that it passed.
+            can_approve = check_can_approve(
+                number, bot_username, reapprove=bool(pr_data.get("reviewRequested"))
+            )
             if can_approve and pr_data.get("author") == bot_username:
                 # GitHub refuses an approval from the PR's own author, and a
                 # refused approval used to end the run with nothing on the PR:
