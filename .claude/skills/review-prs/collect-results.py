@@ -293,6 +293,7 @@ def build_post_review_input(manifest, project_checks=()):
                 "author": pr.get("author", ""),
                 "headRefOid": pr.get("headRefOid", ""),
                 "hasApproval": pr.get("hasApproval", False),
+                "reviewRequested": pr.get("reviewRequested", False),
                 "fileHashesFile": pr.get("file_hashes_file"),
                 "violations": violations,
                 "open_threads": collect_open_threads(pr),

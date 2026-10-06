@@ -1791,7 +1791,12 @@ def process_pr(
         changed = [p for p in sections if prior_hashes.get(p) != hashes[p]]
     else:
         changed = list(sections)
-    if prior_hashes and not changed:
+    # Someone who asks the bot again without pushing wants to hear back: an
+    # unchanged PR still goes to the validator, which rules on the bot's open
+    # threads, and post-review submits a verdict. Returning `unchanged` here
+    # posted nothing, so the request stood and every poll reviewed it again.
+    rerequested = bool(pr.get("reviewRequested"))
+    if prior_hashes and not changed and not rerequested:
         log(f"  PR #{pr_number}: no file changed since the last review")
         return {
             "unchanged": True,
@@ -1802,7 +1807,12 @@ def process_pr(
         }, None
 
     rereview_note = None
-    if prior_hashes:
+    if prior_hashes and not changed:
+        log(
+            f"  PR #{pr_number}: no file changed, but review was requested again; "
+            "checking the earlier comments"
+        )
+    elif prior_hashes:
         rereview_note = (
             f"The bot reviewed this PR before. Only the {len(changed)} files whose "
             f"changes differ since then are shown; the other "
@@ -2088,6 +2098,7 @@ def process_pr(
         "author": author,
         "hasApproval": has_approval,
         "isExternalContributor": is_external,
+        "reviewRequested": rerequested,
         "has_bot_comments": has_bot_comments,
         "images": images,
         "thread_resolution": thread_resolution,
@@ -2288,6 +2299,7 @@ def main():
             "author": author,
             "hasApproval": _fp_mod.has_any_approval(pr),
             "isExternalContributor": bool(org_members and author not in org_members),
+            "reviewRequested": _fp_mod.is_requested_reviewer(pr, bot_username),
         }
         return entry
 
