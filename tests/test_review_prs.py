@@ -665,7 +665,9 @@ class TestVerdict:
         monkeypatch.setattr(
             post,
             "post_batch_review",
-            lambda repo, n, vs, sha, body="": sent.update(comment=body) or ("url", 1),
+            lambda repo, n, vs, sha, body="", event="COMMENT": (
+                sent.update(comment=body, event=event) or ("url", 1)
+            ),
         )
         return sent
 
@@ -680,7 +682,41 @@ class TestVerdict:
     def test_a_review_with_comments_recommends_changes(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", True)
         assert self._run(post, [dict(self.FINDING)])["status"] == "posted"
-        assert sent == {"comment": "**Recommendation: request changes**"}
+        assert sent == {
+            "comment": "**Recommendation: request changes**",
+            "event": "REQUEST_CHANGES",
+        }
+
+    def test_nits_alone_stay_informational(self, post, sent, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", True)
+        nit = dict(self.FINDING, severity="low", rule_link=f"{LINK}#CS-001")
+        assert self._run(post, [nit])["status"] == "posted"
+        assert sent == {
+            "comment": "**Recommendation: comments only**",
+            "event": "COMMENT",
+        }
+
+    def test_a_medium_finding_blocks_merging(self, post, sent, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", True)
+        self._run(
+            post, [dict(self.FINDING, severity="medium", rule_link=f"{LINK}#CS-001")]
+        )
+        assert sent["event"] == "REQUEST_CHANGES"
+
+    def test_the_bots_own_pr_cannot_request_changes(self, post, sent, monkeypatch):
+        """GitHub rejects a request for changes from the PR's author."""
+        monkeypatch.setattr(post, "VERDICT", True)
+        pr = dict(self.PR, author="bot", violations=[dict(self.FINDING)])
+        post.process_pr(pr, "o/r", "bot", True)
+        assert sent["event"] == "COMMENT"
+        assert sent["comment"].startswith("**Recommendation: request changes**")
+
+    def test_a_profile_without_a_verdict_never_requests_changes(
+        self, post, sent, monkeypatch
+    ):
+        monkeypatch.setattr(post, "VERDICT", False)
+        self._run(post, [dict(self.FINDING)])
+        assert sent["event"] == "COMMENT"
 
     def test_each_comment_opens_with_its_severity(self, post, monkeypatch):
         """The author should tell a bug from a style point before reading on."""
@@ -690,7 +726,9 @@ class TestVerdict:
         monkeypatch.setattr(
             post,
             "post_batch_review",
-            lambda repo, n, vs, sha, body="": sent.update(vs=vs) or ("url", len(vs)),
+            lambda repo, n, vs, sha, body="", event="COMMENT": (
+                sent.update(vs=vs) or ("url", len(vs))
+            ),
         )
         medium = dict(
             self.FINDING,
@@ -723,6 +761,7 @@ class TestVerdict:
         assert sent == {
             "approve": "**Recommendation: approve**\n\n<details>x</details>",
             "comment": "**Recommendation: request changes**\n\n<details>y</details>",
+            "event": "REQUEST_CHANGES",
         }
 
     def test_the_description_comes_before_the_how_section(
@@ -751,7 +790,7 @@ class TestVerdict:
                     "bot",
                     True,
                 )
-        assert sent == {"approve": "", "comment": ""}
+        assert sent == {"approve": "", "comment": "", "event": "COMMENT"}
 
 
 class TestCleanReviewOfTheBotsOwnPr:
@@ -775,7 +814,9 @@ class TestCleanReviewOfTheBotsOwnPr:
         monkeypatch.setattr(
             post,
             "submit_comment_review",
-            lambda repo, n, sha, body: reviews.append(("comment", n, body)) or "url",
+            lambda repo, n, sha, body, event="COMMENT": (
+                reviews.append(("comment", n, body)) or "url"
+            ),
         )
         return reviews
 
@@ -1371,7 +1412,9 @@ class TestCleanReviewTheGateRefuses:
         monkeypatch.setattr(
             post,
             "submit_comment_review",
-            lambda repo, n, sha, body: reviews.append((n, sha, body)) or "url",
+            lambda repo, n, sha, body, event="COMMENT": (
+                reviews.append((n, sha, body)) or "url"
+            ),
         )
         return reviews
 
@@ -1473,12 +1516,16 @@ class TestEarlierComments:
         monkeypatch.setattr(
             post,
             "submit_comment_review",
-            lambda repo, n, sha, body: sent.update(comment=body) or "url",
+            lambda repo, n, sha, body, event="COMMENT": (
+                sent.update(comment=body, event=event) or "url"
+            ),
         )
         monkeypatch.setattr(
             post,
             "post_batch_review",
-            lambda repo, n, vs, sha, body="": sent.update(batch=body) or ("url", 1),
+            lambda repo, n, vs, sha, body="", event="COMMENT": (
+                sent.update(batch=body, event=event) or ("url", 1)
+            ),
         )
         return sent
 
@@ -1512,6 +1559,7 @@ class TestEarlierComments:
         assert sent["resolved"] == ["T1"]
         body = sent["comment"]
         assert body.startswith("**Recommendation: request changes**")
+        assert sent["event"] == "REQUEST_CHANGES"
         assert "1 earlier comment is still open" in body
         assert "[`f2.rs:2`](https://x/2): The message still says X." in body
         assert "f1.rs" not in body

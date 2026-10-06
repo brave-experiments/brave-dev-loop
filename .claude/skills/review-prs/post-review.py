@@ -46,6 +46,7 @@ MANAGE_BP_IDS = os.path.join(_BP_BASE, "script", "manage-bp-ids.py")
 VERDICT = review_verdict(load_profile(_config, BOT_DIR))
 VERDICT_APPROVE = "**Recommendation: approve**"
 VERDICT_CHANGES = "**Recommendation: request changes**"
+VERDICT_NITS = "**Recommendation: comments only**"
 CHECK_CAN_APPROVE = os.path.join(BOT_DIR, "scripts", "check-can-approve.py")
 UPDATE_CACHE = os.path.join(SCRIPT_DIR, "update-cache.py")
 SIGNAL_NOTIFY = os.path.join(BOT_DIR, "scripts", "signal-notify.sh")
@@ -458,7 +459,7 @@ def deduplicate_violations(violations, existing_comments):
     return kept
 
 
-def post_batch_review(repo, pr_number, violations, head_sha, body=""):
+def post_batch_review(repo, pr_number, violations, head_sha, body="", event="COMMENT"):
     """Post violations as a single inline review. Returns (review_url, posted_count).
 
     Corrects line numbers that fall outside diff hunks before posting.
@@ -494,7 +495,7 @@ def post_batch_review(repo, pr_number, violations, head_sha, body=""):
 
     payload = json.dumps(
         {
-            "event": "COMMENT",
+            "event": event,
             "body": body,
             "comments": comments,
         }
@@ -579,6 +580,26 @@ def verdict_body(verdict, pr_data, note=""):
     if not VERDICT:
         return ""
     return with_details(f"{verdict}\n\n{note}" if note else verdict, pr_data)
+
+
+def blocks_merge(violations, still_open):
+    """Whether a review must be fixed before merging: an earlier comment still
+    open, or any comment above nit severity."""
+    return bool(still_open) or any(v.get("severity") != "low" for v in violations)
+
+
+def review_event(blocking, pr_author, bot_username):
+    """The review event for a verdict profile: CHANGES_REQUESTED when something
+    must be fixed, COMMENT for nits. GitHub refuses a request for changes on
+    the reviewer's own PR, and a profile without a verdict keeps its comments
+    informational."""
+    if VERDICT and blocking and pr_author != bot_username:
+        return "REQUEST_CHANGES"
+    return "COMMENT"
+
+
+def changes_verdict(blocking):
+    return VERDICT_CHANGES if blocking else VERDICT_NITS
 
 
 def resolve_review_thread(thread_id):
@@ -709,9 +730,9 @@ def bot_review_requested(repo, pr_number, bot_username):
     return rc == 0 and bot_username in out.split()
 
 
-def submit_comment_review(repo, pr_number, head_sha, body):
-    """Submit a COMMENT review. Returns html_url or None."""
-    payload = json.dumps({"event": "COMMENT", "body": body, "commit_id": head_sha})
+def submit_comment_review(repo, pr_number, head_sha, body, event="COMMENT"):
+    """Submit a review with no inline comments. Returns html_url or None."""
+    payload = json.dumps({"event": event, "body": body, "commit_id": head_sha})
     rc, out, err = run_cmd(
         [
             "gh",
@@ -864,6 +885,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 number,
                 head_sha,
                 verdict_body(VERDICT_CHANGES, pr_data, note) or note,
+                review_event(True, pr_data.get("author"), bot_username),
             )
             if url is not None:
                 result["status"] = "posted"
@@ -939,16 +961,18 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
 
         if auto_mode:
             # Post violations
+            blocking = blocks_merge(violations, still_open)
             review_url, posted = post_batch_review(
                 repo,
                 number,
                 violations,
                 head_sha,
                 verdict_body(
-                    VERDICT_CHANGES,
+                    changes_verdict(blocking),
                     pr_data,
                     still_open_note(resolved, still_open) if still_open else "",
                 ),
+                review_event(blocking, pr_data.get("author"), bot_username),
             )
             result["status"] = "posted"
             result["comments_posted"] = posted
