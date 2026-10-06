@@ -22,6 +22,7 @@ BOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
 
 sys.path.insert(0, os.path.join(BOT_DIR, "scripts"))
 from lib.load_config import load_config, load_profile, review_checks
+from lib.reviewer_account import ensure_reviewer
 
 
 def log(msg):
@@ -363,6 +364,7 @@ def main():
         "--auto", action="store_true", help="Pass --auto to post-review.py"
     )
     args = parser.parse_args()
+    ensure_reviewer(load_config(), log)
 
     # Load manifest
     try:

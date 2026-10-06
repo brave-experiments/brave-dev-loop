@@ -802,6 +802,53 @@ class TestCleanReviewOfTheBotsOwnPr:
         assert [kind for kind, _, _ in posted] == ["approve"]
 
 
+class TestReviewerAccount:
+    """A review run as the bot cannot approve the bot's own PR, and it caches
+    the commit as reviewed, so a later run as the reviewer skips it."""
+
+    @pytest.fixture
+    def ra(self, prep):
+        import lib.reviewer_account
+
+        return lib.reviewer_account
+
+    @pytest.fixture
+    def execs(self, ra, monkeypatch):
+        calls = []
+        monkeypatch.delenv(ra.GUARD, raising=False)
+        monkeypatch.setattr(
+            ra.subprocess,
+            "run",
+            lambda argv: calls.append(argv) or subprocess.CompletedProcess(argv, 0),
+        )
+        return calls
+
+    def test_the_bots_login_is_rerun_through_the_wrapper(self, ra, execs):
+        with pytest.raises(SystemExit) as stop:
+            ra.ensure_reviewer({"reviewer": {"username": "rev"}}, lambda m: None, "bot")
+        assert stop.value.code == 0
+        assert len(execs) == 1
+        assert execs[0][0].endswith("scripts/as-reviewer.sh")
+        assert execs[0][1:3] == ["--", sys.executable]
+
+    def test_the_reviewers_login_runs_on_whatever_its_case(self, ra, execs):
+        ra.ensure_reviewer({"reviewer": {"username": "Rev"}}, lambda m: None, "rev")
+        assert execs == []
+
+    def test_no_reviewer_configured_runs_as_the_bot(self, ra, execs):
+        ra.ensure_reviewer({}, lambda m: None, "bot")
+        ra.ensure_reviewer({"reviewer": {"username": None}}, lambda m: None, "bot")
+        assert execs == []
+
+    def test_a_wrapper_that_leaves_the_bot_in_force_stops_the_run(
+        self, ra, execs, monkeypatch
+    ):
+        monkeypatch.setenv(ra.GUARD, "1")
+        with pytest.raises(SystemExit):
+            ra.ensure_reviewer({"reviewer": {"username": "rev"}}, lambda m: None, "bot")
+        assert execs == []
+
+
 class TestPrRemote:
     def test_ignores_a_remote_that_only_pushes_to_the_repo(self, prep, monkeypatch):
         repo = prep.PR_REPO

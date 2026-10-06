@@ -49,6 +49,7 @@ from lib.load_config import (
 )
 from lib.pr_diff import NO_PATCH, fetch_pr_diff
 from lib.repo_lock import repo_lock
+from lib.reviewer_account import ensure_reviewer
 
 # Import fetch-prs functions (the module uses if __name__ guard)
 _fp_spec = importlib.util.spec_from_file_location(
@@ -2195,6 +2196,7 @@ def main():
     log("Resolving bot username...")
     bot_username = resolve_bot_username()
     log(f"Bot username: {bot_username}")
+    ensure_reviewer(_config, log, bot_username)
 
     # 2. Config already loaded at module level
 

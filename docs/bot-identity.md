@@ -51,6 +51,8 @@ The cron lines for the first row go through `scripts/as-reviewer.sh`, which read
 
 It does not fall back. With a reviewer configured, a missing login, or a directory logged in as a different account, stops the job with an error in its log; quietly reviewing as the bot would defeat the account's purpose. Clear `reviewer.username` to go back to the bot.
 
+`prepare-review.py` and `collect-results.py` re-run themselves through the wrapper when the gh login in force is not the reviewer, so a `/review-prs` typed into a session reviews as the reviewer too. Run as the bot, a review of a PR the bot opened can only comment, and it caches the commit as reviewed, so no later run approves it.
+
 Review requests are polled for the reviewer, not the bot: a human asks for a review from the account that will answer it. To run any command by hand as the reviewer, `./scripts/as-reviewer.sh -- <command>`.
 
 The bot asks the reviewer for a fresh review after each follow-up push to an open PR (`scripts/request-review.sh <pr>`, run as the bot, the PR's author), because GitHub removes a reviewer from the request list once they have reviewed. With no reviewer configured it does nothing.
