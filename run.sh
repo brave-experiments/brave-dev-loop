@@ -255,7 +255,17 @@ case $SLOT_RC in
 esac
 
 BOT_RUN_PID=$$
-export BOT_RUN_SLOT BOT_RUN_PID
+
+# One id and one directory per run.sh, outside the checkout: the agent's logs for each
+# iteration, and the output of the housekeeping around them, are here and nowhere shared.
+# The slot is held exclusively, so slot plus second cannot collide with another run.
+RUN_SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-slot-${BOT_RUN_SLOT}"
+RUN_SESSION_DIR="${BRAVE_DEV_LOOP_HOME:-$HOME/.brave-dev-loop}/sessions/$RUN_SESSION_ID"
+mkdir -p "$RUN_SESSION_DIR"
+HOUSEKEEPING_LOG="$RUN_SESSION_DIR/housekeeping.log"
+BOT_RUN_SESSION_ID="$RUN_SESSION_ID"
+BOT_RUN_SESSION_DIR="$RUN_SESSION_DIR"
+export BOT_RUN_SLOT BOT_RUN_PID BOT_RUN_SESSION_ID BOT_RUN_SESSION_DIR
 CURRENT_STORY_ID=""
 TITLE_WATCH_PID=""
 
@@ -327,7 +337,6 @@ fi
 
 PRD_FILE="$SCRIPT_DIR/data/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/data/progress.txt"
-LOGS_DIR="$SCRIPT_DIR/logs"
 # What one iteration may spend on its agent, a resumed session included.
 ITERATION_SECONDS=10800
 # A Claude session that writes nothing to its transcript for this long is stopped
@@ -397,6 +406,29 @@ story_next_step() {
   esac
 }
 
+# Runs a housekeeping step (PRD sync, label sweep, worktree cleanup) with its output
+# in this session's housekeeping.log instead of the terminal, which is the agent's.
+# Only what needs a reader reaches the terminal: a line a step prints that starts
+# with "warning" or "error", and the tail of one that failed. Returns the step's status.
+quiet_step() {
+  local label="$1" out rc=0
+  shift
+  out=$(mktemp "${TMPDIR:-/tmp}/housekeeping.XXXXXX")
+  "$@" >"$out" 2>&1 || rc=$?
+  {
+    printf '[%s] %s (exit %d)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$label" "$rc"
+    cat "$out"
+    echo
+  } >> "$HOUSEKEEPING_LOG"
+  grep -iE '^(warning|error)' "$out" >&2 || true
+  if [ "$rc" -ne 0 ]; then
+    tail -n 5 "$out" >&2
+    echo "$label failed (exit $rc); full output in $HOUSEKEEPING_LOG" >&2
+  fi
+  rm -f "$out"
+  return "$rc"
+}
+
 cleanup_run() {
   stop_title_watch
 
@@ -405,7 +437,8 @@ cleanup_run() {
   # keeps clean-worktrees.py out of the worktree the agent was working in. No
   # age limit here — a session that has ended is done with all of them.
   if [ "$BOT_PROFILE_WORKTREES" = true ]; then
-    python3 "$SCRIPT_DIR/scripts/clean-worktrees.py" >/dev/null || true
+    quiet_step "clean worktrees (session end)" \
+      python3 "$SCRIPT_DIR/scripts/clean-worktrees.py" || true
   fi
 
   release_claim
@@ -439,9 +472,6 @@ if [ ! -f "$PROGRESS_FILE" ]; then
   echo "---" >> "$PROGRESS_FILE"
 fi
 
-# Create logs directory if it doesn't exist
-mkdir -p "$LOGS_DIR"
-
 # Verify org members file exists (required for prompt injection protection)
 ORG_MEMBERS_FILE="$SCRIPT_DIR/.ignore/org-members.txt"
 if [ ! -f "$ORG_MEMBERS_FILE" ]; then
@@ -468,21 +498,22 @@ if [ "$COMPARISON_RUN" = true ]; then
   echo "Comparison runs enabled: every iteration is redone by $COMPARISON_AGENT and then critiqued."
   echo "  Findings are filed as issues in $BOT_ISSUE_REPO — see docs/comparison-runs.md"
 fi
-echo "Logs will be saved to: $LOGS_DIR"
+echo "Session:   $RUN_SESSION_ID"
+echo "Logs:      $RUN_SESSION_DIR"
+SETUP_STARTED=$SECONDS
 
 # Fetch nightly version once per run (avoids redundant WebFetch in each iteration)
 NIGHTLY_VERSION=$(python3 "$SCRIPT_DIR/scripts/get-nightly-version.py" 2>/dev/null || echo "")
 if [ -n "$NIGHTLY_VERSION" ]; then
-  echo "Nightly version: $NIGHTLY_VERSION"
+  echo "Nightly version: $NIGHTLY_VERSION" >> "$HOUSEKEEPING_LOG"
 else
-  echo "Warning: Could not fetch nightly version (agent will fetch if needed)"
+  echo "Warning: Could not fetch nightly version (agent will fetch if needed)" >> "$HOUSEKEEPING_LOG"
 fi
 
 # Reset run state at the start of each run. Operator settings
 # (skipPushedTasks, merge backoff) are not per-slot: they are read from
 # data/run-state.json so every slot honours the same configuration.
-echo "Resetting run state for fresh start..."
-"$SCRIPT_DIR/scripts/reset-run-state.sh" \
+quiet_step "reset run state" "$SCRIPT_DIR/scripts/reset-run-state.sh" \
   --state-file "$RUN_STATE_FILE" --config-from "$SCRIPT_DIR/data/run-state.json"
 
 # In auto mode the PRD is a cache — rebuild it from GitHub before selecting a
@@ -492,14 +523,16 @@ echo "Resetting run state for fresh start..."
 # with-lock keeps two runs starting together from syncing at the same time;
 # the second simply skips a refresh the first has just done.
 if [ "$BOT_PRD_MODE" = "auto" ]; then
-  "$SCRIPT_DIR/scripts/with-lock.sh" prd-sync --timeout 900 -- "$SCRIPT_DIR/scripts/sync-prd.sh"
+  quiet_step "sync PRD from GitHub" \
+    "$SCRIPT_DIR/scripts/with-lock.sh" prd-sync --timeout 900 -- "$SCRIPT_DIR/scripts/sync-prd.sh"
 fi
 
 # An issue named outright is work whoever it is assigned to, in either PRD mode:
 # naming it is the operator authoring the PRD. It is assigned to the bot, and
 # given a story when it has none, so the selector below has one to work.
 if [ -n "$EXTRA_PROMPT" ]; then
-  python3 "$SCRIPT_DIR/scripts/add-backlog-to-prd.py" --named "$EXTRA_PROMPT" >/dev/null \
+  quiet_step "import the named issue" \
+    python3 "$SCRIPT_DIR/scripts/add-backlog-to-prd.py" --named "$EXTRA_PROMPT" \
     || echo "WARNING: could not import the issue the request names — continuing." >&2
 fi
 
@@ -511,7 +544,8 @@ fi
 # closed issue guards nothing at any age. Only labels the bot applied are
 # touched. gh and Python; no agent, no tokens.
 # with-lock keeps 20 slots starting together from sweeping 20 times over.
-"$SCRIPT_DIR/scripts/with-lock.sh" in-progress-sweep --timeout 600 -- \
+quiet_step "sweep stale in-progress labels" \
+  "$SCRIPT_DIR/scripts/with-lock.sh" in-progress-sweep --timeout 600 -- \
   python3 "$SCRIPT_DIR/scripts/sweep-in-progress.py" \
   || echo "WARNING: could not sweep stale in-progress labels — continuing." >&2
 
@@ -523,9 +557,11 @@ fi
 # uncommitted changes — the age bound means a fresh worktree is never a
 # candidate in the first place. Python and git only; nothing here costs tokens.
 if [ "$BOT_PROFILE_WORKTREES" = true ]; then
-  python3 "$SCRIPT_DIR/scripts/clean-worktrees.py" --max-age-hours 24 >/dev/null \
+  quiet_step "clean worktrees (session start)" \
+    python3 "$SCRIPT_DIR/scripts/clean-worktrees.py" --max-age-hours 24 \
     || echo "WARNING: worktree cleanup failed — continuing." >&2
 fi
+echo "Setup:     done in $((SECONDS - SETUP_STARTED))s (PRD sync, label sweep, worktree cleanup: $HOUSEKEEPING_LOG)"
 
 # Counted after the sync, which is what decides the backlog in auto mode. A
 # story another run holds now is left out: by the time it is released, that run
@@ -560,11 +596,9 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
     jq --arg runId "$RUN_ID" '.runId = $runId | .storiesCheckedThisRun = [] | .lastIterationHadStateChange = true' "$RUN_STATE_FILE" > "$TMP_RUN_STATE" && mv "$TMP_RUN_STATE" "$RUN_STATE_FILE"
   fi
 
-  # Generate log file path for this iteration (needed by select-task.py).
-  # The slot is part of the name: runIds are second-precision timestamps, so
-  # two runs starting together would otherwise write to the same file.
-  RUN_ID_SAFE=$(echo "$RUN_ID" | sed 's/[^a-zA-Z0-9-]/-/g')
-  ITERATION_LOG="$LOGS_DIR/iteration-${RUN_ID_SAFE}-slot-${BOT_RUN_SLOT}-loop-${loop_count}.log"
+  # Generate log file path for this iteration (needed by select-task.py). The
+  # session directory is this run's alone, so the loop number is the whole name.
+  ITERATION_LOG="$RUN_SESSION_DIR/iteration-loop-${loop_count}.log"
   export BOT_RUN_ID="$RUN_ID"
 
   # Select next task — this is the gate check; exit early if no candidates
@@ -621,6 +655,9 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   # select-task.py claimed this story under the PRD lock; remember it so the
   # claim is handed back when the iteration ends or this run exits.
   CURRENT_STORY_ID="$STORY_ID"
+  # The logs are named by loop, so this is what says which story each one is.
+  printf 'loop %s: %s (%s) %s\n' "$loop_count" "$STORY_ID" "$STORY_STATUS" "$STORY_TITLE" \
+    >> "$RUN_SESSION_DIR/stories.txt"
   bot_slot_meta_set "storyId=$STORY_ID" "status=$STORY_STATUS" "runId=$RUN_ID" \
     "loop:num=$loop_count" "log=$ITERATION_LOG" "agent=$BOT_AGENT"
   bot_slot_heartbeat
@@ -1001,8 +1038,8 @@ Additional context: $EXTRA_PROMPT"
     if [ -z "$COMPARISON_BRANCH" ]; then
       COMPARISON_BRANCH="comparison-$(echo "$STORY_ID" | tr '[:upper:]' '[:lower:]')-$(date +%s)"
     fi
-    COMPARISON_LOG="$LOGS_DIR/comparison-${RUN_ID_SAFE}-slot-${BOT_RUN_SLOT}-loop-${loop_count}.log"
-    EVALUATOR_LOG="$LOGS_DIR/evaluator-${RUN_ID_SAFE}-slot-${BOT_RUN_SLOT}-loop-${loop_count}.log"
+    COMPARISON_LOG="$RUN_SESSION_DIR/comparison-loop-${loop_count}.log"
+    EVALUATOR_LOG="$RUN_SESSION_DIR/evaluator-loop-${loop_count}.log"
     COMPARISON_PROMPT_FILE=$(mktemp "${TMPDIR:-/tmp}/comparison-base-prompt.XXXXXX")
     BASE_SESSION_FILE=$(mktemp "${TMPDIR:-/tmp}/base-session.XXXXXX")
     COMPARISON_SESSION_FILE=$(mktemp "${TMPDIR:-/tmp}/comparison-session.XXXXXX")

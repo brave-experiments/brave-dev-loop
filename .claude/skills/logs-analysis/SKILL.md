@@ -1,11 +1,11 @@
 ---
 name: logs-analysis
-description: "Analyze iteration logs in ./logs for errors, schedule gaps, and problems. Checks if cron jobs (run.sh, review-prs, add-backlog, learnable-pattern-search, check-signal) are running correctly. Triggers on: analyze logs, check logs, logs analysis, log report."
+description: "Analyze session logs in ~/.brave-dev-loop/sessions and cron logs in ./logs for errors, schedule gaps, and problems. Checks if cron jobs (run.sh, review-prs, add-backlog, learnable-pattern-search, check-signal) are running correctly. Triggers on: analyze logs, check logs, logs analysis, log report."
 ---
 
 # Logs Analysis
 
-Analyze iteration log files in `./logs/` (top-level only, **never** look in `processed/`) and cron logs in `./logs/*-cron.log` to identify problems and assess schedule health.
+Analyze session logs in `~/.brave-dev-loop/sessions/` (**never** look in `~/.brave-dev-loop/processed/`) and cron logs in `./logs/*-cron.log` to identify problems and assess schedule health. Each `run.sh` is one session directory holding `iteration-loop-K.log` files, a `housekeeping.log`, and a `stories.txt` naming the story each loop worked. `$BRAVE_DEV_LOOP_HOME` replaces `~/.brave-dev-loop` when set.
 
 **Determine the bot directory:** This SKILL.md file lives inside the bot's `.claude/skills/logs-analysis/` directory. Use this file's path to derive the absolute path to the bot directory (referred to as `$BOT_DIR` below).
 
@@ -13,10 +13,10 @@ Analyze iteration log files in `./logs/` (top-level only, **never** look in `pro
 
 ## Step 1: Gather Log Inventory
 
-List all `.log` files in `$BOT_DIR/logs/` (top-level only, exclude `processed/` subdirectory):
+List all `.log` files in the session directories:
 
 ```bash
-find $BOT_DIR/logs -maxdepth 1 -name '*.log' -type f | sort
+find "${BRAVE_DEV_LOOP_HOME:-$HOME/.brave-dev-loop}/sessions" -mindepth 2 -maxdepth 2 -name '*.log' -type f | sort
 ```
 
 Also list the cron logs:
@@ -25,7 +25,7 @@ Also list the cron logs:
 ls -la $BOT_DIR/logs/*-cron.log 2>/dev/null
 ```
 
-If there are **no log files** in the top-level logs directory, report "No unprocessed logs found" and stop.
+If there are **no session logs**, report "No unprocessed logs found" and stop.
 
 ---
 
@@ -102,19 +102,21 @@ After all subagents return, compile a unified report with these sections:
 
 After presenting the report, ask the user:
 
-> Would you like to move the analyzed log files to `logs/processed/`?
+> Would you like to move the analyzed session directories to `~/.brave-dev-loop/processed/`?
 
-If the user agrees, move all analyzed log files (from the top-level `logs/` directory only) into `logs/processed/`:
+If the user agrees, move each analyzed session directory into `processed/`:
 
 ```bash
-mv $BOT_DIR/logs/*.log $BOT_DIR/logs/processed/
+H="${BRAVE_DEV_LOOP_HOME:-$HOME/.brave-dev-loop}"; mkdir -p "$H/processed"; mv "$H/sessions/"<session-id> "$H/processed/"
 ```
+
+Skip a session whose run is still going (`./run.sh --status` lists the live ones).
 
 ---
 
 ## Important Rules
 
-- **NEVER** read or analyze files in `logs/processed/` — those have already been reviewed
+- **NEVER** read or analyze files in `processed/` — those have already been reviewed
 - **NEVER** delete log files — only move them to `processed/`
 - Keep the report concise but include enough detail to diagnose issues
 - If a log file is very large (>1MB), instruct subagents to focus on the first 100 and last 100 lines
