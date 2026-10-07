@@ -62,6 +62,19 @@ bot_cron_agent() {
     "${model:+ --model $model}" "$CLAUDE_TOOLS"
 }
 
+# The command for a scheduled /review-prs sweep: scripts/review-session.sh,
+# which runs prepare-review.py and collect-results.py itself and starts the
+# claude session between them with no GitHub token and narrow permissions, in
+# place of bot_cron_agent's session with every tool. Same lock, slots and model
+# arguments as bot_cron_agent; the second is prepare-review.py's arguments.
+#
+#   bot_cron_review <lock name> '<prepare-review.py args>' [slots] [model]
+bot_cron_review() {
+  local slots="${3:-}" model="${4:-}"
+  printf "./scripts/with-lock.sh %s%s -- ./scripts/review-session.sh%s -- %s" \
+    "$1" "${slots:+ --slots $slots}" "${model:+ --model $model}" "$2"
+}
+
 # Wrap a command so it runs as the reviewer account (scripts/as-reviewer.sh):
 # the review sweeps and the review-request poll use it, the run.sh jobs do not.
 # Always emitted, configured or not -- the wrapper reads config.json when the

@@ -4235,6 +4235,59 @@ class TestCheckNewPrsGate:
         assert "No open PRs" not in result.stdout
 
 
+class TestReviewSessionSettings:
+    """The rules a scheduled review session runs under (review-session.sh)."""
+
+    SCRIPT = os.path.join(SCRIPT_DIR, "review-session-settings.py")
+
+    def _settings(self, tmp_dir, *extra):
+        work = os.path.join(tmp_dir, "review-prs-x")
+        result = subprocess.run(
+            ["python3", self.SCRIPT, "--work-dir", work, *extra],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return work, json.loads(result.stdout)["permissions"]
+
+    def test_writes_stay_in_the_work_directory(self, tmp_dir):
+        """Edit rules govern every file-writing tool; a Write(...) path rule is
+        ignored, so the confinement has to be spelled Edit."""
+        work, rules = self._settings(tmp_dir)
+        edits = [r for r in rules["allow"] if r.startswith(("Edit", "Write"))]
+        assert edits == [f"Edit(/{os.path.abspath(work)}/**)"]
+
+    def test_no_tool_is_allowed_whole(self, tmp_dir):
+        """A bare Bash allows any command, and a bare Read any file, the
+        credential stores included; reads come from the working directories."""
+        _, rules = self._settings(tmp_dir)
+        assert not {"Bash", "Read", "Edit", "Write", "WebFetch"} & set(rules["allow"])
+        bash = [r for r in rules["allow"] if r.startswith("Bash(")]
+        assert bash and all("select-candidates.py *)" in r for r in bash)
+
+    def test_the_web_is_denied(self, tmp_dir):
+        _, rules = self._settings(tmp_dir)
+        assert {"WebFetch", "WebSearch"} <= set(rules["deny"])
+
+    def test_credential_stores_are_unreadable(self, tmp_dir):
+        """cat and grep run without a rule in every mode; a Read deny is what
+        stops them on a path. .envrc is inside the bot directory, a working
+        directory, and /proc holds every ancestor's environment."""
+        gh_dir = os.path.join(tmp_dir, "gh-reviewer")
+        os.makedirs(gh_dir)
+        _, rules = self._settings(tmp_dir, "--deny-read", gh_dir)
+        deny = rules["deny"]
+        home = os.path.expanduser("~")
+        for path in (
+            f"{home}/.git-credentials",
+            f"{home}/.config/gh/**",
+            f"{os.path.realpath(REPO_ROOT)}/.envrc",
+            "/proc/**",
+            f"{gh_dir}/**",
+        ):
+            assert f"Read(/{path})" in deny, path
+
+
 class TestReviewRequestQueue:
     """The queue is GitHub's own: a PR where the bot is a requested reviewer.
     Nothing local records what has been answered, which is what makes the answer
@@ -4295,7 +4348,8 @@ class TestReviewRequestQueue:
         with open(claude, "w") as f:
             f.write(
                 "#!/bin/bash\n"
-                'echo "$*" >> "$CLAUDE_LOG"\n'
+                'echo "$* GH_TOKEN=${GH_TOKEN-unset} GITHUB_TOKEN=${GITHUB_TOKEN-unset}'
+                ' GH_CONFIG_DIR=$(ls -A "$GH_CONFIG_DIR" | wc -l)-entries cwd=$PWD" >> "$CLAUDE_LOG"\n'
                 + (
                     f'case "$*" in *"#{failing_pr}"*) exit 2 ;; esac\n'
                     if failing_pr
@@ -4304,6 +4358,24 @@ class TestReviewRequestQueue:
                 + "exit 0\n"
             )
         os.chmod(claude, 0o755)
+        # The wrapper's two GitHub steps, stubbed through REVIEW_PRS_SKILL_DIR.
+        # The work directory is named for the PR ("pr#101-..."), so the session's
+        # `--work-dir` says which PR it is reviewing, as its prompt used to.
+        skill = os.path.join(tmp_dir, "skill")
+        os.makedirs(skill, exist_ok=True)
+        with open(os.path.join(skill, "prepare-review.py"), "w") as f:
+            f.write(
+                "import json, os, sys, tempfile\n"
+                "open(os.environ['PREPARE_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                "d = tempfile.mkdtemp(prefix=f'pr{sys.argv[1]}-', dir=os.environ['WORK_ROOT'])\n"
+                "json.dump({'auto_mode': '--auto' in sys.argv}, open(f'{d}/manifest.json', 'w'))\n"
+                "print(json.dumps({'work_dir': d}))\n"
+            )
+        with open(os.path.join(skill, "collect-results.py"), "w") as f:
+            f.write(
+                "import os, sys\n"
+                "open(os.environ['COLLECT_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            )
         return bindir
 
     @staticmethod
@@ -4333,7 +4405,13 @@ class TestReviewRequestQueue:
         logs = {
             "GH_LOG": os.path.join(tmp_dir, "gh.log"),
             "CLAUDE_LOG": os.path.join(tmp_dir, "claude.log"),
+            "PREPARE_LOG": os.path.join(tmp_dir, "prepare.log"),
+            "COLLECT_LOG": os.path.join(tmp_dir, "collect.log"),
         }
+        work_root = os.path.join(tmp_dir, "work")
+        os.makedirs(work_root, exist_ok=True)
+        logs["WORK_ROOT"] = work_root
+        logs["REVIEW_PRS_SKILL_DIR"] = os.path.join(tmp_dir, "skill")
         result = subprocess.run(
             [script],
             capture_output=True,
@@ -4384,15 +4462,61 @@ class TestReviewRequestQueue:
         )
         assert result.returncode == 0, result.stderr
         assert len(claude_log) == 3
-        for pr, invocation in zip((101, 102, 103), claude_log):
-            assert f"-p /review-prs #{pr} open auto" in invocation
+        prepared = self._read(os.path.join(tmp_dir, "prepare.log"))
+        collected = self._read(os.path.join(tmp_dir, "collect.log"))
+        for pr, prep, invocation, collect in zip(
+            (101, 102, 103), prepared, claude_log, collected
+        ):
+            assert prep == f"#{pr} open --auto"
+            assert "-p /review-prs --work-dir " in invocation
+            assert f"pr#{pr}-" in invocation
+            assert f"pr#{pr}-" in collect and collect.endswith("--auto")
+
+    @staticmethod
+    def _read(path):
+        with open(path) as f:
+            return [line.strip() for line in f if line.strip()]
 
     def test_the_session_may_launch_subagents(self, tmp_dir):
         """Without Task the skill's whole file-based pipeline runs in the one
         session it was trying to keep small."""
         _, _, claude_log = self._run(self.JOB, tmp_dir, self._stubs(tmp_dir))
-        assert "--allowedTools" in claude_log[0]
-        assert "Task" in claude_log[0].split("--allowedTools")[1]
+        assert '"Agent"' in claude_log[0] and '"Task"' in claude_log[0]
+
+    def test_the_session_holds_no_github_credential(self, tmp_dir):
+        """The session reads untrusted text and the reviewer can write to the
+        repository. Prepare and collect run outside it, so it needs no token,
+        and gh's default config directory would hand it the bot's."""
+        _, _, claude_log = self._run(
+            self.JOB,
+            tmp_dir,
+            self._stubs(tmp_dir),
+            {"GH_TOKEN": "reviewer-token", "GITHUB_TOKEN": "bot-token"},
+        )
+        assert "GH_TOKEN=unset GITHUB_TOKEN=unset" in claude_log[0]
+        assert "GH_CONFIG_DIR=0-entries" in claude_log[0]
+        assert "reviewer-token" not in claude_log[0]
+
+    def test_the_session_refuses_what_its_rules_do_not_allow(self, tmp_dir):
+        """dontAsk turns every unlisted tool call into a refusal; under -p alone
+        the --allowedTools list was every tool the skill could want."""
+        _, _, claude_log = self._run(self.JOB, tmp_dir, self._stubs(tmp_dir))
+        assert "--permission-mode dontAsk" in claude_log[0]
+        assert "--allowedTools" not in claude_log[0]
+        assert f"cwd={os.path.realpath(REPO_ROOT)}" in claude_log[0]
+
+    def test_a_failed_session_is_still_collected(self, tmp_dir):
+        """The collector removes the run's worktrees and leaves out a PR whose
+        validator wrote nothing, so it runs whatever the session did."""
+        result, _, claude_log = self._run(
+            self.JOB,
+            tmp_dir,
+            self._stubs(tmp_dir, queue="101", failing_pr=101),
+            {"REVIEW_REQUESTED_MAX_PRS": "1"},
+        )
+        assert len(claude_log) == 1
+        assert len(self._read(os.path.join(tmp_dir, "collect.log"))) == 1
+        assert "exited 2" in result.stderr
 
     def test_the_session_loads_no_mcp_server(self, tmp_dir):
         """The PR under review is untrusted text, and a server in the operator's
@@ -4449,9 +4573,7 @@ class TestReviewRequestQueue:
             held.kill()
             held.wait()
         assert result.returncode == 0, result.stderr
-        reviewed = [
-            pr for pr in (101, 102, 103) if f"#{pr} open auto" in " ".join(claude_log)
-        ]
+        reviewed = [pr for pr in (101, 102, 103) if f"pr#{pr}-" in " ".join(claude_log)]
         assert reviewed == [102, 103], claude_log
         assert "skipped #101" in result.stdout
 
@@ -5264,7 +5386,7 @@ class TestProjectSchedules:
         with open(self.GOLDEN) as f:
             assert self._render(tmp_dir, "brave-core") == f.read()
 
-    @pytest.mark.parametrize("profile", ["brave-core", "brave-dev-loop", "default"])
+    @pytest.mark.parametrize("profile", ["brave-core", "default"])
     def test_every_agent_job_loads_no_mcp_server(self, tmp_dir, profile):
         """A server the operator added for their own account sits in
         ~/.claude.json, which every session reads unless told not to."""
@@ -5410,20 +5532,37 @@ class TestProjectSchedules:
         sweeps = [
             j
             for j in self._jobs(self._render(tmp_dir, profile))
-            if "/review-prs 1d" in j
+            if "review-session.sh" in j
         ]
         assert sweeps
         for job in sweeps:
             assert (
-                "-p '/review-prs 1d open auto reviewer-priority' --model sonnet " in job
+                "./scripts/review-session.sh --model sonnet -- "
+                "1d open --auto --reviewer-priority" in job
             )
+
+    @pytest.mark.parametrize(
+        "profile", ["brave-core", "bravebot", "default", "brave-dev-loop"]
+    )
+    def test_no_review_job_starts_a_session_with_every_tool(self, tmp_dir, profile):
+        """A review reads the PR's source tree as the reviewer, which can write
+        to the repository. Every review job goes through review-session.sh,
+        which holds the session to narrow rules with no GitHub token; a review
+        started straight from cron would get --allowedTools and the token."""
+        reviewing = [
+            j for j in self._jobs(self._render(tmp_dir, profile)) if "review-prs" in j
+        ]
+        assert reviewing
+        for job in reviewing:
+            assert "claude -p" not in job, job
+            assert "review-session.sh" in job or "review-requested.sh" in job, job
 
     def test_bravebot_sweeps_eight_times_a_day_and_answers_requests(self, tmp_dir):
         """The daytime sweeps fall inside 06:00-23:00, and an explicit request
         does not wait on them: the poll is a job of its own."""
         block = self._render(tmp_dir, "bravebot")
         assert "review-requested.sh" in block
-        sweeps = [j for j in self._jobs(block) if "/review-prs 1d" in j]
+        sweeps = [j for j in self._jobs(block) if "review-session.sh" in j]
         (daytime,) = [j for j in sweeps if not j.startswith("30 2 ")]
         minute, hours = daytime.split()[:2]
         assert minute == "30"
@@ -5438,7 +5577,7 @@ class TestProjectSchedules:
         sweeps = [
             j
             for j in self._jobs(self._render(tmp_dir, "bravebot"))
-            if "/review-prs 1d" in j
+            if "review-session.sh" in j
         ]
         (overnight,) = [j for j in sweeps if j.split()[1] == "2"]
         assert overnight.split()[:5] == ["30", "2", "*", "*", "*"]
@@ -5453,7 +5592,7 @@ class TestProjectSchedules:
         sweeps = [
             j
             for j in self._jobs(self._render(tmp_dir, "bravebot"))
-            if "/review-prs 1d" in j
+            if "review-session.sh" in j
         ]
         hours = sorted(int(h) for j in sweeps for h in j.split()[1].split(","))
         gaps = [b - a for a, b in zip(hours, hours[1:])] + [hours[0] + 24 - hours[-1]]
@@ -5584,7 +5723,7 @@ class TestProjectSchedules:
         result = self._group(tmp_dir, profile, "review")
         assert result.returncode == 0, result.stderr
         jobs = self._jobs(result.stdout)
-        assert any("/review-prs 1d" in j or "review-requested.sh" in j for j in jobs)
+        assert any("review-session.sh" in j or "review-requested.sh" in j for j in jobs)
         assert not any("./run.sh " in j or "sync-prd.sh" in j for j in jobs)
         assert result.stdout.startswith(f"# === brave-dev-loop ({profile}:review) ")
 

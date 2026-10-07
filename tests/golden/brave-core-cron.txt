@@ -35,9 +35,9 @@ PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap
 # sweep asking for one would take slot 1 only, and exit doing nothing
 # every time a poll happened to be holding it.
 # Weekdays: 3x/day
-0 13,20 * * 1-5 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh 2>> {BOT}/logs/review-prs-cron.log && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/as-reviewer.sh -- ./scripts/with-lock.sh review-prs --slots 3 -- /usr/bin/claude -p '/review-prs 1d open auto reviewer-priority' --model sonnet --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' --strict-mcp-config ; } >> {BOT}/logs/review-prs-cron.log 2>&1
+0 13,20 * * 1-5 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh 2>> {BOT}/logs/review-prs-cron.log && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/as-reviewer.sh -- ./scripts/with-lock.sh review-prs --slots 3 -- ./scripts/review-session.sh --model sonnet -- 1d open --auto --reviewer-priority ; } >> {BOT}/logs/review-prs-cron.log 2>&1
 # Weekends: once/day at noon
-0 12 * * 0,6 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh 2>> {BOT}/logs/review-prs-cron.log && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/as-reviewer.sh -- ./scripts/with-lock.sh review-prs --slots 3 -- /usr/bin/claude -p '/review-prs 1d open auto reviewer-priority' --model sonnet --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' --strict-mcp-config ; } >> {BOT}/logs/review-prs-cron.log 2>&1
+0 12 * * 0,6 cd {BOT} && source .envrc && ./scripts/check-new-prs.sh 2>> {BOT}/logs/review-prs-cron.log && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/as-reviewer.sh -- ./scripts/with-lock.sh review-prs --slots 3 -- ./scripts/review-session.sh --model sonnet -- 1d open --auto --reviewer-priority ; } >> {BOT}/logs/review-prs-cron.log 2>&1
 
 # Review requested from the bot — skip unless someone asked
 # Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)

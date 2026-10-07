@@ -1495,7 +1495,9 @@ _GUIDANCE_VALIDATION = (
 _VALIDATE_INSTRUCTIONS = """\
 Validation:
 The source tree at the PR head is at: {source_path}
-File paths are relative to it.{base_note}
+File paths are relative to it. Read it with the Read, Grep and Glob tools, or
+with shell commands that spell out absolute paths under it. A scheduled run
+refuses a command that `cd`s into it or holds the path in a shell variable.{base_note}
 
 Reviewers who read only the diff proposed the candidates above. For each one:
 - Read the source file around the flagged line with the Read tool, and the context the claim rests on: the enclosing function and class, the includes, the namespace, the BUILD.gn deps list when the candidate is about dependencies.
@@ -1588,18 +1590,19 @@ def build_validate_prompt(
     if ctx.get("guidance"):
         parts += [_guidance_text(ctx), ""]
     base_ref = ctx.get("base_ref")
+    # No lookup on GitHub: a scheduled validator has no token and no network
+    # (scripts/review-session.sh). It needs none, because the source tree is the
+    # PR head, which holds what the base branch had when the PR last took it in.
     if base_ref and is_feature_branch(base_ref):
-        lookup = f"gh api repos/{PR_REPO}/contents/<path>?ref={base_ref}"
         base_note = (
-            f"\nThis PR targets `{base_ref}`, not `{DEFAULT_BRANCH}`; the diff "
-            f"does not show what `{base_ref}` added. Before calling something "
-            f"missing, look it up with `{lookup}`; if it is there, drop the "
-            "candidate."
+            f"\nThis PR targets `{base_ref}`, not `{DEFAULT_BRANCH}`. The source "
+            f"tree is the PR head, so it has what `{base_ref}` had when this PR "
+            "last took it in. If a candidate calls something missing and you "
+            "cannot find it in the tree, drop the candidate rather than guess."
         )
-        gh_note = f"The only `gh` command you may run is `{lookup}`. "
     else:
         base_note = ""
-        gh_note = "Do not run `gh` at all. "
+    gh_note = "Do not run `gh` at all. "
     parts.append(
         _VALIDATE_INSTRUCTIONS.format(
             source_path=source_path,
