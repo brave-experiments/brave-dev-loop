@@ -1495,7 +1495,9 @@ _GUIDANCE_VALIDATION = (
 _VALIDATE_INSTRUCTIONS = """\
 Validation:
 The source tree at the PR head is at: {source_path}
-File paths are relative to it.{base_note}
+File paths are relative to it. Read it with the Read, Grep and Glob tools, or
+with shell commands that spell out absolute paths under it. A scheduled run
+refuses a command that `cd`s into it or holds the path in a shell variable.{base_note}
 
 Reviewers who read only the diff proposed the candidates above. For each one:
 - Read the source file around the flagged line with the Read tool, and the context the claim rests on: the enclosing function and class, the includes, the namespace, the BUILD.gn deps list when the candidate is about dependencies.
