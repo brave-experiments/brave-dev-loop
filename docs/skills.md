@@ -27,7 +27,23 @@ GitHub, and `scripts/review-requested.sh` gives each one its own session, up to
 `REVIEW_REQUESTED_MAX_PRS` (5) a run. An empty queue costs one API call: the
 gate stops before any agent starts.
 
-Both start the session with `--model $BOT_REVIEW_MODEL` (`sonnet` unless the
+Both go through `scripts/review-session.sh`, which splits a run three ways.
+It runs `prepare-review.py` and `collect-results.py` itself, as the reviewer,
+and starts the claude session between them for the steps that read the PR: the
+manifest, the detect and validate subagents, and `select-candidates.py`. That
+session reads untrusted text — the diff, the description, the whole source
+tree — so it runs with no GitHub token and under
+`--permission-mode dontAsk` with the rules `scripts/review-session-settings.py`
+writes: reads in the bot directory and the run's work directory, writes only
+in the work directory, subagents, the one script, and no web access. The
+places a credential lives on the machine (`.envrc`, the gh config directories,
+`~/.git-credentials`, the ssh key, `/proc`) are denied outright, because
+Claude Code always allows `cat` and `grep`. A tool call outside the rules is
+refused, not asked about, so nothing the PR says can make the session push,
+merge or post; the only thing that leaves it is the validators' results file,
+which the collector posts through its own templates.
+
+The session runs with `--model $BOT_REVIEW_MODEL` (`sonnet` unless the
 environment says otherwise). The session itself only runs the skill's scripts
 and launches its subagents, and those name their own models in
 `.claude/agents/review-prs-*.md`, so nothing in it needs the default model.

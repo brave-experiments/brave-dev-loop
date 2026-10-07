@@ -1,7 +1,7 @@
 ---
 name: review-prs
 description: "Review PRs in the configured PR repository for best practices violations. Supports single PR (#12345), state filter (open/closed/all), and auto mode for cron. Triggers on: review prs, review recent prs, /review-prs, check prs for best practices."
-argument-hint: "[days|page<N>|#<PR>] [open|closed|all] [auto] [reviewer-priority] [full]"
+argument-hint: "[days|page<N>|#<PR>] [open|closed|all] [auto] [reviewer-priority] [full] | --work-dir <dir>"
 allowed-tools: Bash(gh pr diff:*)
 ---
 
@@ -38,6 +38,18 @@ The main LLM session only orchestrates: run scripts, read a small manifest, laun
 ## The Job
 
 When invoked with `/review-prs [days|page<N>|#<PR>] [open|closed|all] [auto] [reviewer-priority] [full]`:
+
+### Scheduled runs: `/review-prs --work-dir <dir>`
+
+The schedules start the skill through `scripts/review-session.sh`, which has already run Step 1 and will run Step 6 itself once this session ends. Invoked with `--work-dir <dir>`, do Steps 2 to 5 only, with `{work_dir}` set to `<dir>`, and stop after the validators return. Do not run `prepare-review.py` or `collect-results.py`.
+
+This session has no GitHub token and runs under a fixed set of permission rules (`scripts/review-session-settings.py`): reads in the bot directory and the work directory, writes only in the work directory, subagents, and one Bash command, which must be written exactly as Step 4 shows it, from the bot directory:
+
+```bash
+python3 .claude/skills/review-prs/select-candidates.py --work-dir "<dir>"
+```
+
+Read the manifest with the Read tool, not a shell command. A denied tool call is the rules working, not something to work around: carry on with what is allowed, and say what was denied in your final message.
 
 ### Step 1: Prepare (zero LLM tokens)
 
