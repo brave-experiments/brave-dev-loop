@@ -132,8 +132,14 @@ printf '%-5s %-9s %-8s %-10s %-21s %-9s %s\n' SLOT STATE PID STORY STARTED LAST-
 printf '%s\n' "$ROWS" | while IFS=$'\t' read -r slot state pid story started age hb log; do
   [ -n "$slot" ] || continue
   [ "$age" = "-" ] && age_h="-" || age_h=$(human_age "$age")
+  # The file alone ("iteration-loop-1.log") is the same in every session, so name the session too.
+  if [ -z "$log" ] || [ "$log" = "-" ]; then
+    log_h="-"
+  else
+    log_h="$(basename "$(dirname "$log")")/$(basename "$log")"
+  fi
   printf '%-5s %-9s %-8s %-10s %-21s %-9s %s\n' \
-    "$slot" "$state" "$pid" "$story" "$started" "$age_h" "$(basename "$log" 2>/dev/null || echo -)"
+    "$slot" "$state" "$pid" "$story" "$started" "$age_h" "$log_h"
 done
 echo ""
 

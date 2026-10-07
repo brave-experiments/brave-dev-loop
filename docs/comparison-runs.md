@@ -78,12 +78,13 @@ broken tool.
 
 | | |
 | --- | --- |
-| Comparison log | `logs/comparison-<runId>-slot-N-loop-M.log` |
-| Evaluator log | `logs/evaluator-<runId>-slot-N-loop-M.log` |
+| Comparison log | `~/.brave-dev-loop/sessions/<session>/comparison-loop-M.log` |
+| Evaluator log | `~/.brave-dev-loop/sessions/<session>/evaluator-loop-M.log` |
 | Comparison worktree | `<target repo>-<comparison branch>` |
 | Comparison branch | local only — never pushed |
 
-`logs/` is gitignored. The worktree and its branch are **left in place on
+The logs sit beside the base run's `iteration-loop-M.log`, in the directory
+`run.sh` printed as `Logs:`. The worktree and its branch are **left in place on
 purpose**: inspecting the gold-standard attempt is most of the value. The
 worktree collection `run.sh` does leaves it alone for the same reason it leaves
 any unpushed work alone — a comparison branch is never pushed, so no remote has

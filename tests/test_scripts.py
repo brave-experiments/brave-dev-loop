@@ -5096,7 +5096,7 @@ class TestAgentSelection:
             assert "<promise>" not in f.read()
 
     def test_every_accepted_agent_names_itself_at_startup(self):
-        banner = self._region("Run slot $BOT_RUN_SLOT", "Logs will be saved to")
+        banner = self._region("Run slot $BOT_RUN_SLOT", "Session:   $RUN_SESSION_ID")
         for agent in self._accepted():
             if agent == "claude":
                 continue

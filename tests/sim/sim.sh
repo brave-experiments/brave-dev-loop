@@ -21,11 +21,13 @@ SIM="${BOTSIM_DIR:-/tmp/botsim}"
 TARGET="$SIM-target"
 STORIES="${BOTSIM_STORIES:-6}"
 AGENT_SECONDS="${BOTSIM_AGENT_SECONDS:-6}"
+# Session logs go under here instead of the real ~/.brave-dev-loop.
+export BRAVE_DEV_LOOP_HOME="$SIM/home"
 
 kill_runs() {
   pkill -9 -f "$SIM/run.sh" 2>/dev/null || true
   pkill -9 -f "$SIM/fake-claude.sh" 2>/dev/null || true
-  pkill -9 -f "tee -a $SIM/logs" 2>/dev/null || true
+  pkill -9 -f "tee -a $SIM/home" 2>/dev/null || true
   sleep 1
 }
 
@@ -46,11 +48,11 @@ PY
 
 reset() {
   kill_runs
-  rm -rf "$SIM/logs" "$SIM/data/runs" "$SIM/data/claims.json" \
+  rm -rf "$SIM/home" "$SIM/data/runs" "$SIM/data/claims.json" \
          "$SIM"/.run.lock "$SIM"/.run.lock.d "$SIM"/.run.slot-*.lock \
          "$SIM"/data/run-state.slot-*.json "$SIM"/data/progress.txt \
          "$SIM"/*.log 2>/dev/null || true
-  mkdir -p "$SIM/logs" "$SIM/data"
+  mkdir -p "$SIM/data"
   "$REPO/scripts/reset-run-state.sh" --state-file "$SIM/data/run-state.json" --quiet
   seed_prd
   echo "sim reset: $SIM ($STORIES stories)"
@@ -68,7 +70,7 @@ build() {
     --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
     --exclude '.run.lock' --exclude '.run.lock.d' --exclude '.run.slot-*' \
     . | tar -xf - -C "$SIM"
-  mkdir -p "$SIM/data" "$SIM/logs" "$SIM/.ignore"
+  mkdir -p "$SIM/data" "$SIM/.ignore"
   echo "someorgmember" > "$SIM/.ignore/org-members.txt"
 
   git init -q -b main "$TARGET"

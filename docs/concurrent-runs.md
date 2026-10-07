@@ -35,10 +35,28 @@ run you started by hand now coexist instead of one of them exiting.
 | --- | --- | --- |
 | lock | `.run.lock` | `.run.slot-N.lock` |
 | run state | `data/run-state.json` | `data/run-state.slot-N.json` |
-| iteration log | `logs/iteration-<runId>-slot-1-loop-K.log` | `…-slot-N-…` |
+| session logs | `~/.brave-dev-loop/sessions/<time>-slot-1/` | `…-slot-N/` |
 | metadata | `data/runs/slot-1.json` | `data/runs/slot-N.json` |
 
-Slot 1 deliberately keeps the paths it always had.
+Slot 1 deliberately keeps the paths it always had, apart from the logs, which are per
+`run.sh` rather than per slot.
+
+## Session logs
+
+Each `run.sh` is one session, with an id of the form `20261007T010141Z-slot-1` and a
+directory of that name under `~/.brave-dev-loop/sessions/` (`$BRAVE_DEV_LOOP_HOME/sessions/`
+if that is set). Both are printed at the top of the run. The directory holds:
+
+| file | contents |
+| --- | --- |
+| `iteration-loop-K.log` | the agent's output for loop K |
+| `comparison-loop-K.log`, `evaluator-loop-K.log` | the same for a `--comparison-run` |
+| `housekeeping.log` | the PRD sync, label sweep and worktree cleanup before and after the agent |
+| `stories.txt` | which story each loop worked |
+
+The terminal shows only the agent and any housekeeping line that begins with `warning` or
+`error`; the rest of that output is in `housekeeping.log`. Cron job output stays in
+`logs/*-cron.log`.
 
 The operator setting `skipPushedTasks` is **not** per slot. It is read from
 `data/run-state.json` and copied into each slot's file at run start, so

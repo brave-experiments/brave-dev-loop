@@ -97,7 +97,7 @@ what makes the finding checkable, and they belong out of the reader's way.
 | resume | `bravebot --resume 1788098998-57199` | `claude --resume <uuid>` |
 | transcript | `~/.bravebot/sessions/<slug>/<id>.json` | `~/.claude/projects/<slug>/<id>.jsonl` |
 | audit | `~/.bravebot/sessions/<slug>/<id>.audit.jsonl` | — |
-| log | `logs/iteration-…log` | `logs/comparison-…log` |
+| log | `…/<session>/iteration-loop-M.log` | `…/<session>/comparison-loop-M.log` |
 | branch | `fix-foo` | `comparison-us-004-…` |
 | worktree | `…/brave-core-004` | `…/brave-core-comparison-us-004-…` |
 
