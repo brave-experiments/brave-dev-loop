@@ -103,6 +103,45 @@ Untracked files are not shared: `target/` starts empty and the first
 `cargo build` in a new worktree is a cold one. Budget for it — that build, not
 the worktree, is what makes the first iteration slow.
 
+### Build cache (sccache)
+
+The dev machine runs cargo through [sccache](https://github.com/mozilla/sccache),
+so a new worktree reuses compiled third-party crates instead of rebuilding them.
+It is machine setup, not part of the repository, and the loop does not install it:
+
+```sh
+brew install sccache
+```
+
+```toml
+# ~/.cargo/config.toml
+[build]
+rustc-wrapper = "sccache"
+```
+
+```toml
+# ~/Library/Application Support/Mozilla.sccache/config  (macOS; the default cap is 10 GiB)
+[cache.disk]
+size = 42949672960
+```
+
+`sccache --show-stats` shows hits and the cap. Incremental compilation stays on.
+
+What it saves is limited. Registry crates compile from `~/.cargo/registry`, the
+same path in every worktree, so they hit. The 19 workspace crates do not: their
+path is part of the compiler's identity hash, and the path differs per worktree.
+Linking is never cached. Measured on a cold, separate worktree, with a warm cache:
+
+| step | cold | warm cache |
+| --- | --- | --- |
+| `cargo build --workspace` | 46s | 31s |
+| `cargo clippy --workspace --all-targets` | 36s | 29s |
+| `cargo test --workspace --no-run` | 72s | 71s |
+
+So expect the first build of a story to be 15-30% shorter, not a different order
+of magnitude. The Docker gates copy the worktree into a container and do not see
+the host cache.
+
 One untracked file arrives anyway: the post-checkout hook `make setup` installs
 copies `.envrc` from the main checkout and runs `direnv allow` in the new
 worktree, so a build there reads the same environment as one in the main

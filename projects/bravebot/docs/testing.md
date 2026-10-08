@@ -5,7 +5,8 @@ Project-specific test and presubmit commands. Read alongside
 
 Every command here runs in the story's worktree (`../bravebot-<issue-number>`),
 never in the main checkout — see [repo.md](./repo.md#worktrees). A fresh
-worktree has an empty `target/`, so its first build is a cold one.
+worktree has an empty `target/`, so its first build is a cold one, shortened a
+little by the host's sccache (see [repo.md](./repo.md#build-cache-sccache)).
 
 ## Choosing the tests
 
