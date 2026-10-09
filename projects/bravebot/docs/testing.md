@@ -68,7 +68,13 @@ names. It prints each area and the first path that needs it before running
 anything, and passes `-k`, so one run reports every failing gate.
 
 The Docker gates are `check-msrv`, `check-windows` and `check-linux` for any
-change to Rust, and none for a branch that touches no Rust.
+change to Rust, and none for a branch that touches no Rust. **Do not run them by
+default.** `check-affected` already checks the host, and bravebot's CI checks the
+other platforms. Run them only when the story is specifically about a platform
+other than this host's: the issue names Linux, Windows or an architecture, or the
+diff changes code gated to one (`cfg(windows)`, the Linux backend, the sandbox).
+Then run the gate for that platform. Otherwise skip them and write
+`Docker gates skipped: host-only` in progress.txt.
 
 Three of the gates it can choose are worth knowing about before they run:
 
@@ -119,7 +125,8 @@ Each gate is a shell command, so the build's environment goes in the string:
 worktrees have no `.envrc`, and without `BRAVEBOT_ALLOW_UNCONFIGURED_BUILD=1` the
 build refuses to start.
 
-**Give the Docker gates an invocation to themselves.** Each one starts by copying
+**Give the Docker gates an invocation to themselves** (when the story calls for them, per
+[Presubmit](#presubmit)). Each one starts by copying
 the whole worktree into its container, which takes long enough to matter and
 fails outright if something writes into the tree while it reads. `make check`
 writing `target/` is exactly that, so once the host gates are done, run the ones
