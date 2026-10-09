@@ -3715,6 +3715,15 @@ class TestBravebotProfile:
             if self.CONTAINERS in step:
                 assert "wait-gate invocation of their own" in step, step
 
+    def test_docker_gates_run_only_for_a_story_about_another_platform(self):
+        """The host gates cover the host and CI covers the other platforms, so
+        the Docker builds are a cost a story pays only when it concerns one."""
+        step = next(v for v in self._profile()["validations"] if self.CONTAINERS in v)
+        assert step.startswith("Run the Docker gates only when"), step
+        assert "otherwise skip them" in step, step
+        with open(os.path.join(PROJECTS_DIR, "bravebot", "docs", "testing.md")) as f:
+            assert "Do not run them by\ndefault" in f.read()
+
     def test_has_no_chromium_assumptions(self):
         blob = json.dumps(self._profile()).lower()
         for term in ("pnpm", "gtest", "chromium", "presubmit", "best_practices"):
