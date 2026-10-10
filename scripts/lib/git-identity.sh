@@ -222,3 +222,20 @@ bot_export_identity_env() {
 
   return 0
 }
+
+# Run `gh auth login` for the bot, then make the account that was active before
+# the active one again. gh makes whichever account it adds the active one, which
+# would turn every other terminal on this machine into the bot. The caller
+# decides which gh config directory this acts on (GH_CONFIG_DIR).
+#
+# Succeeds whatever happens: whether the login stuck is the caller's question,
+# answered by `gh auth token --user`, not by this exit status.
+bot_gh_login() {
+  local previous
+  previous=$(gh api user --jq .login 2>/dev/null || true)
+  gh auth login --hostname github.com --web --skip-ssh-key || true
+  if [ -n "$previous" ] && gh auth token --user "$previous" >/dev/null 2>&1; then
+    gh auth switch --hostname github.com --user "$previous" >/dev/null 2>&1 || true
+  fi
+  return 0
+}

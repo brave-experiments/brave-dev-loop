@@ -849,23 +849,64 @@ fi
 # without a matching account the bot's PRs and comments are posted by whoever
 # owns this machine.
 
-if gh auth token --user "$BOT_GH_ACCOUNT" >/dev/null 2>&1; then
+#
+# bot.ghConfigDir, when set, is where the bot's login lives; otherwise it is the
+# default gh config, shared with the machine owner.
+bot_gh() {
+  if [ -n "$BOT_GH_CONFIG_DIR" ]; then
+    mkdir -p "$BOT_GH_CONFIG_DIR"
+    GH_CONFIG_DIR="$BOT_GH_CONFIG_DIR" "$@"
+  else
+    "$@"
+  fi
+}
+
+BOT_GH_LOGGED_IN=false
+if bot_gh gh auth token --user "$BOT_GH_ACCOUNT" >/dev/null 2>&1; then
+  BOT_GH_LOGGED_IN=true
   echo "✓ gh account '$BOT_GH_ACCOUNT' is authenticated"
   echo "  run.sh exports its token as GH_TOKEN for the bot process only —"
   echo "  gh's active account for your other terminals is left alone."
 else
-  ACTIVE_GH=$(gh api user --jq .login 2>/dev/null || echo "")
+  ACTIVE_GH=$(bot_gh gh api user --jq .login 2>/dev/null || echo "")
   if [ -n "$ACTIVE_GH" ]; then
-    echo "⚠️  gh has no stored token for '$BOT_GH_ACCOUNT' (active account: $ACTIVE_GH)"
-    echo "   Without one, PRs and comments are posted as $ACTIVE_GH, not the bot."
-    echo "   Add the account, then switch back — 'gh auth login' makes the new"
-    echo "   account active, but both tokens stay stored:"
-    echo "     gh auth login --hostname github.com"
-    echo "     gh auth switch --user $ACTIVE_GH"
+    echo "Bot account: gh has no stored token for '$BOT_GH_ACCOUNT' (active account: $ACTIVE_GH)"
+    echo "  Without one, PRs and comments are posted as $ACTIVE_GH, not the bot."
   else
-    echo "⚠️  gh is not authenticated for any account."
-    echo "   Log in as $BOT_GH_ACCOUNT so the bot can open PRs and comment:"
-    echo "     gh auth login --hostname github.com"
+    echo "Bot account: gh is not authenticated for any account."
+  fi
+  echo ""
+  echo "  1. Open https://github.com in a browser signed in as $BOT_GH_ACCOUNT."
+  echo "     If you are signed in as someone else, use a private window."
+  echo "  2. Run:"
+  echo "       ${BOT_GH_CONFIG_DIR:+GH_CONFIG_DIR=$BOT_GH_CONFIG_DIR }gh auth login --hostname github.com --web --skip-ssh-key"
+  echo "  3. gh prints a one-time code and opens github.com/login/device."
+  echo "     Enter the code as $BOT_GH_ACCOUNT and authorize."
+  if [ -n "$ACTIVE_GH" ]; then
+    echo "  4. gh makes the new account active. Put yours back; both tokens stay stored:"
+    echo "       ${BOT_GH_CONFIG_DIR:+GH_CONFIG_DIR=$BOT_GH_CONFIG_DIR }gh auth switch --user $ACTIVE_GH"
+  fi
+  echo ""
+  if [ -t 0 ]; then
+    LAST_STEP=3
+    [ -z "$ACTIVE_GH" ] || LAST_STEP=4
+    read -p "  Run steps 2-$LAST_STEP now? (Y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+      bot_gh bot_gh_login
+      if bot_gh gh auth token --user "$BOT_GH_ACCOUNT" >/dev/null 2>&1; then
+        BOT_GH_LOGGED_IN=true
+        echo "✓ gh account '$BOT_GH_ACCOUNT' is authenticated"
+        if [ -n "$ACTIVE_GH" ]; then
+          echo "  gh's active account is back to $(bot_gh gh api user --jq .login 2>/dev/null || echo "$ACTIVE_GH")."
+        fi
+      fi
+    fi
+  fi
+  if [ "$BOT_GH_LOGGED_IN" != true ]; then
+    echo "⚠️  gh has no stored token for '$BOT_GH_ACCOUNT'. PRs and comments from ./run.sh"
+    echo "   are posted by gh's active account until it does. Run the commands above,"
+    echo "   or re-run 'make setup'."
   fi
 fi
 echo ""
@@ -988,6 +1029,10 @@ if [ "$SKIP_GIT" = true ] && [ -z "${GIT_REPO_RAW:-}" ]; then
   NEXT+=("Re-run 'make setup' and provide the target repo path to configure git identity, remotes, and hooks")
 elif [ "$SKIP_GIT" = true ]; then
   NEXT+=("Ensure $GIT_REPO_RAW exists as a git repository, then re-run 'make setup'")
+fi
+
+if [ "$BOT_GH_LOGGED_IN" != true ]; then
+  NEXT+=("Log in the bot: ${BOT_GH_CONFIG_DIR:+GH_CONFIG_DIR=$BOT_GH_CONFIG_DIR }gh auth login --hostname github.com --web --skip-ssh-key (as $BOT_GH_ACCOUNT, then switch gh back to your own account)")
 fi
 
 if [ -n "$BOT_REVIEWER_USERNAME" ]; then
