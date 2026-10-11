@@ -5764,6 +5764,92 @@ class TestProjectSchedules:
         assert "unknown group" in result.stderr
 
 
+class TestBotGhLogin:
+    """`gh auth login` makes the account it adds the active one. Setup logs the
+    bot in on a machine whose owner uses gh too, so it has to hand the active
+    account back or every other terminal there starts acting as the bot."""
+
+    STUB = (
+        "#!/bin/bash\n"
+        'S="$STUB_GH_DIR"\n'
+        'case "$*" in\n'
+        '  "api user --jq .login") [ -s "$S/active" ] && cat "$S/active" || exit 1 ;;\n'
+        '  "auth login"*) [ -n "${STUB_LOGIN_AS:-}" ] || exit 1\n'
+        '     echo "$STUB_LOGIN_AS" >> "$S/accounts"; echo "$STUB_LOGIN_AS" > "$S/active" ;;\n'
+        '  "auth token --user "*) grep -qx "${@: -1}" "$S/accounts" ;;\n'
+        '  "auth switch"*) echo "${@: -1}" > "$S/active"; echo "switch" >> "$S/calls" ;;\n'
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+
+    def _login(self, tmp_dir, active=None, login_as=None):
+        """Run bot_gh_login against a stub gh; return (exit code, active
+        account, accounts with a stored token, whether gh was switched)."""
+        stub_dir = os.path.join(tmp_dir, "gh-state")
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(stub_dir)
+        os.makedirs(bindir)
+        with open(os.path.join(stub_dir, "accounts"), "w") as f:
+            f.write(f"{active}\n" if active else "")
+        with open(os.path.join(stub_dir, "active"), "w") as f:
+            f.write(active or "")
+        with open(os.path.join(bindir, "gh"), "w") as f:
+            f.write(self.STUB)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        env = {
+            **os.environ,
+            "PATH": bindir + os.pathsep + os.environ["PATH"],
+            "STUB_GH_DIR": stub_dir,
+        }
+        env.pop("STUB_LOGIN_AS", None)
+        if login_as:
+            env["STUB_LOGIN_AS"] = login_as
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'set -e; source "{SCRIPT_DIR}/lib/git-identity.sh"; bot_gh_login',
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        with open(os.path.join(stub_dir, "active")) as f:
+            now_active = f.read().strip()
+        with open(os.path.join(stub_dir, "accounts")) as f:
+            accounts = f.read().split()
+        switched = os.path.exists(os.path.join(stub_dir, "calls"))
+        return result.returncode, now_active, accounts, switched
+
+    def test_the_owners_account_is_active_again_afterwards(self, tmp_dir):
+        code, active, accounts, switched = self._login(
+            tmp_dir, active="owner", login_as="bot"
+        )
+        assert code == 0
+        assert active == "owner"
+        assert "bot" in accounts and "owner" in accounts
+        assert switched
+
+    def test_with_no_active_account_there_is_nothing_to_switch_back_to(self, tmp_dir):
+        code, active, accounts, switched = self._login(tmp_dir, login_as="bot")
+        assert code == 0
+        assert active == "bot"
+        assert accounts == ["bot"]
+        assert not switched
+
+    def test_a_login_that_is_abandoned_leaves_gh_as_it_was(self, tmp_dir):
+        code, active, accounts, _ = self._login(tmp_dir, active="owner")
+        assert code == 0
+        assert active == "owner"
+        assert accounts == ["owner"]
+
+    def test_setup_logs_the_bot_in_and_lists_it_when_it_is_not(self):
+        with open(os.path.join(SCRIPT_DIR, "setup.sh")) as f:
+            body = f.read()
+        assert "bot_gh bot_gh_login" in body
+        assert '[ "$BOT_GH_LOGGED_IN" != true ]' in body
+
+
 class TestAsReviewer:
     """Scheduled reviews act as a second GitHub account. The bot's token is
     exported into every cron job by .envrc and outranks any gh config directory,
