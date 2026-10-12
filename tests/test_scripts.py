@@ -4332,11 +4332,14 @@ class TestReviewRequestQueue:
         failing_pr=None,
         head="",
         requested="",
+        lagging=False,
     ):
         """A gh that answers the queue query and a claude that records its
         prompt, both ahead of the real ones on PATH. `head` is every PR's head
         commit and `requested` the reviewers still asked for after a session;
-        with no head the job has nothing to count attempts against."""
+        with no head the job has nothing to count attempts against. `lagging`
+        lists `requested` on the first read only, as GitHub does in the second
+        after a review is submitted."""
         bindir = os.path.join(tmp_dir, "bin")
         os.makedirs(bindir, exist_ok=True)
         gh = os.path.join(bindir, "gh")
@@ -4347,7 +4350,14 @@ class TestReviewRequestQueue:
                 f"[ {gh_rc} -eq 0 ] || {{ echo 'gh: bad credentials' >&2; exit {gh_rc}; }}\n"
                 'case "$*" in\n'
                 f"  *'pr view'*headRefOid*) echo '{head}'; exit 0 ;;\n"
-                f"  *'pr view'*reviewRequests*) printf '%s\\n' {requested!r}; exit 0 ;;\n"
+                "  *'pr view'*reviewRequests*)\n"
+                + (
+                    f"    [ -e {tmp_dir}/requested.read ] && exit 0\n"
+                    f"    touch {tmp_dir}/requested.read\n"
+                    if lagging
+                    else ""
+                )
+                + f"    printf '%s\\n' {requested!r}; exit 0 ;;\n"
                 "esac\n"
                 f"printf '%s' '{queue}'\n"
                 f"[ -z '{queue}' ] || echo\n"
@@ -4428,6 +4438,7 @@ class TestReviewRequestQueue:
             env={
                 **os.environ,
                 "PATH": f"{bindir}:{os.environ['PATH']}",
+                "REVIEW_REQUESTED_SETTLE_SECONDS": "0",
                 **logs,
                 **(env or {}),
             },
@@ -4715,6 +4726,27 @@ class TestReviewRequestQueue:
         bindir = self._stubs(tmp_dir, queue="901", head="abc123", requested="")
         _, _, claude_log = self._run(self.JOB, tmp_dir, bindir)
         assert len(claude_log) == 1
+        assert not os.path.exists(attempts)
+
+    def test_a_request_github_has_not_yet_dropped_is_not_an_attempt(
+        self, tmp_dir, attempts
+    ):
+        """Asked the second after the review is submitted, GitHub still lists
+        the request. Taken at its word, every review the job made counted as an
+        attempt, and a PR re-requested at the same head was given up on after
+        three reviews that had all landed."""
+        with open(attempts, "w") as f:
+            f.write("abc123 2\n")
+        bindir = self._stubs(
+            tmp_dir,
+            queue="901",
+            head="abc123",
+            requested=self._configured_bot(),
+            lagging=True,
+        )
+        result, _, claude_log = self._run(self.JOB, tmp_dir, bindir)
+        assert len(claude_log) == 1
+        assert "still waiting" not in result.stderr
         assert not os.path.exists(attempts)
 
     def test_a_failed_exit_on_an_answered_pr_is_not_an_attempt(self, tmp_dir, attempts):

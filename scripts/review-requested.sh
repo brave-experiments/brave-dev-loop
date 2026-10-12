@@ -5,6 +5,7 @@
 #   ./scripts/review-requested.sh              # the queue, up to the cap
 #   REVIEW_REQUESTED_MAX_PRS=1 ./scripts/review-requested.sh
 #   REVIEW_REQUESTED_MAX_ATTEMPTS=5 ./scripts/review-requested.sh
+#   REVIEW_REQUESTED_SETTLE_SECONDS=0 ./scripts/review-requested.sh
 #
 # Runs are allowed to overlap. The poll fires every five minutes and a review
 # takes far longer than that, so waiting for the previous run would leave a
@@ -36,7 +37,9 @@
 # session counts as an attempt when the PR is still waiting on the bot after it
 # ends, whatever the session's exit code said. The count is kept per head
 # commit, so a push gets a fresh set of attempts; to retry without a push,
-# delete .ignore/.review-pr-<N>.attempts.
+# delete .ignore/.review-pr-<N>.attempts. The PR has to still be waiting after a
+# short settle, because GitHub's reads lag its writes: asked the second after
+# the review is submitted, it still lists the request.
 
 set -euo pipefail
 
@@ -47,6 +50,7 @@ source "$SCRIPT_DIR/lib/review-requests.sh"
 
 MAX_PRS="${REVIEW_REQUESTED_MAX_PRS:-5}"
 MAX_ATTEMPTS="${REVIEW_REQUESTED_MAX_ATTEMPTS:-3}"
+SETTLE_SECONDS="${REVIEW_REQUESTED_SETTLE_SECONDS:-10}"
 
 LOCK_DIR="$BOT_DIR/.ignore"
 mkdir -p "$LOCK_DIR"
@@ -84,6 +88,19 @@ still_requested() {
   requested=$(gh pr view "$1" --repo "$BOT_PR_REPO" --json reviewRequests \
     --jq '.reviewRequests[].login' 2>/dev/null) || return 1
   grep -qxF "$BOT_REVIEW_USERNAME" <<< "$requested"
+}
+
+# Still requested, and still so after GitHub has had time to catch up. The
+# collector submits the review moments before the session ends, and a read that
+# soon still lists the request: every review the job made was counted as an
+# unanswered attempt, so a PR re-requested at the same head was given up on
+# after three reviews that had all landed. Only an unanswered PR pays the wait.
+still_waiting() {
+  local wait
+  for wait in 0 "$SETTLE_SECONDS" "$SETTLE_SECONDS"; do
+    sleep "$wait"
+    still_requested "$1" || return 1
+  done
 }
 
 if ! PRS=$(bot_review_requested_prs); then
@@ -144,7 +161,7 @@ for PR in $PRS; do
     FAILED=$((FAILED + 1))
   fi
 
-  if [ -n "$HEAD_SHA" ] && still_requested "$PR"; then
+  if [ -n "$HEAD_SHA" ] && still_waiting "$PR"; then
     ATTEMPTS=$((ATTEMPTS + 1))
     echo "$HEAD_SHA $ATTEMPTS" > "$LOCK_DIR/.review-pr-$PR.attempts"
     echo "#$PR is still waiting on a review after the session ($ATTEMPTS of $MAX_ATTEMPTS attempts at ${HEAD_SHA:0:12})." >&2
