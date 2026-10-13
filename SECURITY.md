@@ -121,6 +121,16 @@ For critical changes:
 - Verify commenters are Brave org members (check for "Member" badge)
 - Confirm requirements match expected work
 
+### Review jobs skip non-members
+
+No review job reads a PR whose author is not in `.ignore/org-members.txt`.
+`scripts/lib/org_gate.py` drops it before any model sees it and leaves one fixed
+comment ("Review skipped because not a registered org member."), once per PR.
+It runs in the review-request queue (poll and gate) and in `prepare-review.py`
+(sweeps and single-PR reviews), for every project profile. A missing or empty
+members file stops the job instead of letting everyone through. The comment is
+posted by whichever account the job runs as (the reviewer, if configured).
+
 ### Org Membership Cache
 
 The filter scripts require a pre-populated org membership file:

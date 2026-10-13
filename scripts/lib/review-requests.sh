@@ -9,7 +9,7 @@
 #
 # Requires: lib/load-config.sh already sourced (BOT_PR_REPO, BOT_REVIEW_USERNAME).
 
-# Print one PR number per line, newest first. Returns gh's exit code, so a
+# Print one PR number per line, newest first. Returns the query's exit code, so a
 # caller can tell an empty queue (0, no output) from a failed query.
 #
 #   bot_review_requested_prs [limit]
@@ -18,11 +18,17 @@ bot_review_requested_prs() {
   # this query is the whole state machine: a PR leaves the queue by being
   # reviewed and re-enters it when someone asks again. Nothing local is
   # consulted, which is what makes the answer the same on every machine.
+  #
+  # PRs whose author is not a registered org member never leave this function:
+  # org_gate.py drops them and comments once, with no model involved, so
+  # neither the gate nor the job ever sees them. A members file it cannot read
+  # fails the query, which callers treat as "do nothing".
   gh pr list \
     --repo "$BOT_PR_REPO" \
     --search "review-requested:$BOT_REVIEW_USERNAME" \
     --state open \
     --limit "${1:-20}" \
-    --json number \
-    --jq '.[].number'
+    --json number,author \
+    --jq '.[] | "\(.number) \(.author.login)"' |
+    python3 "$BOT_DIR/scripts/lib/org_gate.py" filter-queue --repo "$BOT_PR_REPO"
 }

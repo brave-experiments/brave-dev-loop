@@ -4359,8 +4359,8 @@ class TestReviewRequestQueue:
                 )
                 + f"    printf '%s\\n' {requested!r}; exit 0 ;;\n"
                 "esac\n"
-                f"printf '%s' '{queue}'\n"
-                f"[ -z '{queue}' ] || echo\n"
+                # The queue query asks for "<number> <author>" lines.
+                f"printf '%s' '{queue}' | while read -r n || [ -n \"$n\" ]; do echo \"$n alice\"; done\n"
             )
         os.chmod(gh, 0o755)
         claude = os.path.join(bindir, "claude")
@@ -4430,6 +4430,10 @@ class TestReviewRequestQueue:
         work_root = os.path.join(tmp_dir, "work")
         os.makedirs(work_root, exist_ok=True)
         logs["WORK_ROOT"] = work_root
+        members = os.path.join(tmp_dir, "org-members.txt")
+        with open(members, "w") as f:
+            f.write("alice\n")
+        logs["BOT_ORG_MEMBERS_FILE"] = members
         logs["REVIEW_PRS_SKILL_DIR"] = os.path.join(tmp_dir, "skill")
         result = subprocess.run(
             [script],
