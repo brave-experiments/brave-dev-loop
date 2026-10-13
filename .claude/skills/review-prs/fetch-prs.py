@@ -290,15 +290,12 @@ def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):
             skipped_filtered += 1
             continue
 
-        # Skip PRs from external contributors (non-org members)
-        # Exception: allow through if bot is a requested reviewer on the PR
+        # External contributors never get here: prepare-review.py drops them
+        # (and comments) through lib/org_gate.py before filter_prs runs.
         author = pr.get("author", {}).get("login", "")
         if org_members and author not in org_members:
-            if reviewer_priority and is_requested_reviewer(pr, reviewer_priority):
-                pass  # Bot was asked to review this contributor PR
-            else:
-                skipped_external += 1
-                continue
+            skipped_external += 1
+            continue
 
         if cutoff and mode == "days":
             updated = datetime.fromisoformat(pr["updatedAt"].replace("Z", "+00:00"))

@@ -47,6 +47,7 @@ from lib.load_config import (
     review_guidance,
     review_verdict,
 )
+from lib.org_gate import OrgGateError, split_prs
 from lib.pr_diff import NO_PATCH, fetch_pr_diff
 from lib.repo_lock import repo_lock
 from lib.reviewer_account import ensure_reviewer
@@ -2232,6 +2233,19 @@ def main():
 
     raw_prs = _fp_mod.fetch_prs(mode, days, page, pr_number, state)
     org_members = load_org_members()
+    # Before anything else reads a PR: a non-member's PR is dropped and gets the
+    # fixed comment, in every mode, with no model involved. Fails closed.
+    try:
+        raw_prs, not_members = split_prs(PR_REPO, raw_prs, log)
+    except OrgGateError as e:
+        log(f"ERROR: {e}")
+        sys.exit(1)
+    if not_members:
+        log(
+            "Skipped "
+            + ", ".join(f"#{p['number']}" for p in not_members)
+            + " (author is not a registered org member)."
+        )
     cache = _fp_mod.load_cache()
     prior_files = {} if full else cache.get("_files", {})
 
