@@ -1869,3 +1869,42 @@ class TestDedupKeepsDistinctFindings:
         rule = self.v(rule="r", rule_link=self.RULE)
         other = {"path": "a.cc", "line": 10, "body": "anything", "user": "alice"}
         assert post.deduplicate_violations([rule], [other], "bot") == []
+
+
+class TestBugPassReadsTheSource:
+    def ctx(self):
+        return {
+            "number": 7,
+            "title": "t",
+            "base_ref": "master",
+            "has_approval": False,
+            "prior_comments": "",
+            "bot_username": "bot",
+            "guidance": [],
+        }
+
+    def test_the_prompt_names_the_worktree_and_asks_for_more_than_the_diff(self, prep):
+        prompt = prep.build_correctness_prompt(
+            self.ctx(), "", {}, "/var/tmp/wt/pr_7/source", "/tmp/c.json", "correctness"
+        )
+        assert "/var/tmp/wt/pr_7/source" in prompt
+        assert "callers" in prompt
+        assert "ADDED lines" not in prompt
+        assert "when in doubt, leave it out" not in prompt.lower()
+
+    def test_the_detect_agent_can_search_the_tree(self):
+        agent = os.path.join(ROOT_DIR, ".claude", "agents", "review-prs-detect.md")
+        with open(agent) as f:
+            head = f.read().split("---")[1]
+        tools = [t for t in head.split("tools:")[1].split("\n")[0].split(",")]
+        assert {"Read", "Grep", "Glob", "Write"} <= {t.strip() for t in tools}
+
+
+class TestValidatorKeepsByDefault:
+    def test_the_rules_keep_what_cannot_be_disproved(self, prep):
+        text = prep._VALIDATE_INSTRUCTIONS
+        assert "Default to keeping a candidate" in text
+        assert "Not being able to read a file is never a reason to drop" in text
+        assert "nearest added line" in text
+        assert "keep it" in text and "an added line causes" in text
+        assert "same pattern appearing elsewhere is not a justification" in text

@@ -1212,13 +1212,15 @@ Review Rules:
 - Comment style: short (1-3 sentences), targeted, acknowledge context. Use "nit:" for genuinely minor/stylistic issues (including missing comments/documentation). Substantive issues (test reliability, correctness, banned APIs) should be direct without "nit:" prefix."""
 
 _CORRECTNESS_RULES = """\
-Your job: find bugs this change introduces. For example a wrong or inverted condition, an off-by-one, a null or dangling pointer, a use after move, a missing return, a string concatenation missing its separator, a duplicate DEPS entry, code inside the wrong #if guard, a path a file move broke, an observer never removed, a race on shared state.
-- Only report bugs in ADDED lines (+ lines), or bugs the added lines cause in the code around them.
-- Only report what would misbehave at runtime or break the build. Style, naming, missing comments and best practices are other reviewers' job: do not report them.
+Your job: review this change the way a careful maintainer would, and report what they would want fixed before merging. The source tree at the PR head is at: {source_path}
+Read the code around every change with the Read, Grep and Glob tools before you decide. The diff is where to start, not the limit of what you may look at.
+- Read the whole function and class around each change, then follow it: its callers, the code it calls, the tests that cover it, the BUILD.gn or build files that list it. A change often breaks code the diff does not show, such as a caller that relied on the old behaviour, a signature or ownership change, a removed guard, or a test that no longer tests anything.
+- Report defects the change introduces or exposes: wrong or inverted conditions, off-by-one, null or dangling pointers, use after move, lifetime and ownership mistakes, races and wrong-sequence assumptions, missing or ignored error handling, resource leaks, an observer never removed, code inside the wrong #if guard, a path a file move broke, a build or DEPS mistake, a test that cannot fail or no longer covers what it names, behaviour that contradicts the PR's own description.
+- A defect may be in a line the PR did not touch when an added line causes it. Report it on the nearest added line and say where the broken code is.
+- Do not report style, naming, formatting or best-practice rule violations: other reviewers check those against the project's rules.
 - Every finding has severity "high" and no rule_link. Set `rule` to a short name for the bug, such as "Use after move".
-- You work from the diff. A validator reads the source tree afterwards and drops what the source disproves, so report what the diff shows. When a finding depends on code the diff does not show, say what to check in `issue`.
-- When in doubt, leave it out. A wrong bug report costs the author more time than a missed one costs the bot.
-- Comment style: short (1-3 sentences), direct."""
+- Be sure. Check the claim against the source before you report it, and say in `issue` what you read. Do not report a guess, and do not drop a defect only because it is hard to confirm: when the code shows it, report it.
+- Comment style: short (1-3 sentences), direct, naming the failure scenario."""
 
 _PROJECT_RULES = """\
 Your job: decide whether this project would approve this change, using the guidance below. It is written for this project and overrides "Only report bugs" for the things it names.
@@ -1401,12 +1403,14 @@ def build_detect_prompt(
     return "\n".join(parts)
 
 
-def build_correctness_prompt(ctx, diff_text, ranges, candidates_file, chunk_id):
-    """The prompt for the bugs no rule names."""
+def build_correctness_prompt(
+    ctx, diff_text, ranges, source_path, candidates_file, chunk_id
+):
+    """The prompt for the bugs no rule names, read against the PR's source tree."""
     parts = _prompt_header(ctx)
     parts += _diff_parts(diff_text, [], ranges)
     parts += _prior_parts(ctx)
-    parts += [_CORRECTNESS_RULES, ""]
+    parts += [_CORRECTNESS_RULES.format(source_path=source_path), ""]
     if ctx.get("prior_comments"):
         parts += [_PRIOR_COMMENTS_RULES, ""]
     parts.append(_detect_output(candidates_file, chunk_id, rules=False))
@@ -1503,13 +1507,14 @@ refuses a command that `cd`s into it or holds the path in a shell variable.{base
 Reviewers who read only the diff proposed the candidates above. For each one:
 - Read the source file around the flagged line with the Read tool, and the context the claim rests on: the enclosing function and class, the includes, the namespace, the BUILD.gn deps list when the candidate is about dependencies.
 - Verify the claim. If it says "use X instead of Y", confirm X exists and fits. If it says something is missing, confirm it is missing from the whole file, not just the diff. A deprecation claim needs the header read.
-- Drop it if the PR did not introduce it: the flagged code is on a context line, or the dependency or pattern already existed before this PR.
+- Drop it if the PR did not introduce it: the flagged code is on a context line and no added line causes the problem, or the dependency or pattern already existed before this PR. A bug that an added line causes in code the diff does not show (a caller the change breaks, a guard it removes) was introduced by the PR: keep it.
 - Drop a rule candidate the cited rule text does not support, a naming suggestion for a symbol defined outside the PR's changed files, and a "while you're here" suggestion on code a move or rename carried over unchanged.
-- A claim about what upstream Chromium code does needs the upstream file read. If you cannot find and read it, drop the candidate.
-- A candidate with no rule_link is a bug report: keep it only if the bug is real, the change introduces it, and it would misbehave at runtime or break the build.{guidance_note}
-- Check the surrounding code for a justification — a comment, a TODO, or the same pattern used nearby.
+- A claim about what upstream Chromium code does is best checked in the upstream file. If you cannot read it, use what you know of Chromium: keep the candidate when you believe the claim is right, and say in `issue` what to check, and drop it only when you believe it is wrong. Not being able to read a file is never a reason to drop.
+- A candidate with no rule_link is a bug report: keep it when the code you read shows the defect and the change introduces or exposes it. Drop it only when the source shows it is wrong, and say what you read.{guidance_note}
+- Default to keeping a candidate. Drop one only when you can point to what in the source or the rule text disproves it; "I could not confirm it" and "it is minor" are reasons to keep it, with a note in `issue`.
+- Check the surrounding code for a justification: a comment or TODO that explains why it is done this way. The same pattern appearing elsewhere is not a justification for a defect.
 - Sanitize @mentions: keep only logins of actual PR participants.
-- Keep what survives, tightening draft_comment where the source gives better context. Do not add findings of your own. Keep file, line, severity, rule and rule_link unless the source shows they are wrong, and keep `line` within the valid line ranges.
+- Keep what survives, tightening draft_comment where the source gives better context. Do not add findings of your own. Keep file, line, severity, rule and rule_link unless the source shows they are wrong. `line` must be within the valid line ranges: when the real location is outside them, move `line` to the nearest added line in that file, name the real location in draft_comment, and keep the candidate.
 - Log each candidate:
   - VALIDATED: <file>:<line> — confirmed, <note>
   - VALIDATED_ENHANCED: <file>:<line> — improved with <context>
@@ -2022,7 +2027,9 @@ def process_pr(
             "correctness",
             code_paths,
             {},
-            lambda c, d, st, r, rf, cid: build_correctness_prompt(c, d, r, rf, cid),
+            lambda c, d, st, r, rf, cid: build_correctness_prompt(
+                c, d, r, worktree_path or TARGET_REPO_PATH, rf, cid
+            ),
         )
         if REVIEW_GUIDANCE:
             write_parts(
