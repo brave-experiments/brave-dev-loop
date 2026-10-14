@@ -4,7 +4,7 @@ A review reads the PR's diff, description and source tree into a model, so a PR
 from someone outside the org is untrusted input that no review job should feed
 to one. This is the single gate, and it involves no model: the author is looked
 up in .ignore/org-members.txt, and a PR whose author is not listed is dropped
-and gets one fixed comment.
+and is logged; nothing is posted on it.
 
 Both review paths use it, whichever project profile (brave-core, bravebot, ...)
 they run for:
@@ -17,21 +17,16 @@ they run for:
 It fails closed. A missing or empty members file stops the job rather than
 letting every author through, because an empty list used to mean "no filter".
 
-    python3 org_gate.py filter-queue --repo brave/brave-core < "<number> <author>" lines
+    python3 org_gate.py filter-queue < "<number> <author>" lines
 """
 
 import argparse
 import os
-import subprocess  # nosemgrep
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
 
 from lib.load_config import bot_dir  # noqa: E402
-
-SKIP_MARKER = "<!-- review-skipped-not-org-member -->"
-SKIP_COMMENT = f"Review skipped because not a registered org member.\n\n{SKIP_MARKER}"
-
 
 class OrgGateError(RuntimeError):
     """The gate cannot answer. Callers stop; they never fall through to review."""
@@ -63,68 +58,11 @@ def is_member(login, members):
     return bool(login) and login.lower() in members
 
 
-def _gh(args, **kwargs):
-    return subprocess.run(  # nosemgrep
-        ["gh", *args], capture_output=True, text=True, timeout=60, **kwargs
-    )
-
-
-def _current_login():
-    result = _gh(["api", "user", "--jq", ".login"])
-    return result.stdout.strip() if result.returncode == 0 else ""
-
-
-def already_commented(repo, number):
-    """Did any account already leave the skip comment? Raises when GitHub cannot say.
-
-    The gate runs as the bot and the reviewer both, so the marker counts from
-    whoever posted it: one comment per PR, ever.
-    """
-    result = _gh(
-        [
-            "api",
-            f"repos/{repo}/issues/{number}/comments",
-            "--paginate",
-            "--jq",
-            '.[] | select(.body | contains("' + SKIP_MARKER + '")) | .id',
-        ]
-    )
-    if result.returncode != 0:
-        raise OrgGateError(
-            f"could not read comments on #{number}: {result.stderr.strip()}"
-        )
-    return bool(result.stdout.strip())
-
-
-def comment_once(repo, number, log):
-    """Post the fixed skip comment unless any account already has."""
-    login = _current_login()
-    if not login:
-        raise OrgGateError("could not determine the gh login to comment as")
-    if already_commented(repo, number):
-        return False
-    result = _gh(
-        [
-            "api",
-            f"repos/{repo}/issues/{number}/comments",
-            "-X",
-            "POST",
-            "-f",
-            f"body={SKIP_COMMENT}",
-        ]
-    )
-    if result.returncode != 0:
-        raise OrgGateError(f"could not comment on #{number}: {result.stderr.strip()}")
-    log(f"#{number}: author is not an org member; skipped and commented")
-    return True
-
-
-def split_prs(repo, prs, log):
-    """Return (members' PRs, skipped PRs); comment once on each skipped one.
+def split_prs(prs):
+    """Return (members' PRs, skipped PRs). Nothing is posted on a skipped PR.
 
     `prs` are dicts with "number" and an "author" that is a login or a
-    {"login": ...} object. A failed comment is logged, not raised: the PR is
-    dropped either way and the next run tries the comment again.
+    {"login": ...} object.
     """
     members = load_members()
     allowed, skipped = [], []
@@ -133,11 +71,6 @@ def split_prs(repo, prs, log):
         if isinstance(author, dict):
             author = author.get("login", "")
         (allowed if is_member(author, members) else skipped).append(pr)
-    for pr in skipped:
-        try:
-            comment_once(repo, pr["number"], log)
-        except (OrgGateError, subprocess.SubprocessError) as e:
-            log(f"#{pr['number']}: not commenting on skipped PR: {e}")
     return allowed, skipped
 
 
@@ -152,7 +85,6 @@ def main(argv=None):
         "filter-queue",
         help='read "<number> <author>" lines on stdin, print the members\' numbers',
     )
-    q.add_argument("--repo", required=True)
     args = parser.parse_args(argv)
 
     prs = []
@@ -161,7 +93,7 @@ def main(argv=None):
         if number:
             prs.append({"number": int(number), "author": author})
     try:
-        allowed, _ = split_prs(args.repo, prs, _log)
+        allowed, _ = split_prs(prs)
     except OrgGateError as e:
         _log(f"org gate: {e}")
         return 1
