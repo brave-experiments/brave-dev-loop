@@ -34,6 +34,7 @@ from lib.load_config import (
     load_profile,
     require_config,
     resolve_docs_dir,
+    review_request_changes,
     review_verdict,
 )
 from lib.pr_diff import fetch_pr_diff
@@ -44,6 +45,10 @@ require_config(_config, "bestPractices.docsDir")
 _BP_BASE = os.path.dirname(resolve_docs_dir(_config, BOT_DIR))
 MANAGE_BP_IDS = os.path.join(_BP_BASE, "script", "manage-bp-ids.py")
 VERDICT = review_verdict(load_profile(_config, BOT_DIR))
+REQUEST_CHANGES = review_request_changes(load_profile(_config, BOT_DIR))
+# GitHub documents a body as required with REQUEST_CHANGES; one line is the least
+# it will take, and only when the empty one was refused.
+CHANGES_BODY = "Changes requested: see the inline comments."
 VERDICT_APPROVE = "**Recommendation: approve**"
 VERDICT_CHANGES = "**Recommendation: request changes**"
 VERDICT_NITS = "**Recommendation: comments only**"
@@ -368,59 +373,70 @@ def _rule_dedup_key(violation):
     return None
 
 
+def _claim_key(violation):
+    """The text that tells two findings without a rule link apart: the model's
+    short name for the bug plus its description, lowercased."""
+    text = f"{violation.get('rule', '')} {violation.get('issue', '')}"
+    return " ".join(text.lower().split())
+
+
 def deduplicate_batch_violations(violations):
     """Deduplicate violations within a batch from multiple subagent chunks.
 
-    Multiple subagents independently review the same PR and often flag the
-    same issue with different rule names and slightly different line numbers.
-    We use three dedup passes:
+    Several subagents review the same PR and often flag the same issue with
+    different rule names and slightly different line numbers. A finding with a
+    rule link is a documented rule, so two of them collapse the way they always
+    did:
 
-    1. (file, rule_key)  — same formal rule on the same file.  rule_key is
-       derived from the rule_link fragment (#RULE-ID) so it's stable across
-       varying human-written rule strings.
-    2. (file, line)      — different rule, same exact line.
-    3. file-only         — for violations with no rule key and no line, keep
-       only the first finding per file (avoids duplicate "bug" comments that
-       lack a formal rule).
+    1. (file, rule_key)  -- the same documented rule on the same file. rule_key
+       is the rule_link fragment (#RULE-ID), stable across varying rule strings.
+    2. (file, line)      -- two documented rules on the same exact line.
+
+    A finding without a rule link is a bug or a project-guidance finding. Its
+    `rule` is a free-text name, so it is never a reason to drop a second bug in
+    the file, and a documented rule on the same line is a different claim, not a
+    duplicate. Such findings collapse only when they say the same thing:
+
+    3. (file, line, claim) -- the same bug reported twice on one line.
+    4. (file, claim)       -- the same bug reported twice with no line.
 
     Returns filtered list.
     """
     seen_file_rule = set()
     seen_file_line = set()
-    seen_file_no_rule = set()
+    seen_claim = set()
     kept = []
 
     for v in violations:
         file_path = v.get("file", "")
         line = v.get("line")
-        rule_key = _rule_dedup_key(v)
+        has_link = bool(v.get("rule_link"))
 
-        # Pass 1 — dedup by (file, rule_key)
-        if rule_key:
-            file_rule_key = (file_path, rule_key)
-            if file_rule_key in seen_file_rule:
-                log(
-                    f"BATCH_DEDUP: skipped {file_path}:{line}"
-                    f" — duplicate rule key '{rule_key}'"
-                )
+        if has_link:
+            rule_key = _rule_dedup_key(v)
+            if rule_key:
+                file_rule_key = (file_path, rule_key)
+                if file_rule_key in seen_file_rule:
+                    log(
+                        f"BATCH_DEDUP: skipped {file_path}:{line}"
+                        f" — duplicate rule key '{rule_key}'"
+                    )
+                    continue
+                seen_file_rule.add(file_rule_key)
+            if line is not None:
+                file_line_key = (file_path, line)
+                if file_line_key in seen_file_line:
+                    log(
+                        f"BATCH_DEDUP: skipped {file_path}:{line} — duplicate file+line"
+                    )
+                    continue
+                seen_file_line.add(file_line_key)
+        else:
+            claim_key = (file_path, line, _claim_key(v))
+            if claim_key in seen_claim:
+                log(f"BATCH_DEDUP: skipped {file_path}:{line} — same finding twice")
                 continue
-            seen_file_rule.add(file_rule_key)
-
-        # Pass 2 — dedup by (file, line) regardless of rule
-        if line is not None:
-            file_line_key = (file_path, line)
-            if file_line_key in seen_file_line:
-                log(f"BATCH_DEDUP: skipped {file_path}:{line} — duplicate file+line")
-                continue
-            seen_file_line.add(file_line_key)
-
-        # Pass 3 — for informal "bug" findings with no rule key and no line,
-        # keep only the first comment per file to avoid duplicate bug reports
-        if not rule_key and line is None:
-            if file_path in seen_file_no_rule:
-                log(f"BATCH_DEDUP: skipped {file_path} — duplicate no-rule finding")
-                continue
-            seen_file_no_rule.add(file_path)
+            seen_claim.add(claim_key)
 
         kept.append(v)
 
@@ -430,8 +446,32 @@ def deduplicate_batch_violations(violations):
     return kept
 
 
-def deduplicate_violations(violations, existing_comments):
-    """Remove violations where any existing comment exists on same file+line.
+def _words(text):
+    """The words of `text` long enough to say something, lowercased."""
+    return set(re.findall(r"[a-z0-9_]{4,}", (text or "").lower()))
+
+
+def _repeats(violation, comment):
+    """Whether an earlier comment already says what this finding says: most of
+    the finding's words appear in the comment. GitHub moves or clears a
+    comment's line when the branch is pushed, so the words, not the line, are
+    what identify a repeat."""
+    ours = _words(f"{violation.get('issue', '')} {violation.get('draft_comment', '')}")
+    theirs = _words(comment.get("body", ""))
+    if len(ours) < 3 or not theirs:
+        return False
+    return len(ours & theirs) / len(ours) >= 0.6
+
+
+def deduplicate_violations(violations, existing_comments, bot_username=None):
+    """Remove violations the PR already has a comment for.
+
+    A rule violation is dropped when any comment exists on the same file+line.
+    A finding without a rule link (a bug, or a project-guidance finding) names
+    no rule to match on, so it is dropped when the bot already commented on that
+    line, or when a comment on the same file repeats what it says, wherever the
+    comment now sits. A person's comment on the same line about something else
+    does not hide it.
 
     Returns filtered list.
     """
@@ -448,11 +488,21 @@ def deduplicate_violations(violations, existing_comments):
 
     kept = []
     for v in violations:
-        key = (v.get("file", ""), v.get("line"))
-        if key in existing:
-            user = comment_authors.get(key, "unknown")
+        file_path = v.get("file", "")
+        key = (file_path, v.get("line"))
+        user = comment_authors.get(key)
+        if v.get("rule_link"):
+            skip = key in existing
+        else:
+            skip = (
+                user is not None and bot_username is not None and user == bot_username
+            ) or any(
+                c.get("path") == file_path and _repeats(v, c) for c in existing_comments
+            )
+        if skip:
             log(
-                f"DEDUP: skipped {v.get('file')}:{v.get('line')} — already commented by {user}"
+                f"DEDUP: skipped {v.get('file')}:{v.get('line')} — already commented"
+                f" by {user or 'a reviewer'}"
             )
         else:
             kept.append(v)
@@ -501,19 +551,27 @@ def post_batch_review(repo, pr_number, violations, head_sha, body="", event="COM
         }
     )
 
-    rc, out, err = run_cmd(
-        [
-            "gh",
-            "api",
-            f"repos/{repo}/pulls/{pr_number}/reviews",
-            "--method",
-            "POST",
-            "--input",
-            "-",
-        ],
-        input_data=payload,
-        timeout=60,
-    )
+    def submit(payload):
+        return run_cmd(
+            [
+                "gh",
+                "api",
+                f"repos/{repo}/pulls/{pr_number}/reviews",
+                "--method",
+                "POST",
+                "--input",
+                "-",
+            ],
+            input_data=payload,
+            timeout=60,
+        )
+
+    rc, out, err = submit(payload)
+    if rc != 0 and event == "REQUEST_CHANGES" and not body:
+        log(f"WARNING: empty-body request for changes refused on PR #{pr_number}")
+        rc, out, err = submit(
+            json.dumps({"event": event, "body": CHANGES_BODY, "comments": comments})
+        )
 
     if rc == 0:
         try:
@@ -591,9 +649,9 @@ def blocks_merge(violations, still_open):
 def review_event(blocking, pr_author, bot_username):
     """The review event for a verdict profile: CHANGES_REQUESTED when something
     must be fixed, COMMENT for nits. GitHub refuses a request for changes on
-    the reviewer's own PR, and a profile without a verdict keeps its comments
-    informational."""
-    if VERDICT and blocking and pr_author != bot_username:
+    the reviewer's own PR, and a profile with neither a verdict nor
+    requestChanges keeps its comments informational."""
+    if (VERDICT or REQUEST_CHANGES) and blocking and pr_author != bot_username:
         return "REQUEST_CHANGES"
     return "COMMENT"
 
@@ -867,7 +925,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
 
         # 7. Deduplicate against existing comments
         existing_comments = fetch_existing_comments(repo, number)
-        violations = deduplicate_violations(violations, existing_comments)
+        violations = deduplicate_violations(violations, existing_comments, bot_username)
 
         # The comments the bot left earlier: resolve what the code now
         # answers, and keep the rest in the verdict. The approval gate below

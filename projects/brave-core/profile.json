@@ -26,6 +26,9 @@
       "upstream": "browser_tests"
     }
   },
+  "review": {
+    "requestChanges": true
+  },
   "prDraft": true,
   "labels": {
     "pr": [
