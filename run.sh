@@ -15,6 +15,11 @@
 #   other wording is a hint the model reads instead, and a hint it cannot use
 #   leaves the deterministic queue in charge.
 #
+# bot.concurrentJobs above 1 makes this one command start that many runs of
+# itself in parallel, each on a run slot of its own, and wait for all of them;
+# their output is prefixed [job N]. Not for tui: one terminal hosts one session.
+# See docs/concurrent-runs.md.
+#
 # Several runs can share one bot directory when bot.maxConcurrentRuns is above
 # 1: each takes a numbered *run slot* and keeps its own lock, run state, logs
 # and story claim. See docs/concurrent-runs.md. At the default of 1 this is
@@ -217,6 +222,7 @@ if [ "$COMPARISON_RUN" != true ] &&
 fi
 
 source "$SCRIPT_DIR/scripts/lib/load-config.sh"
+source "$SCRIPT_DIR/scripts/lib/parallel-jobs.sh"
 source "$SCRIPT_DIR/scripts/lib/git-identity.sh"
 source "$SCRIPT_DIR/scripts/lib/repo-hooks.sh"
 source "$SCRIPT_DIR/scripts/lib/terminal-title.sh"
@@ -245,6 +251,19 @@ bot_validate_review_config || exit 1
 # allowed only for a profile that gives every story its own git worktree.
 bot_validate_concurrency \
   "$BOT_MAX_CONCURRENT_RUNS" "$BOT_PROFILE" "$BOT_PROFILE_WORKTREES" || exit 1
+bot_validate_concurrent_jobs "$BOT_CONCURRENT_JOBS" "$BOT_MAX_CONCURRENT_RUNS" || exit 1
+
+# bot.concurrentJobs: this command becomes the supervisor of that many runs of
+# itself, and takes no slot. Each of them re-enters here with BOT_RUN_JOB set,
+# which is what stops it starting more. A terminal session cannot be one of
+# several on one terminal, so tui runs the single job it always did.
+if [ -z "${BOT_RUN_JOB:-}" ] && [ "$BOT_CONCURRENT_JOBS" -gt 1 ]; then
+  if [ "$USE_TUI" = true ]; then
+    echo "bot.concurrentJobs is $BOT_CONCURRENT_JOBS, but tui mode puts one agent session on the terminal: running one job." >&2
+  else
+    bot_run_parallel_jobs "$BOT_CONCURRENT_JOBS" "$SCRIPT_DIR/run.sh" "$@"
+  fi
+fi
 
 # Take a run slot. Everything this run cannot share with another — run state,
 # iteration logs, the story it is working — is keyed to the slot number.

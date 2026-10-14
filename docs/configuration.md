@@ -27,6 +27,7 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `reviewer.waitMinutes`: how long `./run.sh` waits for one review before moving on (default `120`). The reviewer answers on its own schedule, so this must outlast the review-request poll plus a review
 - `bot.agent`: Which agent to run, `claude` (default), `codex`, `cursor`, or `bravebot`
 - `bot.maxConcurrentRuns`: How many `run.sh` instances may share this bot directory (default `1`). Above 1 requires a profile with `"worktrees": true` — without per-story worktrees two runs share one working tree and overwrite each other. See [Concurrent runs](./concurrent-runs.md)
+- `bot.concurrentJobs`: How many runs one `./run.sh` starts in parallel, each on a run slot of its own (default `1`: one invocation is one run). Cannot exceed `bot.maxConcurrentRuns`, and does not apply to `tui` mode, which runs one job. See [Starting several runs at once](./concurrent-runs.md#starting-several-runs-at-once)
 - `bot.claudeModel`: Claude model to use (`opus`, `sonnet`, etc.; overridden by `./run.sh --model` for Claude runs)
 - `bot.claudeBin`: Path to the `claude` binary (`null` = found on PATH)
 - `bot.codexModel`: Codex model to use (`null` = Codex default; overridden by `./run.sh --model` for Codex runs)

@@ -19,6 +19,7 @@
     "ghAccount": null,
     "agent": "claude",
     "maxConcurrentRuns": 1,
+    "concurrentJobs": 1,
     "claudeModel": "opus",
     "claudeBin": null,
     "codexModel": null,
