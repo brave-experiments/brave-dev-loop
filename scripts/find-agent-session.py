@@ -10,10 +10,15 @@ an agent whose session store this does not know how to read.
 
 Only Claude is told its session id up front (`claude --session-id`), so for
 every other agent the session is identified after the fact: newest record for
-the directory the agent ran in, no older than --since.
+the directory the agent ran in, no older than --since. Several runs share a
+directory when they run concurrently, so --title-contains narrows bravebot's
+candidates to the one whose title names the story; with it, no match is an
+answer rather than a cue to take another run's session.
 
 Usage:
   find-agent-session.py --agent bravebot --cwd /path/to/dir --since 1789000000
+  find-agent-session.py --agent bravebot --cwd /path/to/dir --since 1789000000 \\
+      --title-contains "story US-019 "
   find-agent-session.py --agent claude --cwd /path/to/dir --session-id <uuid>
 """
 
@@ -36,7 +41,7 @@ def same_dir(a, b):
     return os.path.realpath(a) == os.path.realpath(b)
 
 
-def find_bravebot(home, cwd, since, exclude):
+def find_bravebot(home, cwd, since, exclude, title_contains=""):
     """~/.bravebot/sessions/<slug>/<id>.json, with a sibling <id>.audit.jsonl.
 
     The slug is derived from the working directory, but the record carries its
@@ -67,6 +72,8 @@ def find_bravebot(home, cwd, since, exclude):
             except (TypeError, ValueError):
                 updated = 0
             if since and updated < since:
+                continue
+            if title_contains and title_contains not in str(record.get("title") or ""):
                 continue
             if best is None or updated > best[0]:
                 best = (updated, session_id, path)
@@ -159,6 +166,11 @@ def main():
         "--exclude", default="", help="Session id to skip (e.g. the base run's)"
     )
     parser.add_argument(
+        "--title-contains",
+        default="",
+        help="Only a bravebot session whose title contains this text",
+    )
+    parser.add_argument(
         "--session-id",
         default="",
         help="Known session id (Claude, which is told its id)",
@@ -167,7 +179,9 @@ def main():
     args = parser.parse_args()
 
     if args.agent == "bravebot":
-        found = find_bravebot(args.home, args.cwd, args.since, args.exclude)
+        found = find_bravebot(
+            args.home, args.cwd, args.since, args.exclude, args.title_contains
+        )
     elif args.agent == "claude":
         found = find_claude(args.home, args.cwd, args.session_id)
     elif args.agent == "codex":

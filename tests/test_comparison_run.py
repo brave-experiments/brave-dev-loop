@@ -143,6 +143,14 @@ class TestOrchestration:
             "# Run the agent from the bot directory"
         )
 
+    def test_bravebot_is_resumed_by_its_id_never_by_continue(self):
+        """--continue is the newest session in the directory, which a concurrent
+        run may have written; the id is looked up by the story it was started for."""
+        body = run_sh_body()
+        assert "bravebot --continue" not in body
+        assert "bravebot --resume $BRAVEBOT_SESSION_ID (in $SCRIPT_DIR)" in body
+        assert body.count('--title-contains "$SESSION_TITLE_MATCH"') == 2
+
     def test_the_slot_stays_alive_across_two_more_agents(self):
         body = run_sh_body()
         block = body[body.index("Comparison run (step 2 of 3)") :]
@@ -193,7 +201,7 @@ def test_a_launched_claude_loads_no_mcp_server(tmp_dir):
 # ── find-agent-session.py ────────────────────────────────────────────────────
 
 
-def write_bravebot_session(home, cwd, session_id, updated, audit=False):
+def write_bravebot_session(home, cwd, session_id, updated, audit=False, title=""):
     slug = "".join(c if c.isalnum() else "-" for c in cwd)
     directory = os.path.join(home, ".bravebot", "sessions", slug)
     os.makedirs(directory, exist_ok=True)
@@ -205,6 +213,7 @@ def write_bravebot_session(home, cwd, session_id, updated, audit=False):
                 "directory": cwd,
                 "started": updated,
                 "updated": updated,
+                "title": title,
                 "conversation": {"messages": []},
             },
             f,
@@ -250,6 +259,38 @@ class TestFindSession:
         write_bravebot_session(tmp_dir, cwd, "1000-1", 1000)
         assert find_session(tmp_dir, "bravebot", cwd, since=2000).returncode == 1
         assert find_session(tmp_dir, "bravebot", cwd, since=500).returncode == 0
+
+    def test_a_concurrent_run_s_newer_session_is_not_this_story_s(self, tmp_dir):
+        """Slots share the bot directory, so the newest session there can be
+        another story's. The title names the story, and a story id that is a
+        prefix of another's (US-01, US-019) must not match it."""
+        cwd = os.path.join(tmp_dir, "bot")
+        os.makedirs(cwd)
+        write_bravebot_session(
+            tmp_dir, cwd, "mine", 1000, title="You are working on story US-019 (cur"
+        )
+        write_bravebot_session(
+            tmp_dir, cwd, "theirs", 2000, title="You are working on story US-020 (cur"
+        )
+        write_bravebot_session(
+            tmp_dir, cwd, "prefix", 3000, title="You are working on story US-0190 (c"
+        )
+        result = find_session(tmp_dir, "bravebot", cwd, title_contains="story US-019 ")
+        assert result.returncode == 0, result.stderr
+        found = json.loads(result.stdout)
+        assert found["sessionId"] == "mine"
+        assert found["resumeCommand"] == "bravebot --resume mine"
+
+    def test_no_title_match_finds_nothing_rather_than_another_run_s_session(
+        self, tmp_dir
+    ):
+        cwd = os.path.join(tmp_dir, "bot")
+        os.makedirs(cwd)
+        write_bravebot_session(
+            tmp_dir, cwd, "theirs", 2000, title="You are working on story US-020 (cur"
+        )
+        result = find_session(tmp_dir, "bravebot", cwd, title_contains="story US-019 ")
+        assert result.returncode == 1
 
     def test_the_base_session_is_excluded_from_the_comparison_s(self, tmp_dir):
         """Both runs can be the same tool in the same directory, and then the

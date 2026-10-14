@@ -789,8 +789,8 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
     echo ""
   elif [ "$BOT_AGENT" = "bravebot" ]; then
     echo ""
-    # bravebot keeps sessions per directory, and this one runs in BRAVE_ROOT.
-    echo "bravebot session: resume with 'bravebot --continue' in $BRAVE_ROOT after the iteration."
+    # bravebot cannot be handed a session id, so it is looked up when the iteration ends.
+    echo "bravebot session: its id is printed when the iteration ends."
     echo ""
   else
     echo ""
@@ -894,6 +894,10 @@ Additional context: $EXTRA_PROMPT"
   # other agent's session has to be found afterwards, and the search needs to
   # know how far back to look (scripts/find-agent-session.py).
   BASE_STARTED_AT=$(date +%s)
+  # A concurrent run in this directory writes sessions of its own, so a bravebot
+  # session is told from theirs by the prompt's first line, which becomes its
+  # title: "You are working on story <id> (current status: ...)".
+  SESSION_TITLE_MATCH="story $STORY_ID "
   # Where the progress log ends now, so an entry the session writes can be told
   # from the ones already there (scripts/iteration-stopped-short.py).
   PROGRESS_OFFSET=0
@@ -1045,7 +1049,16 @@ Additional context: $EXTRA_PROMPT"
   elif [ "$BOT_AGENT" = "cursor" ]; then
     echo "To continue this session: cursor-agent resume"
   elif [ "$BOT_AGENT" = "bravebot" ]; then
-    echo "To continue this session: bravebot --continue (in $BRAVE_ROOT)"
+    # Never `--continue`: that is the newest session in the directory, which a
+    # concurrent run may have written since. The agent ran with --cd "$SCRIPT_DIR".
+    BRAVEBOT_SESSION_ID=$(python3 "$SCRIPT_DIR/scripts/find-agent-session.py" \
+      --agent bravebot --cwd "$SCRIPT_DIR" --since "$BASE_STARTED_AT" \
+      --title-contains "$SESSION_TITLE_MATCH" 2>/dev/null | jq -r '.sessionId // empty' 2>/dev/null || true)
+    if [ -n "$BRAVEBOT_SESSION_ID" ]; then
+      echo "To continue this session: bravebot --resume $BRAVEBOT_SESSION_ID (in $SCRIPT_DIR)"
+    else
+      echo "To continue this session: no bravebot session for $STORY_ID found in $SCRIPT_DIR since this iteration began; 'bravebot --resume' there lists them."
+    fi
   else
     echo "To continue this session: codex resume --last"
   fi
@@ -1143,6 +1156,7 @@ Additional context: $EXTRA_PROMPT"
     # the agent's session was recorded against.
     python3 "$SCRIPT_DIR/scripts/find-agent-session.py" \
       --agent "$BOT_AGENT" --cwd "$SCRIPT_DIR" --since "$BASE_STARTED_AT" \
+      --title-contains "$SESSION_TITLE_MATCH" \
       --session-id "$SESSION_ID" > "$BASE_SESSION_FILE" 2>/dev/null || true
     if [ ! -s "$BASE_SESSION_FILE" ]; then
       echo '{}' > "$BASE_SESSION_FILE"
