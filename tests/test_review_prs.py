@@ -1908,3 +1908,14 @@ class TestValidatorKeepsByDefault:
         assert "nearest added line" in text
         assert "keep it" in text and "an added line causes" in text
         assert "same pattern appearing elsewhere is not a justification" in text
+
+
+class TestRequestedReviewReadsTheWholePr:
+    def test_a_requested_pr_is_compared_against_nothing(self, prep):
+        prior = {"7": {"a.cc": "h1"}}
+        assert prep.prior_hashes_for({"number": 7, "reviewRequested": True}, prior) is None
+
+    def test_a_swept_pr_keeps_the_per_file_shortcut(self, prep):
+        prior = {"7": {"a.cc": "h1"}}
+        assert prep.prior_hashes_for({"number": 7}, prior) == {"a.cc": "h1"}
+        assert prep.prior_hashes_for({"number": 8}, prior) is None

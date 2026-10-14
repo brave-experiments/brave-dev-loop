@@ -329,6 +329,18 @@ def load_org_members():
 # ---------------------------------------------------------------------------
 # CLI parsing
 # ---------------------------------------------------------------------------
+def prior_hashes_for(pr, prior_files):
+    """The per-file hashes a PR is compared against, or None to read it whole.
+
+    Someone who asked for this review wants the whole PR read, not the files a
+    hash says changed: the code around an unchanged diff changes too, as it does
+    with a rebase.
+    """
+    if pr.get("reviewRequested"):
+        return None
+    return prior_files.get(str(pr["number"]))
+
+
 def parse_args():
     auto_mode = False
     reviewer_priority = False
@@ -2371,7 +2383,7 @@ def main():
                     org_members,
                     work_dir,
                     auto_mode,
-                    prior_files.get(str(pr["number"])),
+                    prior_hashes_for(pr, prior_files),
                 ): pr
                 for pr in prs_to_process
             }
