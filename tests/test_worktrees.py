@@ -677,6 +677,35 @@ def test_a_directory_left_behind_by_a_killed_run_is_swept(repo, bot_dir):
     assert not leftover.exists()
 
 
+def test_a_directory_left_behind_in_the_clones_worktrees_directory_is_swept(
+    repo, bot_dir
+):
+    """The rename lands beside the worktree, which for bravebot's pull request worktrees is
+    .worktrees/ of the clone and not the clone's parent."""
+    leftover = repo / ".worktrees" / "pr-9.deleting"
+    leftover.mkdir(parents=True)
+    (leftover / "target").mkdir()
+
+    report = clean(repo, bot_dir)
+
+    assert report["swept"] == [str(leftover)]
+    assert not leftover.exists()
+
+
+def test_a_worktree_inside_the_clone_is_collected_whole(repo, bot_dir):
+    worktree = repo / ".worktrees" / "pr-9"
+    git("worktree", "add", "-q", "-b", "fix-9", str(worktree), cwd=repo)
+    git("push", "-q", "origin", "fix-9", cwd=worktree)
+    git("fetch", "-q", "origin", cwd=repo)
+
+    report = clean(repo, bot_dir)
+
+    assert report["removed"] == [str(worktree)]
+    assert not worktree.exists()
+    assert not (repo / ".worktrees" / "pr-9.deleting").exists()
+    assert "pr-9" not in git("worktree", "list", cwd=repo).stdout
+
+
 def test_a_worktree_deleted_by_hand_stops_being_registered(repo, bot_dir):
     worktree = add_worktree(repo, "repo-133", branch="fix-133")
     subprocess.run(["rm", "-rf", str(worktree)], check=True)

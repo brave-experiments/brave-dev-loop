@@ -262,20 +262,26 @@ def claimed_worktrees(repo, bot_dir, prd_path):
 
 
 def sweep_leftovers(repo):
-    """Delete what a previous run renamed but was killed before deleting."""
-    parent = os.path.dirname(os.path.realpath(repo))
+    """Delete what a previous run renamed but was killed before deleting.
+
+    A worktree is renamed to `<path>.deleting` beside where it was, so the leftover is in the
+    repository's parent for a `<repo>-<issue>` worktree and in `.worktrees/` for the pull request
+    worktrees bravebot's pr-fix and rebase skills make inside the clone.
+    """
+    main = os.path.realpath(repo)
     swept = []
-    try:
-        entries = sorted(os.listdir(parent))
-    except OSError:
-        return swept
-    for name in entries:
-        if not name.endswith(TRASH_SUFFIX):
+    for directory in (os.path.dirname(main), os.path.join(main, ".worktrees")):
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError:
             continue
-        path = os.path.join(parent, name)
-        if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
-            swept.append(path)
+        for name in entries:
+            if not name.endswith(TRASH_SUFFIX):
+                continue
+            path = os.path.join(directory, name)
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+                swept.append(path)
     return swept
 
 
