@@ -29,6 +29,39 @@ Nothing schedules extra runs. The cron jobs installed by `make schedules` run
 one `run.sh`, which takes whichever slot is free — so a scheduled run and a
 run you started by hand now coexist instead of one of them exiting.
 
+## Starting several runs at once
+
+`bot.maxConcurrentRuns` only allows runs to share the directory; each still has to be
+started. `bot.concurrentJobs` starts them:
+
+```json
+{ "bot": { "maxConcurrentRuns": 4, "concurrentJobs": 3 } }
+```
+
+`./run.sh 5` then starts three copies of itself, each as `./run.sh 5` on a slot of its own,
+and waits for all three. The iteration count is per job, so this is up to fifteen iterations,
+and three stories in flight at once. Each job is an ordinary run in every other respect: its own
+run state, session logs and claims, the same stories not worked twice.
+
+```
+Starting 3 parallel jobs (bot.concurrentJobs). Each takes a run slot of its own; their lines are prefixed [job N].
+[job 1] Run slot 1 of 4 (pid 41023)
+[job 2] Run slot 2 of 4 (pid 41027)
+[job 3] Run slot 3 of 4 (pid 41031)
+```
+
+- **`bot.concurrentJobs` cannot exceed `bot.maxConcurrentRuns`.** Each job takes a slot, and a
+  job that finds none exits without working anything, so `run.sh` refuses the setting instead.
+  Slots a run you started by hand already holds are not available to the jobs: those jobs exit
+  with "All N run slots are busy" and the rest carry on.
+- **`tui` runs one job.** One terminal hosts one interactive session, so the setting is ignored
+  there, with a line saying so.
+- **The supervisor holds no slot.** `./run.sh --status` shows the jobs, not the command that started
+  them. It exits with the highest status any job returned.
+- **Ctrl+C stops every job**, each the way it stops when it is the only run: the claim and the
+  slot are released.
+- The terminal tab is not retitled, since several jobs would fight over it.
+
 ## What a slot owns
 
 | | slot 1 | slot N |
