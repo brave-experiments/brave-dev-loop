@@ -34,6 +34,7 @@ from lib.load_config import (
     load_profile,
     require_config,
     resolve_docs_dir,
+    review_request_changes,
     review_verdict,
 )
 from lib.pr_diff import fetch_pr_diff
@@ -44,6 +45,10 @@ require_config(_config, "bestPractices.docsDir")
 _BP_BASE = os.path.dirname(resolve_docs_dir(_config, BOT_DIR))
 MANAGE_BP_IDS = os.path.join(_BP_BASE, "script", "manage-bp-ids.py")
 VERDICT = review_verdict(load_profile(_config, BOT_DIR))
+REQUEST_CHANGES = review_request_changes(load_profile(_config, BOT_DIR))
+# GitHub documents a body as required with REQUEST_CHANGES; one line is the least
+# it will take, and only when the empty one was refused.
+CHANGES_BODY = "Changes requested: see the inline comments."
 VERDICT_APPROVE = "**Recommendation: approve**"
 VERDICT_CHANGES = "**Recommendation: request changes**"
 VERDICT_NITS = "**Recommendation: comments only**"
@@ -422,8 +427,7 @@ def deduplicate_batch_violations(violations):
                 file_line_key = (file_path, line)
                 if file_line_key in seen_file_line:
                     log(
-                        f"BATCH_DEDUP: skipped {file_path}:{line}"
-                        " — duplicate file+line"
+                        f"BATCH_DEDUP: skipped {file_path}:{line} — duplicate file+line"
                     )
                     continue
                 seen_file_line.add(file_line_key)
@@ -493,8 +497,7 @@ def deduplicate_violations(violations, existing_comments, bot_username=None):
             skip = (
                 user is not None and bot_username is not None and user == bot_username
             ) or any(
-                c.get("path") == file_path and _repeats(v, c)
-                for c in existing_comments
+                c.get("path") == file_path and _repeats(v, c) for c in existing_comments
             )
         if skip:
             log(
@@ -548,19 +551,27 @@ def post_batch_review(repo, pr_number, violations, head_sha, body="", event="COM
         }
     )
 
-    rc, out, err = run_cmd(
-        [
-            "gh",
-            "api",
-            f"repos/{repo}/pulls/{pr_number}/reviews",
-            "--method",
-            "POST",
-            "--input",
-            "-",
-        ],
-        input_data=payload,
-        timeout=60,
-    )
+    def submit(payload):
+        return run_cmd(
+            [
+                "gh",
+                "api",
+                f"repos/{repo}/pulls/{pr_number}/reviews",
+                "--method",
+                "POST",
+                "--input",
+                "-",
+            ],
+            input_data=payload,
+            timeout=60,
+        )
+
+    rc, out, err = submit(payload)
+    if rc != 0 and event == "REQUEST_CHANGES" and not body:
+        log(f"WARNING: empty-body request for changes refused on PR #{pr_number}")
+        rc, out, err = submit(
+            json.dumps({"event": event, "body": CHANGES_BODY, "comments": comments})
+        )
 
     if rc == 0:
         try:
@@ -638,9 +649,9 @@ def blocks_merge(violations, still_open):
 def review_event(blocking, pr_author, bot_username):
     """The review event for a verdict profile: CHANGES_REQUESTED when something
     must be fixed, COMMENT for nits. GitHub refuses a request for changes on
-    the reviewer's own PR, and a profile without a verdict keeps its comments
-    informational."""
-    if VERDICT and blocking and pr_author != bot_username:
+    the reviewer's own PR, and a profile with neither a verdict nor
+    requestChanges keeps its comments informational."""
+    if (VERDICT or REQUEST_CHANGES) and blocking and pr_author != bot_username:
         return "REQUEST_CHANGES"
     return "COMMENT"
 
@@ -914,9 +925,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
 
         # 7. Deduplicate against existing comments
         existing_comments = fetch_existing_comments(repo, number)
-        violations = deduplicate_violations(
-            violations, existing_comments, bot_username
-        )
+        violations = deduplicate_violations(violations, existing_comments, bot_username)
 
         # The comments the bot left earlier: resolve what the code now
         # answers, and keep the rest in the verdict. The approval gate below

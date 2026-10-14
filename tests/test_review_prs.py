@@ -1913,9 +1913,53 @@ class TestValidatorKeepsByDefault:
 class TestRequestedReviewReadsTheWholePr:
     def test_a_requested_pr_is_compared_against_nothing(self, prep):
         prior = {"7": {"a.cc": "h1"}}
-        assert prep.prior_hashes_for({"number": 7, "reviewRequested": True}, prior) is None
+        assert (
+            prep.prior_hashes_for({"number": 7, "reviewRequested": True}, prior) is None
+        )
 
     def test_a_swept_pr_keeps_the_per_file_shortcut(self, prep):
         prior = {"7": {"a.cc": "h1"}}
         assert prep.prior_hashes_for({"number": 7}, prior) == {"a.cc": "h1"}
         assert prep.prior_hashes_for({"number": 8}, prior) is None
+
+
+class TestRequestChangesWithoutAVerdict:
+    def test_event_follows_the_switch_not_the_verdict(self, post, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", False)
+        monkeypatch.setattr(post, "REQUEST_CHANGES", False)
+        assert post.review_event(True, "alice", "bot") == "COMMENT"
+        monkeypatch.setattr(post, "REQUEST_CHANGES", True)
+        assert post.review_event(True, "alice", "bot") == "REQUEST_CHANGES"
+        assert post.review_event(False, "alice", "bot") == "COMMENT"
+        assert post.review_event(True, "bot", "bot") == "COMMENT"
+
+    def test_the_switch_adds_no_review_body(self, post, monkeypatch):
+        monkeypatch.setattr(post, "VERDICT", False)
+        monkeypatch.setattr(post, "REQUEST_CHANGES", True)
+        assert post.verdict_body("Recommendation: x", {}, "note") == ""
+
+    def test_only_a_json_true_turns_it_on(self):
+        import lib.load_config as lc
+
+        assert lc.review_request_changes({"review": {"requestChanges": True}})
+        assert not lc.review_request_changes({"review": {"requestChanges": "yes"}})
+        assert not lc.review_request_changes({"review": {"verdict": True}})
+        assert not lc.review_request_changes({})
+
+    def test_a_refused_empty_body_is_retried_with_one_line(self, post, monkeypatch):
+        sent = []
+
+        def run_cmd(cmd, input_data=None, timeout=None):
+            payload = json.loads(input_data)
+            sent.append(payload)
+            if not payload["body"]:
+                return 1, "", "Review body is required"
+            return 0, json.dumps({"html_url": "u"}), ""
+
+        monkeypatch.setattr(post, "run_cmd", run_cmd)
+        monkeypatch.setattr(post, "correct_line_for_diff", lambda *a: 3)
+        v = [{"file": "a.cc", "line": 3, "draft_comment": "bug"}]
+        url, n = post.post_batch_review("o/r", 1, v, "sha", "", "REQUEST_CHANGES")
+        assert (url, n) == ("u", 1)
+        assert [p["body"] for p in sent] == ["", post.CHANGES_BODY]
+        assert all(p["event"] == "REQUEST_CHANGES" for p in sent)

@@ -271,6 +271,17 @@ def review_verdict(profile):
     return isinstance(review, dict) and review.get("verdict") is True
 
 
+def review_request_changes(profile):
+    """Whether a review with something to fix is submitted as REQUEST_CHANGES.
+
+    `review.requestChanges` in profile.json. Only a JSON `true` turns it on. It
+    gives the approve-or-not outcome without `verdict`'s review body, summary
+    and description check: the review is the inline comments and the event.
+    """
+    review = profile.get("review")
+    return isinstance(review, dict) and review.get("requestChanges") is True
+
+
 def build_research(profile, config, base_dir=None):
     """Render a profile's pre-implementation reading steps.
 
