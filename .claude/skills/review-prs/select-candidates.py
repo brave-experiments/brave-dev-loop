@@ -97,7 +97,7 @@ def rule_text(rule_link, bp_dir):
     return None
 
 
-def select(pr, violations, existing_comments, bp_dir):
+def select(pr, violations, existing_comments, bp_dir, bot_username=None):
     """The candidates post-review.py would still post, capped at CANDIDATE_LIMIT."""
     violations = sorted(
         violations,
@@ -114,7 +114,9 @@ def select(pr, violations, existing_comments, bp_dir):
             continue
         known.append(v)
     violations = _post.deduplicate_batch_violations(known)
-    violations = _post.deduplicate_violations(violations, existing_comments)
+    violations = _post.deduplicate_violations(
+        violations, existing_comments, bot_username
+    )
     kept, _ = _post.prioritize_violations(
         violations, pr.get("hasApproval", False), limit=CANDIDATE_LIMIT
     )
@@ -238,7 +240,7 @@ def main():
             incomplete.append(number)
             continue
         existing = _post.fetch_existing_comments(repo, number) if violations else []
-        candidates = select(pr, violations, existing, _prep.BP_DIR)
+        candidates = select(pr, violations, existing, _prep.BP_DIR, bot_username)
         pr["detected"] = len(violations)
         log(f"PR #{number}: {len(violations)} detected, {len(candidates)} to validate")
         threads = load_open_threads(pr)

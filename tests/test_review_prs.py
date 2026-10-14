@@ -1800,3 +1800,72 @@ class TestApprovalGateVerdictBodies:
         assert run("--reapprove") == 0
         threads["unresolved_bot_threads"] = 1
         assert run("--reapprove") == 1, "an open thread still blocks"
+
+
+class TestDedupKeepsDistinctFindings:
+    """A bug and a documented rule on one line are different claims, and two
+    bugs in one file are different bugs. The same finding twice is still one."""
+
+    RULE = "https://example.test/bp/build-system.md#BS-057"
+
+    def v(self, **kw):
+        base = {"file": "a.cc", "line": 10, "severity": "high"}
+        base.update(kw)
+        return base
+
+    def test_rule_and_bug_on_one_line_both_survive(self, post):
+        rule = self.v(rule="No new sources", rule_link=self.RULE, issue="sources")
+        bug = self.v(rule="Null deref", issue="ptr may be null here")
+        kept = post.deduplicate_batch_violations([bug, rule])
+        assert kept == [bug, rule]
+
+    def test_two_bugs_with_one_name_in_a_file_both_survive(self, post):
+        a = self.v(line=10, rule="Null deref", issue="first pointer is null")
+        b = self.v(line=40, rule="Null deref", issue="second pointer is null")
+        assert post.deduplicate_batch_violations([a, b]) == [a, b]
+
+    def test_same_bug_twice_collapses(self, post):
+        a = self.v(rule="Null deref", issue="ptr may be null")
+        b = self.v(rule="null  deref", issue="Ptr may be null")
+        assert post.deduplicate_batch_violations([a, b]) == [a]
+
+    def test_documented_rules_still_collapse_as_before(self, post):
+        a = self.v(rule="x", rule_link=self.RULE + "")
+        b = self.v(line=11, rule="y", rule_link=self.RULE)
+        assert post.deduplicate_batch_violations([a, b]) == [a]
+        c = self.v(rule="z", rule_link="https://example.test/bp/other.md#OT-1")
+        assert post.deduplicate_batch_violations([a, c]) == [a]
+
+    def test_bot_comment_on_the_line_stops_a_repost(self, post):
+        bug = self.v(rule="Null deref", issue="ptr may be null here")
+        old = {"path": "a.cc", "line": 10, "body": "unrelated words", "user": "bot"}
+        assert post.deduplicate_violations([bug], [old], "bot") == []
+
+    def test_a_pushed_branch_that_moved_the_line_does_not_repost(self, post):
+        bug = self.v(
+            rule="Null deref",
+            issue="ptr may be null here",
+            draft_comment="ptr may be null here, check it before use",
+        )
+        moved = {
+            "path": "a.cc",
+            "line": None,
+            "body": "ptr may be null here, so check it before use",
+            "user": "bot",
+        }
+        assert post.deduplicate_violations([bug], [moved], "bot") == []
+
+    def test_a_persons_comment_about_something_else_does_not_hide_a_bug(self, post):
+        bug = self.v(rule="Null deref", issue="ptr may be null here")
+        other = {
+            "path": "a.cc",
+            "line": 10,
+            "body": "please rename this variable",
+            "user": "alice",
+        }
+        assert post.deduplicate_violations([bug], [other], "bot") == [bug]
+
+    def test_rule_violation_keeps_the_exact_line_rule(self, post):
+        rule = self.v(rule="r", rule_link=self.RULE)
+        other = {"path": "a.cc", "line": 10, "body": "anything", "user": "alice"}
+        assert post.deduplicate_violations([rule], [other], "bot") == []
