@@ -491,8 +491,13 @@ cleanup_run() {
   fi
 }
 
-# Register cleanup function to run on exit
-trap cleanup_run EXIT INT TERM HUP
+# cleanup_run runs once, whichever way the run ends. A signal has to end the run
+# as well: a trap that only cleaned up would hand back the claim and the slot and
+# then let the loop carry on, working stories with no slot held.
+trap cleanup_run EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 # Initialize progress file if it doesn't exist
 if [ ! -f "$PROGRESS_FILE" ]; then
