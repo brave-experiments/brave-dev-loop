@@ -76,6 +76,9 @@ answering requests, every wait runs out `waitMinutes` later. Set
 ./scripts/review-verdict.py 351     # the reviewer's verdict on PR #351's head, as JSON
 ```
 
+Ctrl+C during a wait ends the run like it does anywhere else: the claim and the slot are
+released, and the story is left as it was.
+
 While a run waits, `./run.sh --status` shows the slot as running; the iteration log
 gets a `review-wait` line a minute so its age does not read as a hang. A terminal
 (`tui`) run has no iteration log to write to, and shows only the slot's heartbeat.
