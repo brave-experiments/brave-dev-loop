@@ -50,6 +50,11 @@ SKIP_CONTAINS = ["uplift to", "Just to test CI"]
 VERSION_BRANCH_RE = r"^\d+\.\d+\.x$"
 
 
+def is_uplift(pr):
+    """True when the PR's base is a version branch such as 1.98.x."""
+    return bool(re.match(VERSION_BRANCH_RE, pr.get("baseRefName") or ""))
+
+
 def parse_args():
     mode = "days"
     days = 5
@@ -282,8 +287,7 @@ def filter_prs(prs, mode, days, cache, org_members, reviewer_priority=None):
             continue
 
         # Skip uplift PRs (base branch targets a version/release branch)
-        base_ref = pr.get("baseRefName", "")
-        if re.match(VERSION_BRANCH_RE, base_ref or ""):
+        if is_uplift(pr):
             if cache.get(pr_num) != head_sha:
                 cache[pr_num] = head_sha
                 cache_updates[pr_num] = head_sha
@@ -357,10 +361,10 @@ def main():
     org_members = load_org_members()
 
     if mode == "single":
-        # Skip all filtering for single PR review
-        to_review = prs
+        # No filtering for a single PR, except uplifts: those are never reviewed
+        to_review = [pr for pr in prs if not is_uplift(pr)]
         cached_prs = []
-        skipped_filtered = 0
+        skipped_filtered = len(prs) - len(to_review)
         skipped_cached = 0
         skipped_approved = 0
         skipped_external = 0

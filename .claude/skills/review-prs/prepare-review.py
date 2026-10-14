@@ -2269,13 +2269,14 @@ def main():
     prior_files = {} if full else cache.get("_files", {})
 
     if mode == "single":
-        to_review = raw_prs
+        # Uplifts (base 1.98.x and the like) are skipped even when asked for by number
+        to_review = [p for p in raw_prs if not _fp_mod.is_uplift(p)]
         cached_prs_raw = []
         fetch_summary = {
             "total_fetched": len(raw_prs),
-            "to_review": len(raw_prs),
+            "to_review": len(to_review),
             "cached_with_possible_threads": 0,
-            "skipped_filtered": 0,
+            "skipped_filtered": len(raw_prs) - len(to_review),
             "skipped_cached": 0,
             "skipped_approved": 0,
             "skipped_external": 0,
