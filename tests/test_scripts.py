@@ -5442,17 +5442,19 @@ class TestProjectSchedules:
         for job in agents:
             assert "--strict-mcp-config" in job, job
 
-    def test_bravebot_runs_three_agent_runs_a_day(self, tmp_dir):
-        assert len(self._run_jobs(self._render(tmp_dir, "bravebot"))) == 3
+    def test_bravebot_runs_four_agent_runs_a_day(self, tmp_dir):
+        assert len(self._run_jobs(self._render(tmp_dir, "bravebot"))) == 4
 
-    def test_bravebot_runs_thirty_iterations_overnight_and_ten_twice_after(
+    def test_bravebot_runs_thirty_iterations_overnight_and_noon_and_ten_twice_after(
         self, tmp_dir
     ):
         jobs = self._jobs(self._render(tmp_dir, "bravebot"))
         (overnight,) = [j for j in jobs if j.startswith("0 1 * * * ")]
+        (noon,) = [j for j in jobs if j.startswith("0 12 * * * ")]
         (midday,) = [j for j in jobs if j.startswith("45 12 * * * ")]
         (evening,) = [j for j in jobs if j.startswith("0 17 * * * ")]
         assert "./run.sh 30 " in overnight
+        assert "./run.sh 30 " in noon
         assert "./run.sh 10 " in midday
         assert "./run.sh 10 " in evening
 

@@ -3,13 +3,13 @@
 # the variables and the bot_cron_* helpers (scripts/lib/cron-jobs.sh) and wraps
 # what each group prints in a crontab block for this project alone.
 #
-# Three runs a day: a long one overnight, and two shorter ones at midday and
-# in the evening. Every hour is off the hours brave-core's runs use, because
+# Four runs a day: a long one overnight, a second long one at noon, and two
+# shorter ones at 12:45 and in the evening. Every hour is off the hours brave-core's runs use, because
 # both projects can be deployed on one machine and each one's run.sh drives its
 # own agent session and its own checkout.
 #
 # The runs overlap by design — each takes its own run slot, and
-# maxConcurrentRuns is well above three — so a cap is not there to keep the
+# maxConcurrentRuns is well above four — so a cap is not there to keep the
 # slot free for the next job. It is there so a wedged run cannot sit on a slot
 # forever: iterations are capped at three hours each and nothing caps the run
 # itself, so timeout-tree.sh ends each one a minute short of the next 01:00,
@@ -27,6 +27,13 @@ schedule_run() {
   echo "# Daily: one run of 30 iterations, overnight, killed at 23h59m"
   bot_cron_job "0 1 * * *" "./scripts/check-has-work.sh" \
     "./scripts/sync-target-repo.sh && ./scripts/timeout-tree.sh 86340 ./run.sh 30" \
+    "run-cron.log"
+
+  echo ""
+  echo "# Fourth agent run — skip if no actionable stories"
+  echo "# Daily: one run of 30 iterations, noon, killed at 12h59m"
+  bot_cron_job "0 12 * * *" "./scripts/check-has-work.sh" \
+    "./scripts/sync-target-repo.sh && ./scripts/timeout-tree.sh 46740 ./run.sh 30" \
     "run-cron.log"
 
   echo ""
