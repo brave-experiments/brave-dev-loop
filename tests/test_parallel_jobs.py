@@ -231,6 +231,94 @@ class TestRunSh:
         ) in self.body()
 
 
+class TestUrlRunsOneJob:
+    """run.sh's own argument handling, against a bot directory of stub libs.
+
+    The stubs stop run.sh where it would start the supervisor ("PARALLEL") or take
+    its slot ("SINGLE"), which is the fork this decides.
+    """
+
+    URL = "https://github.com/o/r/issues/613"
+
+    STUBS = {
+        "run-slots.sh": """
+            bot_validate_concurrency() { return 0; }
+            bot_acquire_run_slot() { echo "SINGLE [$EXTRA_PROMPT]"; exit 0; }
+        """,
+        "load-config.sh": """
+            BOT_CONCURRENT_JOBS=3
+            BOT_MAX_CONCURRENT_RUNS=3
+            BOT_PROFILE=stub
+            BOT_PROFILE_WORKTREES=false
+            BOT_SSH_KEY_PATH=""
+            BOT_GH_ACCOUNT=""
+            bot_profile_mismatch() { return 1; }
+        """,
+        "parallel-jobs.sh": """
+            bot_validate_concurrent_jobs() { return 0; }
+            bot_run_parallel_jobs() { echo "PARALLEL"; exit 0; }
+        """,
+        "git-identity.sh": "bot_export_identity_env() { return 0; }",
+        "review-gate.sh": "bot_validate_review_config() { return 0; }",
+        "repo-hooks.sh": "",
+        "terminal-title.sh": "",
+    }
+
+    @classmethod
+    def run_sh(cls, tmp_path, *args, env=None):
+        lib = tmp_path / "scripts" / "lib"
+        lib.mkdir(parents=True)
+        for name, body in cls.STUBS.items():
+            (lib / name).write_text(textwrap.dedent(body))
+        shutil.copy(RUN_SH, tmp_path / "run.sh")
+        return subprocess.run(
+            ["bash", str(tmp_path / "run.sh"), *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={
+                **{k: v for k, v in os.environ.items() if k != "BOT_RUN_JOB"},
+                **(env or {}),
+            },
+        )
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("5", URL),
+            (URL,),
+            ("https://github.com/o/r/pull/9", "5"),
+            ("--agent", "codex", URL),
+            ("5", "tui", URL),
+        ],
+    )
+    def test_a_url_runs_one_job_that_works_the_named_story(self, tmp_path, args):
+        out = self.run_sh(tmp_path, *args)
+        url = next(a for a in args if a.startswith("https://"))
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.strip() == f"SINGLE [{url}]"
+        assert "running one job" in out.stderr
+
+    def test_the_url_says_why_it_is_one_job(self, tmp_path):
+        out = self.run_sh(tmp_path, self.URL)
+        assert "names a story by URL: running one job" in out.stderr
+
+    @pytest.mark.parametrize("args", [("5",), ("5", "some", "words"), ()])
+    def test_without_a_url_the_jobs_are_started(self, tmp_path, args):
+        out = self.run_sh(tmp_path, *args)
+        assert out.stdout.strip() == "PARALLEL"
+
+    def test_a_url_that_is_a_flags_value_names_no_story(self, tmp_path):
+        out = self.run_sh(tmp_path, "--agent-bin", "https://example.com/bin")
+        assert out.stdout.strip() == "PARALLEL"
+
+    def test_a_job_started_by_the_supervisor_still_works_the_named_story(
+        self, tmp_path
+    ):
+        out = self.run_sh(tmp_path, self.URL, env={"BOT_RUN_JOB": "2"})
+        assert out.stdout.strip() == f"SINGLE [{self.URL}]"
+
+
 class TestConfig:
     @staticmethod
     def load(tmp_path, bot):

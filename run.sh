@@ -18,6 +18,7 @@
 # bot.concurrentJobs above 1 makes this one command start that many runs of
 # itself in parallel, each on a run slot of its own, and wait for all of them;
 # their output is prefixed [job N]. Not for tui: one terminal hosts one session.
+# Not for a URL either: ./run.sh <url> is one run, working the story it names.
 # See docs/concurrent-runs.md.
 #
 # Several runs can share one bot directory when bot.maxConcurrentRuns is above
@@ -69,6 +70,7 @@ MAX_ITERATIONS=10
 
 USE_TUI=false
 EXTRA_PROMPT=""
+NAMED_URL_COUNT=0
 PAST_TUI=false
 CLI_AGENT=""
 CLI_MODEL=""
@@ -169,6 +171,13 @@ for arg in "$@"; do
     CLI_COMPARISON_BRANCH="${arg#--comparison-branch=}"
     continue
   fi
+  # A URL names a story wherever it stands: without this, ./run.sh <url> would
+  # drop it and work whatever the queue offers.
+  if [[ "$arg" =~ ^https?:// ]]; then
+    NAMED_URL_COUNT=$((NAMED_URL_COUNT + 1))
+    EXTRA_PROMPT="${EXTRA_PROMPT:+$EXTRA_PROMPT }$arg"
+    continue
+  fi
   if [ "$PAST_TUI" = true ]; then
     # Everything else after 'tui' is extra prompt info
     if [ -n "$EXTRA_PROMPT" ]; then
@@ -256,10 +265,13 @@ bot_validate_concurrent_jobs "$BOT_CONCURRENT_JOBS" "$BOT_MAX_CONCURRENT_RUNS" |
 # bot.concurrentJobs: this command becomes the supervisor of that many runs of
 # itself, and takes no slot. Each of them re-enters here with BOT_RUN_JOB set,
 # which is what stops it starting more. A terminal session cannot be one of
-# several on one terminal, so tui runs the single job it always did.
+# several on one terminal, so tui runs the single job it always did. A URL
+# names one story, which only one run may work, so it runs one job too.
 if [ -z "${BOT_RUN_JOB:-}" ] && [ "$BOT_CONCURRENT_JOBS" -gt 1 ]; then
   if [ "$USE_TUI" = true ]; then
     echo "bot.concurrentJobs is $BOT_CONCURRENT_JOBS, but tui mode puts one agent session on the terminal: running one job." >&2
+  elif [ "$NAMED_URL_COUNT" -gt 0 ]; then
+    echo "bot.concurrentJobs is $BOT_CONCURRENT_JOBS, but the request names a story by URL: running one job." >&2
   else
     bot_run_parallel_jobs "$BOT_CONCURRENT_JOBS" "$SCRIPT_DIR/run.sh" "$@"
   fi
