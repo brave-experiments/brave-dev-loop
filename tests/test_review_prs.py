@@ -1862,3 +1862,39 @@ class TestRequestChangesWithoutAVerdict:
         assert (url, n) == ("u", 1)
         assert [p["event"] for p in sent] == ["REQUEST_CHANGES", "COMMENT"]
         assert all("body" not in p for p in sent)
+
+
+class TestUpliftSkip:
+    """Version-branch bases (1.98.x) are never reviewed, in any mode."""
+
+    @pytest.fixture(scope="class")
+    def fetch(self):
+        return _load_module("fetch_prs", os.path.join(SKILL_DIR, "fetch-prs.py"))
+
+    def test_is_uplift(self, fetch):
+        assert fetch.is_uplift({"baseRefName": "1.98.x"})
+        assert fetch.is_uplift({"baseRefName": "10.2.x"})
+        assert not fetch.is_uplift({"baseRefName": "master"})
+        assert not fetch.is_uplift({"baseRefName": "feature/1.98.x-thing"})
+        assert not fetch.is_uplift({})
+
+    def test_sweep_skips_uplift(self, fetch, monkeypatch):
+        monkeypatch.setattr(fetch, "save_cache", lambda *a, **k: None)
+        prs = [
+            {
+                "number": 1,
+                "title": "t",
+                "headRefOid": "a",
+                "baseRefName": "1.98.x",
+                "updatedAt": "2999-01-01T00:00:00Z",
+            },
+            {
+                "number": 2,
+                "title": "t",
+                "headRefOid": "b",
+                "baseRefName": "master",
+                "updatedAt": "2999-01-01T00:00:00Z",
+            },
+        ]
+        to_review = fetch.filter_prs(prs, "days", 5, {}, set())[0]
+        assert [p["number"] for p in to_review] == [2]
