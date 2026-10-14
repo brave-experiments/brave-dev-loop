@@ -55,6 +55,8 @@ It does not fall back. With a reviewer configured, a missing login, or a directo
 
 Approving needs only triage, but resolving a review thread needs write access (or authorship of the PR), so without it every re-review ends in "request changes" over threads the code already answers. A reviewer with write access could also push and merge, which is why the scheduled sessions never hold its token: `scripts/review-session.sh` runs the two scripts that talk to GitHub itself and starts the session that reads the PR without one (see [skills.md](skills.md)).
 
+`run.sh` itself runs as the bot, but with a reviewer configured it waits for the reviewer's verdict on every pull request it pushes to, and answers a request for changes before moving on: see [Review gate](review-gate.md).
+
 Review requests are polled for the reviewer, not the bot: a human asks for a review from the account that will answer it. To run any command by hand as the reviewer, `./scripts/as-reviewer.sh -- <command>`.
 
 The bot asks the reviewer for a fresh review after each follow-up push to an open PR (`scripts/request-review.sh <pr>`, run as the bot, the PR's author), because GitHub removes a reviewer from the request list once they have reviewed. With no reviewer configured it does nothing.

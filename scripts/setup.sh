@@ -310,11 +310,13 @@ bot_root = os.environ['BOT_ROOT']
 
 existing_labels = {'prLabels': ['ai-generated'], 'issueLabels': [], 'disabledTestLabel': ''}
 existing_bot = {}
+existing_reviewer = {}
 try:
     with open(os.environ['CONFIG_FILE']) as _f:
         _existing = json.load(_f)
     existing_labels = _existing.get('labels') or existing_labels
     existing_bot = _existing.get('bot') or {}
+    existing_reviewer = _existing.get('reviewer') or {}
 except (OSError, ValueError):
     pass
 
@@ -368,6 +370,7 @@ config = {
         'ghAccount': val('CFG_GH_ACCOUNT'),
     },
     'reviewer': {
+        **existing_reviewer,
         'username': val('CFG_REVIEWER_USER'),
         'ghConfigDir': val('CFG_REVIEWER_DIR'),
     },
