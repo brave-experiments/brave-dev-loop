@@ -74,34 +74,34 @@ def _current_login():
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def already_commented(repo, number, login):
-    """Did this account already leave the skip comment? Raises when GitHub cannot say."""
+def already_commented(repo, number):
+    """Did any account already leave the skip comment? Raises when GitHub cannot say.
+
+    The gate runs as the bot and the reviewer both, so the marker counts from
+    whoever posted it: one comment per PR, ever.
+    """
     result = _gh(
         [
             "api",
             f"repos/{repo}/issues/{number}/comments",
             "--paginate",
             "--jq",
-            '.[] | [.user.login, (.body | contains("' + SKIP_MARKER + '"))] | @tsv',
+            '.[] | select(.body | contains("' + SKIP_MARKER + '")) | .id',
         ]
     )
     if result.returncode != 0:
         raise OrgGateError(
             f"could not read comments on #{number}: {result.stderr.strip()}"
         )
-    for line in result.stdout.splitlines():
-        user, _, has_marker = line.partition("\t")
-        if has_marker == "true" and user.lower() == login.lower():
-            return True
-    return False
+    return bool(result.stdout.strip())
 
 
 def comment_once(repo, number, log):
-    """Post the fixed skip comment unless this account already has."""
+    """Post the fixed skip comment unless any account already has."""
     login = _current_login()
     if not login:
         raise OrgGateError("could not determine the gh login to comment as")
-    if already_commented(repo, number, login):
+    if already_commented(repo, number):
         return False
     result = _gh(
         [
