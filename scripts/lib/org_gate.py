@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.p
 
 from lib.load_config import bot_dir  # noqa: E402
 
+
 class OrgGateError(RuntimeError):
     """The gate cannot answer. Callers stop; they never fall through to review."""
 
@@ -81,11 +82,11 @@ def _log(msg):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    q = sub.add_parser(
+    sub.add_parser(
         "filter-queue",
         help='read "<number> <author>" lines on stdin, print the members\' numbers',
     )
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
 
     prs = []
     for line in sys.stdin:
