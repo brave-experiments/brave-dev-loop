@@ -686,8 +686,9 @@ def resolve_review_thread(thread_id):
 def settle_open_threads(threads):
     """Resolve the threads the validator found addressed. Returns (resolved, still_open).
 
-    A thread that is not explicitly addressed stays open, and so does one
-    GitHub would not resolve.
+    A thread that is not explicitly addressed stays open. One that is addressed
+    but GitHub would not resolve is left as it is and goes in neither list: the
+    code answers it, so it must not block, and it is not worth a comment.
     """
     resolved, still_open = [], []
     for t in threads:
@@ -696,13 +697,7 @@ def settle_open_threads(threads):
         elif resolve_review_thread(t["thread_id"]):
             resolved.append(t)
         else:
-            still_open.append(
-                {
-                    **t,
-                    "reason": "The code now answers this comment, but GitHub would "
-                    "not resolve the thread.",
-                }
-            )
+            log(f"UNRESOLVABLE: {t.get('path')}:{t.get('line')} — left open silently")
     return resolved, still_open
 
 
@@ -717,24 +712,6 @@ def resolved_note(resolved):
         f"{_plural(len(resolved), 'earlier comment was', 'earlier comments were')} "
         "addressed and resolved."
     )
-
-
-def still_open_note(resolved, still_open):
-    """What the review says when earlier comments still apply: which, and why."""
-    n = len(still_open)
-    lines = [
-        f"Not approved: {_plural(n, 'earlier comment is', 'earlier comments are')} "
-        "still open."
-    ]
-    for t in still_open:
-        where = t.get("path") or "the pull request"
-        if t.get("line"):
-            where += f":{t['line']}"
-        link = f"[`{where}`]({t['url']})" if t.get("url") else f"`{where}`"
-        reason = t.get("reason") or "The review could not confirm it was fixed."
-        lines.append(f"- {link}: {reason}")
-    done = resolved_note(resolved)
-    return "\n".join(lines) + (f"\n\n{done}" if done else "")
 
 
 def own_pr_body(bot_username, head_sha, pr_data):
@@ -937,22 +914,12 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             log(f"STILL OPEN: {t.get('path')}:{t.get('line')} — {t.get('reason')}")
 
         if not violations and still_open:
-            note = still_open_note(resolved, still_open)
-            url = submit_comment_review(
-                repo,
-                number,
-                head_sha,
-                verdict_body(VERDICT_CHANGES, pr_data, note) or note,
-                review_event(True, pr_data.get("author"), bot_username),
+            # Nothing new to say: the earlier inline comments already stand,
+            # and an overall review restating them is noise.
+            log(
+                f"AUTO: {link} - {len(still_open)} earlier comments still open, "
+                "nothing posted"
             )
-            if url is not None:
-                result["status"] = "posted"
-                result["review_url"] = url
-                log(
-                    f"AUTO: {link} - {len(still_open)} earlier comments still open - {url}"
-                )
-            else:
-                log(f"AUTO: {link} - SKIPPED: open-comments review failed")
             return result
 
         if not violations:
@@ -1030,11 +997,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 number,
                 violations,
                 head_sha,
-                verdict_body(
-                    changes_verdict(blocking),
-                    pr_data,
-                    still_open_note(resolved, still_open) if still_open else "",
-                ),
+                verdict_body(changes_verdict(blocking), pr_data),
                 review_event(blocking, pr_data.get("author"), bot_username),
             )
             result["status"] = "posted"

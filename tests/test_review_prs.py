@@ -1583,7 +1583,7 @@ class TestEarlierComments:
         assert "2 earlier comments were addressed and resolved." in sent["approve"]
         assert "comment" not in sent
 
-    def test_an_open_comment_is_named_and_blocks_approval(
+    def test_an_open_comment_blocks_approval_without_an_overall_review(
         self, post, sent, monkeypatch
     ):
         monkeypatch.setattr(
@@ -1593,27 +1593,21 @@ class TestEarlierComments:
             post,
             [self.thread(1, True), self.thread(2, False, "The message still says X.")],
         )
-        assert result["status"] == "posted" and result["review_url"] == "url"
+        assert result["status"] != "approved"
         assert sent["resolved"] == ["T1"]
-        body = sent["comment"]
-        assert body.startswith("**Recommendation: request changes**")
-        assert sent["event"] == "REQUEST_CHANGES"
-        assert "1 earlier comment is still open" in body
-        assert "[`f2.rs:2`](https://x/2): The message still says X." in body
-        assert "f1.rs" not in body
-        assert "1 earlier comment was addressed and resolved." in body
+        assert "comment" not in sent and "batch" not in sent
 
     def test_a_thread_without_a_verdict_is_never_resolved(self, post, sent):
         self._run(post, [self.thread(3, False)])
         assert sent["resolved"] == []
-        assert "could not confirm it was fixed" in sent["comment"]
+        assert "comment" not in sent
 
-    def test_a_thread_github_will_not_resolve_stays_open(self, post, sent):
+    def test_a_thread_github_will_not_resolve_is_silent(self, post, sent):
         result = self._run(post, [self.thread(9, True)])
-        assert result["status"] == "posted"
-        assert "would not resolve the thread" in sent["comment"]
+        assert "comment" not in sent and "batch" not in sent
+        assert result["status"] != "posted"
 
-    def test_new_findings_also_list_what_is_still_open(self, post, sent):
+    def test_new_findings_post_without_listing_what_is_still_open(self, post, sent):
         finding = {
             "file": "a.rs",
             "line": 3,
@@ -1624,7 +1618,7 @@ class TestEarlierComments:
         result = self._run(post, [self.thread(2, False, "Still wrong.")], [finding])
         assert result["status"] == "posted"
         assert "request changes" in sent["batch"]
-        assert "1 earlier comment is still open" in sent["batch"]
+        assert "earlier comment" not in sent["batch"]
 
     def test_no_earlier_comments_approves_as_before(self, post, sent):
         assert self._run(post, [])["status"] == "approved"
