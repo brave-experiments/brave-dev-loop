@@ -29,16 +29,29 @@ def trap_lines():
 )
 def test_a_signal_runs_the_cleanup_once_and_ends_the_run(tmp_path, sig, status):
     out = tmp_path / "out"
+    ready = tmp_path / "ready"
     script = "\n".join(
         [
             f'cleanup_run() {{ echo cleanup >> "{out}"; }}',
             *trap_lines(),
+            f'touch "{ready}"',
             "for _ in 1 2 3 4 5 6 7 8 9 10; do sleep 0.3; done",
             f'echo carried-on >> "{out}"',
         ]
     )
-    proc = subprocess.Popen(["bash", "-c", script])
-    time.sleep(0.5)
+    # A suite started as a background job inherits SIGINT ignored, and a shell
+    # cannot trap a signal that was ignored when it started.
+    proc = subprocess.Popen(
+        ["bash", "-c", script],
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+    )
+    for _ in range(100):
+        if ready.exists():
+            break
+        time.sleep(0.1)
+    else:
+        proc.kill()
+        pytest.fail("the script never installed its traps")
     proc.send_signal(sig)
     assert proc.wait(timeout=30) == status
     assert out.read_text().split() == ["cleanup"]
