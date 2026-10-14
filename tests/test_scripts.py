@@ -3855,6 +3855,17 @@ class TestBravebotWorktrees:
         assert "worktree add --track -b" in doc, "no way to reuse a pushed branch"
         assert "worktree remove" in doc, "no teardown"
 
+    def test_repo_doc_looks_for_the_storys_branch_before_adding_a_worktree(self):
+        """bravebot's /pr-fix and /rebase skills check a pull request's branch out
+        in .worktrees/ of the clone, and git does not check a branch out in two
+        places, so an iteration that adds $WORK for a branch held there fails."""
+        doc = self._repo_doc()
+        assert "branch refs/heads/<branch-name>" in doc, "no search by branch"
+        assert ".worktrees/" in doc, "does not say where the other tree is"
+        assert doc.index("branch refs/heads/<branch-name>") < doc.index(
+            'worktree add "$WORK" <branch-name>'
+        ), "the branch is added before it is looked for"
+
     def test_shared_docs_point_at_the_rule_wherever_they_name_the_checkout(self):
         """The rule only takes effect if the doc the agent is following at the
         moment it cds sends it to the profile."""

@@ -64,6 +64,20 @@ worktree is yours alone.
 
 If `$WORK` is listed, `cd "$WORK"` and carry on — do not create a second one.
 
+A story that already has a `branchName` may have its tree somewhere else. bravebot's
+`/pr-fix` and `/rebase` skills check a pull request's branch out in
+`$MAIN/.worktrees/pr-<n>`, and git does not check a branch out in two places, so the
+`worktree add` for it below fails with "already used by worktree" while one holds it.
+Look for the branch itself:
+
+```sh
+git -C "$MAIN" worktree list --porcelain \
+  | awk -v b="branch refs/heads/<branch-name>" '/^worktree /{w=substr($0,10)} $0==b{print w}'
+```
+
+If that prints a path, `cd` there, use it as `$WORK` for the rest of the story, and skip
+the creation commands below.
+
 Otherwise create it. A new story gets its branch from the worktree command, so
 there is no separate `git checkout -b`:
 
@@ -118,7 +132,9 @@ decides. It removes only a worktree that holds nothing of its own — no
 uncommitted changes — and never one a live run claims. Commits do not count: the
 branch is the repository's and outlives the worktree, so an unpushed one is still
 there to check out. A story whose worktree it removed reuses its branch from
-`origin/<branch-name>` on the next iteration, which is the case above.
+`origin/<branch-name>` on the next iteration, which is the case above. It looks at every
+linked worktree of the repository, wherever it is, so a tree that `/pr-fix` made in
+`$MAIN/.worktrees/` is collected on the same terms.
 
 So leave the directory where it is. Do not remove one to tidy up, and do not
 `--force` past a `worktree remove` that refuses because the tree is dirty: those
