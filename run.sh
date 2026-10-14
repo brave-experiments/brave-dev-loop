@@ -933,11 +933,12 @@ Additional context: $EXTRA_PROMPT"
     if [ -n "$BOT_BRAVEBOT_MODEL" ]; then
       BRAVEBOT_MODEL_FLAG="--model $BOT_BRAVEBOT_MODEL"
     fi
-    # A prompt on the command line is always a one-shot run: bravebot has no way to
-    # start an interactive session with the prompt already in it. So TUI mode differs
-    # only in owning the terminal, which is what lets it be watched and interrupted.
+    # A bare prompt is a one-shot run, so TUI mode needs -i to open the interactive
+    # session with the prompt as its first turn. bravebot reads -i only as the first
+    # argument and --model only after the prompt; --dangerously-skip-permissions is
+    # taken out wherever it sits. -i needs a terminal on stdin and stdout.
     if [ "$USE_TUI" = true ]; then
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN --dangerously-skip-permissions -i "$AGENT_PROMPT" $BRAVEBOT_MODEL_FLAG || true
     else
       # bravebot keeps stdout to the final reply alone and puts progress on stderr;
       # both go to the log.
