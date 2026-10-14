@@ -2233,10 +2233,10 @@ def main():
 
     raw_prs = _fp_mod.fetch_prs(mode, days, page, pr_number, state)
     org_members = load_org_members()
-    # Before anything else reads a PR: a non-member's PR is dropped and gets the
-    # fixed comment, in every mode, with no model involved. Fails closed.
+    # Before anything else reads a PR: a non-member's PR is dropped, with
+    # nothing posted on it, in every mode, with no model involved. Fails closed.
     try:
-        raw_prs, not_members = split_prs(PR_REPO, raw_prs, log)
+        raw_prs, not_members = split_prs(raw_prs)
     except OrgGateError as e:
         log(f"ERROR: {e}")
         sys.exit(1)

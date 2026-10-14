@@ -124,12 +124,10 @@ For critical changes:
 ### Review jobs skip non-members
 
 No review job reads a PR whose author is not in `.ignore/org-members.txt`.
-`scripts/lib/org_gate.py` drops it before any model sees it and leaves one fixed
-comment ("Review skipped because not a registered org member."), once per PR.
+`scripts/lib/org_gate.py` drops it before any model sees it and posts nothing on it.
 It runs in the review-request queue (poll and gate) and in `prepare-review.py`
 (sweeps and single-PR reviews), for every project profile. A missing or empty
-members file stops the job instead of letting everyone through. The comment is
-posted by whichever account the job runs as (the reviewer, if configured).
+members file stops the job instead of letting everyone through.
 
 ### Org Membership Cache
 
