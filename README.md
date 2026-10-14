@@ -183,6 +183,10 @@ the project in `config.json` and leaves any other deployment's blocks alone, and
 what goes in them comes from `projects/<profile>/schedules.sh` — see
 [Project profiles](projects/README.md#schedules).
 
+With `reviewer.username` set, a run does not leave a pull request it has just pushed to until
+that account has reviewed it; a review that asks for changes is answered and waited for again, up
+to five times. See [Review gate](docs/review-gate.md).
+
 Several runs can share one bot directory — set `bot.maxConcurrentRuns` and see
 [Concurrent runs](docs/concurrent-runs.md). It is off by default.
 
@@ -211,6 +215,7 @@ claude
 | --- | --- |
 | [Configuration](docs/configuration.md) | `config.json` keys, PRD format, run state |
 | [Concurrent runs](docs/concurrent-runs.md) | Run slots, claims, `--status`, clearing a killed run |
+| [Review gate](docs/review-gate.md) | `run.sh` waits for the reviewer's verdict on what it pushed, and answers requests for changes |
 | [Project profiles](projects/README.md) | Per-project validations, test targets, docs |
 | [Comparison runs](docs/comparison-runs.md) | `--comparison-run`: redo a story with another tool and critique the first |
 | [Skills](docs/skills.md) | The slash commands this repo provides |

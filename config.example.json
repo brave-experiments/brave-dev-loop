@@ -29,7 +29,9 @@
   },
   "reviewer": {
     "username": null,
-    "ghConfigDir": null
+    "ghConfigDir": null,
+    "maxRounds": 5,
+    "waitMinutes": 120
   },
   "labels": {
     "prLabels": [

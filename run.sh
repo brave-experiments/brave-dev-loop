@@ -20,6 +20,12 @@
 # and story claim. See docs/concurrent-runs.md. At the default of 1 this is
 # exactly the single-run loop it has always been, using the same paths.
 #
+# With a reviewer account configured (reviewer.username), a story whose pull request
+# an iteration pushed to is not finished until that account has reviewed the new
+# head: the run waits, and if the review asks for changes it works the story again
+# and waits again, at most reviewer.maxRounds reviews (default 5) per story before
+# it gives up on the story and goes on. See docs/review-gate.md.
+#
 # Agent selection precedence (highest wins):
 #   1. --agent <name> CLI flag
 #   2. BOT_AGENT env var
@@ -214,6 +220,7 @@ source "$SCRIPT_DIR/scripts/lib/load-config.sh"
 source "$SCRIPT_DIR/scripts/lib/git-identity.sh"
 source "$SCRIPT_DIR/scripts/lib/repo-hooks.sh"
 source "$SCRIPT_DIR/scripts/lib/terminal-title.sh"
+source "$SCRIPT_DIR/scripts/lib/review-gate.sh"
 
 # This run titles its own tab, with the issue and PR numbers an operator
 # switches tabs to find. Claude would otherwise overwrite that every turn with
@@ -230,6 +237,8 @@ if PROFILE_MISMATCH=$(bot_profile_mismatch); then
   echo "Error: $PROFILE_MISMATCH" >&2
   exit 1
 fi
+
+bot_validate_review_config || exit 1
 
 # --- Concurrency ----------------------------------------------------------
 # Running two agents against one working tree destroys work, so concurrency is
@@ -390,6 +399,26 @@ stop_title_watch() {
   TITLE_WATCH_PID=""
 }
 
+# Ask select-task.py for the next story. $1 is the request: a story named
+# outright, a hint for the model to read, or nothing for the deterministic queue.
+select_story() {
+  if [ -n "$1" ]; then
+    python3 "$SCRIPT_DIR/scripts/select-task.py" \
+      --prd "$PRD_FILE" \
+      --run-state "$RUN_STATE_FILE" \
+      --iteration-log "$ITERATION_LOG" \
+      --claude-bin "$BOT_CLAUDE_BIN" \
+      --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" --run-id "$RUN_ID" \
+      --extra-prompt "$1"
+  else
+    python3 "$SCRIPT_DIR/scripts/select-task.py" \
+      --prd "$PRD_FILE" \
+      --run-state "$RUN_STATE_FILE" \
+      --iteration-log "$ITERATION_LOG" \
+      --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" --run-id "$RUN_ID"
+  fi
+}
+
 # What the agent does with a story in this status, in one line. Printed in the
 # iteration banner and again when the iteration ends, so the terminal says what
 # is about to happen (and what happens next) rather than only which story was
@@ -462,8 +491,13 @@ cleanup_run() {
   fi
 }
 
-# Register cleanup function to run on exit
-trap cleanup_run EXIT INT TERM HUP
+# cleanup_run runs once, whichever way the run ends. A signal has to end the run
+# as well: a trap that only cleaned up would hand back the claim and the slot and
+# then let the loop carry on, working stories with no slot held.
+trap cleanup_run EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 # Initialize progress file if it doesn't exist
 if [ ! -f "$PROGRESS_FILE" ]; then
@@ -601,26 +635,23 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   ITERATION_LOG="$RUN_SESSION_DIR/iteration-loop-${loop_count}.log"
   export BOT_RUN_ID="$RUN_ID"
 
-  # Select next task — this is the gate check; exit early if no candidates
+  # Select next task — this is the gate check; exit early if no candidates.
+  #
+  # A story the reviewer asked changes of is named outright, so it is the one
+  # worked again and not whatever the queue would pick. If it cannot be taken
+  # back (another run took it in the seconds its claim was free) the run goes on
+  # with the ordinary selection: a fix round is not worth stopping the run for.
   TASK_JSON=""
   SELECT_RC=0
-  if [ -n "$EXTRA_PROMPT" ]; then
-    TASK_JSON=$(python3 "$SCRIPT_DIR/scripts/select-task.py" \
-      --prd "$PRD_FILE" \
-      --run-state "$RUN_STATE_FILE" \
-      --iteration-log "$ITERATION_LOG" \
-      --claude-bin "$BOT_CLAUDE_BIN" \
-      --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" --run-id "$RUN_ID" \
-      --extra-prompt "$EXTRA_PROMPT") || SELECT_RC=$?
-  else
-    TASK_JSON=$(python3 "$SCRIPT_DIR/scripts/select-task.py" \
-      --prd "$PRD_FILE" \
-      --run-state "$RUN_STATE_FILE" \
-      --iteration-log "$ITERATION_LOG" \
-      --slot "$BOT_RUN_SLOT" --run-pid "$BOT_RUN_PID" --run-id "$RUN_ID") || SELECT_RC=$?
-  fi
-
+  TASK_JSON=$(select_story "${BOT_REVIEW_PIN:-$EXTRA_PROMPT}") || SELECT_RC=$?
   TASK_SELECTED=$(echo "$TASK_JSON" | jq -r '.selected // false' 2>/dev/null || echo "false")
+  if [ -n "$BOT_REVIEW_PIN" ] && [ "$TASK_SELECTED" != "true" ]; then
+    echo "$BOT_REVIEW_PIN: could not take the story back for its fix round ($(echo "$TASK_JSON" | jq -r '.reason // "unknown"' 2>/dev/null)); selecting as usual."
+    bot_review_reset
+    SELECT_RC=0
+    TASK_JSON=$(select_story "$EXTRA_PROMPT") || SELECT_RC=$?
+    TASK_SELECTED=$(echo "$TASK_JSON" | jq -r '.selected // false' 2>/dev/null || echo "false")
+  fi
   if [ "$TASK_SELECTED" != "true" ]; then
     REASON=$(echo "$TASK_JSON" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown")
     # Exit 2 is a request that cannot be honoured — usually a story named
@@ -650,6 +681,23 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   STORY_ISSUE_URL=""
   if [ -n "$STORY_ISSUE" ]; then
     STORY_ISSUE_URL="https://github.com/$BOT_ISSUE_REPO/issues/$STORY_ISSUE"
+  fi
+
+  # A pin that did not select its story (an id select-task.py does not read as a
+  # name) was an ordinary selection, and the fix round it asked for is not this.
+  if [ -n "$BOT_REVIEW_PIN" ] && [ "$STORY_ID" != "$BOT_REVIEW_PIN" ]; then
+    bot_review_reset
+  fi
+  FIX_ROUND=""
+  [ -n "$BOT_REVIEW_PIN" ] && FIX_ROUND="$BOT_REVIEW_ROUND"
+
+  # The head the pull request has now, so the gate after the iteration can tell
+  # whether the iteration pushed. "?" is a head GitHub would not give: the gate
+  # then leaves the story alone, since it cannot say whether anything changed.
+  REVIEW_HEAD_BEFORE=""
+  if bot_review_enabled && [ -n "$STORY_PR_NUMBER" ]; then
+    REVIEW_HEAD_BEFORE=$(bot_pr_head "$STORY_PR_NUMBER")
+    REVIEW_HEAD_BEFORE="${REVIEW_HEAD_BEFORE:-?}"
   fi
 
   # select-task.py claimed this story under the PRD lock; remember it so the
@@ -795,6 +843,15 @@ other stories in this same bot directory right now.
 - Story $STORY_ID is claimed by this slot. Touch nothing outside it: not another
   story's worktree, branch, or PR.
 - Append to data/progress.txt with ./$BOT_DIRNAME/scripts/append-progress.sh, not with >>."
+  fi
+  if [ -n "$FIX_ROUND" ]; then
+    AGENT_PROMPT="$AGENT_PROMPT
+
+Review fix round: $BOT_REVIEWER_USERNAME reviewed PR #$STORY_PR_NUMBER and its review asks for changes
+(review $FIX_ROUND of at most $BOT_REVIEW_MAX_ROUNDS). Answer that review through the Review Response
+Workflow in docs/workflow-pushed.md and push the result. Do not ask for another review and do not wait for
+one: run.sh does both once you have pushed. A comment that is wrong or already answered gets a reply, not a
+change; if nothing needs pushing, push nothing and say why in progress.txt."
   fi
   if [ -n "$NIGHTLY_VERSION" ]; then
     AGENT_PROMPT="$AGENT_PROMPT
@@ -1122,6 +1179,25 @@ Additional context: $EXTRA_PROMPT"
       bot_slot_heartbeat
     fi
     rm -f "$COMPARISON_PROMPT_FILE" "$BASE_SESSION_FILE" "$COMPARISON_SESSION_FILE"
+  fi
+
+  # --- Reviewer gate (reviewer.username set, reviewer.maxRounds above 0) ---
+  #
+  # An iteration that pushed to the story's pull request is not done until the
+  # reviewer has answered the new head. The claim stays held through the wait, so
+  # no other slot works the story meanwhile. A review that asks for changes pins
+  # the story for the next loop, and that loop is not charged to the iteration
+  # budget: the budget counts stories worked, not rounds of one.
+  #
+  # A terminal session has no iteration log to write the wait into, and a log
+  # that exists only for this would read to the comparison tooling like a session.
+  GATE_LOG=""
+  if [ "$USE_TUI" != true ]; then
+    GATE_LOG="$ITERATION_LOG"
+  fi
+  bot_review_after_iteration "$STORY_ID" "$END_PR_NUMBER" "$REVIEW_HEAD_BEFORE" "$END_STATUS" "$GATE_LOG"
+  if [ -n "$BOT_REVIEW_PIN" ]; then
+    MAX_ITERATIONS=$((MAX_ITERATIONS + 1))
   fi
 
   # Nothing the agent says ends the run. It sees one story; whether any are
