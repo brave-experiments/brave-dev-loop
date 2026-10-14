@@ -681,15 +681,13 @@ class TestVerdict:
         monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
         monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: True)
         monkeypatch.setattr(
-            post,
-            "submit_approval",
-            lambda repo, n, body="": sent.update(approve=body) or "url",
+            post, "submit_approval", lambda repo, n: sent.update(approve=True) or "url"
         )
         monkeypatch.setattr(
             post,
             "post_batch_review",
-            lambda repo, n, vs, sha, body="", event="COMMENT": (
-                sent.update(comment=body, event=event) or ("url", 1)
+            lambda repo, n, vs, sha, event="COMMENT": (
+                sent.update(event=event) or ("url", 1)
             ),
         )
         return sent
@@ -697,27 +695,21 @@ class TestVerdict:
     def _run(self, post, violations):
         return post.process_pr(dict(self.PR, violations=violations), "o/r", "bot", True)
 
-    def test_an_approval_opens_with_the_recommendation(self, post, sent, monkeypatch):
+    def test_an_approval_carries_no_body(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", True)
         assert self._run(post, [])["status"] == "approved"
-        assert sent == {"approve": "**Recommendation: approve**"}
+        assert sent == {"approve": True}
 
-    def test_a_review_with_comments_recommends_changes(self, post, sent, monkeypatch):
+    def test_a_review_with_comments_requests_changes(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", True)
         assert self._run(post, [dict(self.FINDING)])["status"] == "posted"
-        assert sent == {
-            "comment": "**Recommendation: request changes**",
-            "event": "REQUEST_CHANGES",
-        }
+        assert sent == {"event": "REQUEST_CHANGES"}
 
     def test_nits_alone_stay_informational(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", True)
         nit = dict(self.FINDING, severity="low", rule_link=f"{LINK}#CS-001")
         assert self._run(post, [nit])["status"] == "posted"
-        assert sent == {
-            "comment": "**Recommendation: comments only**",
-            "event": "COMMENT",
-        }
+        assert sent == {"event": "COMMENT"}
 
     def test_a_medium_finding_blocks_merging(self, post, sent, monkeypatch):
         monkeypatch.setattr(post, "VERDICT", True)
@@ -732,7 +724,6 @@ class TestVerdict:
         pr = dict(self.PR, author="bot", violations=[dict(self.FINDING)])
         post.process_pr(pr, "o/r", "bot", True)
         assert sent["event"] == "COMMENT"
-        assert sent["comment"].startswith("**Recommendation: request changes**")
 
     def test_a_profile_without_a_verdict_never_requests_changes(
         self, post, sent, monkeypatch
@@ -749,7 +740,7 @@ class TestVerdict:
         monkeypatch.setattr(
             post,
             "post_batch_review",
-            lambda repo, n, vs, sha, body="", event="COMMENT": (
+            lambda repo, n, vs, sha, event="COMMENT": (
                 sent.update(vs=vs) or ("url", len(vs))
             ),
         )
@@ -771,49 +762,23 @@ class TestVerdict:
         post.label_severity(v)
         assert v["draft_comment"].count("**Severity:") == 1
 
-    def test_the_how_section_follows_the_recommendation(self, post, sent, monkeypatch):
-        monkeypatch.setattr(post, "VERDICT", True)
-        pr = dict(self.PR, violations=[], checks_details="<details>x</details>")
-        post.process_pr(pr, "o/r", "bot", True)
-        pr = dict(
-            self.PR,
-            violations=[dict(self.FINDING)],
-            checks_details="<details>y</details>",
-        )
-        post.process_pr(pr, "o/r", "bot", True)
-        assert sent == {
-            "approve": "**Recommendation: approve**\n\n<details>x</details>",
-            "comment": "**Recommendation: request changes**\n\n<details>y</details>",
-            "event": "REQUEST_CHANGES",
-        }
-
-    def test_the_description_comes_before_the_how_section(
-        self, post, sent, monkeypatch
-    ):
-        monkeypatch.setattr(post, "VERDICT", True)
-        pr = dict(
-            self.PR,
-            violations=[],
-            description_details="**What this pull request does**",
-            checks_details="<details>x</details>",
-        )
-        post.process_pr(pr, "o/r", "bot", True)
-        assert sent["approve"] == (
-            "**Recommendation: approve**\n\n**What this pull request does**"
-            "\n\n<details>x</details>"
-        )
-
-    def test_no_verdict_keeps_the_bodies_empty(self, post, sent, monkeypatch):
-        monkeypatch.setattr(post, "VERDICT", False)
-        for extra in ({}, {"checks_details": "<details>x</details>"}):
+    def test_no_overall_text_is_ever_posted(self, post, sent, monkeypatch):
+        for verdict in (True, False):
+            monkeypatch.setattr(post, "VERDICT", verdict)
             for found in ([], [dict(self.FINDING)]):
                 post.process_pr(
-                    dict(self.PR, violations=found, description_details="d", **extra),
+                    dict(
+                        self.PR,
+                        violations=found,
+                        description_details="d",
+                        checks_details="<details>x</details>",
+                    ),
                     "o/r",
                     "bot",
                     True,
                 )
-        assert sent == {"approve": "", "comment": "", "event": "COMMENT"}
+        assert not hasattr(post, "submit_comment_review")
+        assert "body" not in sent
 
 
 class TestCleanReviewOfTheBotsOwnPr:
@@ -830,40 +795,17 @@ class TestCleanReviewOfTheBotsOwnPr:
         monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
         monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: True)
         monkeypatch.setattr(
-            post,
-            "submit_approval",
-            lambda repo, n, body="": reviews.append(("approve", n, body)) or "url",
-        )
-        monkeypatch.setattr(
-            post,
-            "submit_comment_review",
-            lambda repo, n, sha, body, event="COMMENT": (
-                reviews.append(("comment", n, body)) or "url"
-            ),
+            post, "submit_approval", lambda repo, n: reviews.append(n) or "url"
         )
         return reviews
 
-    def test_its_own_pr_gets_a_comment_not_an_approval(self, post, posted, monkeypatch):
-        monkeypatch.setattr(post, "VERDICT", True)
-        pr = dict(self.PR, author="bot", checks_details="<details>x</details>")
-        result = post.process_pr(pr, "o/r", "bot", True)
-        assert [(kind, n) for kind, n, _ in posted] == [("comment", 7)]
-        body = posted[0][2]
-        assert body.startswith("**Recommendation: approve**")
-        assert "No issues found at abcdef12" in body
-        assert body.endswith("<details>x</details>")
-        assert result["status"] == "commented" and result["review_url"] == "url"
-
-    def test_without_a_verdict_the_comment_still_says_it_was_clean(
-        self, post, posted, monkeypatch
-    ):
-        monkeypatch.setattr(post, "VERDICT", False)
+    def test_its_own_pr_gets_nothing(self, post, posted):
         post.process_pr(dict(self.PR, author="bot"), "o/r", "bot", True)
-        assert posted[0][2].startswith("No issues found at abcdef12")
+        assert posted == []
 
     def test_someone_elses_pr_is_still_approved(self, post, posted):
         post.process_pr(dict(self.PR, author="alice"), "o/r", "bot", True)
-        assert [kind for kind, _, _ in posted] == ["approve"]
+        assert posted == [7]
 
 
 class TestReviewerAccount:
@@ -1432,21 +1374,11 @@ class TestCleanReviewTheGateRefuses:
             "submit_approval",
             lambda *a: pytest.fail("the gate refused; nothing may approve"),
         )
-        monkeypatch.setattr(
-            post,
-            "submit_comment_review",
-            lambda repo, n, sha, body, event="COMMENT": (
-                reviews.append((n, sha, body)) or "url"
-            ),
-        )
         return reviews
 
-    def test_a_standing_request_is_answered(self, post, posted, monkeypatch):
-        monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: True)
+    def test_nothing_is_posted_even_when_requested(self, post, posted):
         result = post.process_pr(dict(self.PR), "o/r", "bot", True)
-        assert [(n, sha) for n, sha, _ in posted] == [(7, "abcdef1234567890")]
-        assert "no new issues" in posted[0][2]
-        assert result["status"] == "approved" and result["review_url"] == "url"
+        assert posted == [] and result["status"] == "approved"
 
     def test_a_requested_pass_is_approved_again(self, post, posted, monkeypatch):
         """The gate refuses a second approval, which left a re-request answered by
@@ -1456,19 +1388,12 @@ class TestCleanReviewTheGateRefuses:
             post, "check_can_approve", lambda n, b, reapprove=False: reapprove
         )
         monkeypatch.setattr(
-            post, "submit_approval", lambda repo, n, body="": approved.append(n) or "u"
+            post, "submit_approval", lambda repo, n: approved.append(n) or "u"
         )
         pr = dict(self.PR, reviewRequested=True)
         result = post.process_pr(pr, "o/r", "bot", True)
         assert approved == [7] and posted == []
         assert result["status"] == "approved" and result["review_url"] == "u"
-
-    def test_an_unrequested_pr_gets_nothing(self, post, posted, monkeypatch):
-        """The sweep reviews PRs nobody asked the bot about. A comment there
-        would be noise on every rebase."""
-        monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: False)
-        post.process_pr(dict(self.PR), "o/r", "bot", True)
-        assert posted == []
 
 
 class TestSweepCutoff:
@@ -1549,20 +1474,13 @@ class TestEarlierComments:
         monkeypatch.setattr(
             post,
             "submit_approval",
-            lambda repo, n, body="": sent.update(approve=body) or "url",
-        )
-        monkeypatch.setattr(
-            post,
-            "submit_comment_review",
-            lambda repo, n, sha, body, event="COMMENT": (
-                sent.update(comment=body, event=event) or "url"
-            ),
+            lambda repo, n: sent.update(approve=True) or "url",
         )
         monkeypatch.setattr(
             post,
             "post_batch_review",
-            lambda repo, n, vs, sha, body="", event="COMMENT": (
-                sent.update(batch=body, event=event) or ("url", 1)
+            lambda repo, n, vs, sha, event="COMMENT": (
+                sent.update(batch=True, event=event) or ("url", 1)
             ),
         )
         return sent
@@ -1579,9 +1497,7 @@ class TestEarlierComments:
         result = self._run(post, [self.thread(1, True), self.thread(2, True)])
         assert result["status"] == "approved"
         assert sent["resolved"] == ["T1", "T2"]
-        assert sent["approve"].startswith("**Recommendation: approve**")
-        assert "2 earlier comments were addressed and resolved." in sent["approve"]
-        assert "comment" not in sent
+        assert sent["approve"] is True
 
     def test_an_open_comment_blocks_approval_without_an_overall_review(
         self, post, sent, monkeypatch
@@ -1617,20 +1533,12 @@ class TestEarlierComments:
         }
         result = self._run(post, [self.thread(2, False, "Still wrong.")], [finding])
         assert result["status"] == "posted"
-        assert "request changes" in sent["batch"]
-        assert "earlier comment" not in sent["batch"]
+        assert sent["batch"] is True and sent["event"] == "REQUEST_CHANGES"
 
     def test_no_earlier_comments_approves_as_before(self, post, sent):
         assert self._run(post, [])["status"] == "approved"
-        assert sent["approve"] == "**Recommendation: approve**"
+        assert sent["approve"] is True
         assert sent["resolved"] == []
-
-    def test_a_refused_gate_still_gives_a_verdict(self, post, sent, monkeypatch):
-        monkeypatch.setattr(post, "check_can_approve", lambda n, b, **k: False)
-        monkeypatch.setattr(post, "bot_review_requested", lambda r, n, b: True)
-        self._run(post, [])
-        assert sent["comment"].startswith("**Recommendation: approve**")
-        assert "no earlier comment is still open" in sent["comment"]
 
 
 class TestEarlierCommentsHandoff:
@@ -1927,11 +1835,6 @@ class TestRequestChangesWithoutAVerdict:
         assert post.review_event(False, "alice", "bot") == "COMMENT"
         assert post.review_event(True, "bot", "bot") == "COMMENT"
 
-    def test_the_switch_adds_no_review_body(self, post, monkeypatch):
-        monkeypatch.setattr(post, "VERDICT", False)
-        monkeypatch.setattr(post, "REQUEST_CHANGES", True)
-        assert post.verdict_body("Recommendation: x", {}, "note") == ""
-
     def test_only_a_json_true_turns_it_on(self):
         import lib.load_config as lc
 
@@ -1940,20 +1843,22 @@ class TestRequestChangesWithoutAVerdict:
         assert not lc.review_request_changes({"review": {"verdict": True}})
         assert not lc.review_request_changes({})
 
-    def test_a_refused_empty_body_is_retried_with_one_line(self, post, monkeypatch):
+    def test_a_refused_request_is_posted_as_a_plain_review_without_a_body(
+        self, post, monkeypatch
+    ):
         sent = []
 
         def run_cmd(cmd, input_data=None, timeout=None):
             payload = json.loads(input_data)
             sent.append(payload)
-            if not payload["body"]:
+            if payload["event"] == "REQUEST_CHANGES":
                 return 1, "", "Review body is required"
             return 0, json.dumps({"html_url": "u"}), ""
 
         monkeypatch.setattr(post, "run_cmd", run_cmd)
         monkeypatch.setattr(post, "correct_line_for_diff", lambda *a: 3)
         v = [{"file": "a.cc", "line": 3, "draft_comment": "bug"}]
-        url, n = post.post_batch_review("o/r", 1, v, "sha", "", "REQUEST_CHANGES")
+        url, n = post.post_batch_review("o/r", 1, v, "sha", "REQUEST_CHANGES")
         assert (url, n) == ("u", 1)
-        assert [p["body"] for p in sent] == ["", post.CHANGES_BODY]
-        assert all(p["event"] == "REQUEST_CHANGES" for p in sent)
+        assert [p["event"] for p in sent] == ["REQUEST_CHANGES", "COMMENT"]
+        assert all("body" not in p for p in sent)

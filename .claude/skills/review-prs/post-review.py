@@ -46,12 +46,6 @@ _BP_BASE = os.path.dirname(resolve_docs_dir(_config, BOT_DIR))
 MANAGE_BP_IDS = os.path.join(_BP_BASE, "script", "manage-bp-ids.py")
 VERDICT = review_verdict(load_profile(_config, BOT_DIR))
 REQUEST_CHANGES = review_request_changes(load_profile(_config, BOT_DIR))
-# GitHub documents a body as required with REQUEST_CHANGES; one line is the least
-# it will take, and only when the empty one was refused.
-CHANGES_BODY = "Changes requested: see the inline comments."
-VERDICT_APPROVE = "**Recommendation: approve**"
-VERDICT_CHANGES = "**Recommendation: request changes**"
-VERDICT_NITS = "**Recommendation: comments only**"
 CHECK_CAN_APPROVE = os.path.join(BOT_DIR, "scripts", "check-can-approve.py")
 UPDATE_CACHE = os.path.join(SCRIPT_DIR, "update-cache.py")
 SIGNAL_NOTIFY = os.path.join(BOT_DIR, "scripts", "signal-notify.sh")
@@ -509,7 +503,7 @@ def deduplicate_violations(violations, existing_comments, bot_username=None):
     return kept
 
 
-def post_batch_review(repo, pr_number, violations, head_sha, body="", event="COMMENT"):
+def post_batch_review(repo, pr_number, violations, head_sha, event="COMMENT"):
     """Post violations as a single inline review. Returns (review_url, posted_count).
 
     Corrects line numbers that fall outside diff hunks before posting.
@@ -546,7 +540,6 @@ def post_batch_review(repo, pr_number, violations, head_sha, body="", event="COM
     payload = json.dumps(
         {
             "event": event,
-            "body": body,
             "comments": comments,
         }
     )
@@ -567,11 +560,11 @@ def post_batch_review(repo, pr_number, violations, head_sha, body="", event="COM
         )
 
     rc, out, err = submit(payload)
-    if rc != 0 and event == "REQUEST_CHANGES" and not body:
-        log(f"WARNING: empty-body request for changes refused on PR #{pr_number}")
-        rc, out, err = submit(
-            json.dumps({"event": event, "body": CHANGES_BODY, "comments": comments})
-        )
+    if rc != 0 and event == "REQUEST_CHANGES":
+        # Never add a body to get a request for changes through: a review is
+        # its inline comments only. Post them as a plain review instead.
+        log(f"WARNING: request for changes refused on PR #{pr_number}: {err}")
+        rc, out, err = submit(json.dumps({"event": "COMMENT", "comments": comments}))
 
     if rc == 0:
         try:
@@ -625,21 +618,6 @@ def post_batch_review(repo, pr_number, violations, head_sha, body="", event="COM
     return review_url, posted
 
 
-def with_details(text, pr_data):
-    """`text` followed by what the PR does and how the review was reached, for a project that asks for a verdict."""
-    if not VERDICT:
-        return text
-    extras = [pr_data.get("description_details", ""), pr_data.get("checks_details", "")]
-    return "\n\n".join([text] + [e for e in extras if e])
-
-
-def verdict_body(verdict, pr_data, note=""):
-    """A review body that opens with the verdict and ends with how it was reached."""
-    if not VERDICT:
-        return ""
-    return with_details(f"{verdict}\n\n{note}" if note else verdict, pr_data)
-
-
 def blocks_merge(violations, still_open):
     """Whether a review must be fixed before merging: an earlier comment still
     open, or any comment above nit severity."""
@@ -654,10 +632,6 @@ def review_event(blocking, pr_author, bot_username):
     if (VERDICT or REQUEST_CHANGES) and blocking and pr_author != bot_username:
         return "REQUEST_CHANGES"
     return "COMMENT"
-
-
-def changes_verdict(blocking):
-    return VERDICT_CHANGES if blocking else VERDICT_NITS
 
 
 def resolve_review_thread(thread_id):
@@ -701,32 +675,9 @@ def settle_open_threads(threads):
     return resolved, still_open
 
 
-def _plural(n, one, many):
-    return f"{n} {one if n == 1 else many}"
-
-
-def resolved_note(resolved):
-    if not resolved:
-        return ""
-    return (
-        f"{_plural(len(resolved), 'earlier comment was', 'earlier comments were')} "
-        "addressed and resolved."
-    )
-
-
-def own_pr_body(bot_username, head_sha, pr_data):
-    """The clean verdict on a PR the bot opened, which it may not approve."""
-    note = (
-        f"No issues found at {head_sha[:8]}. {bot_username} opened this PR, and "
-        "GitHub does not let a PR's author approve it, so this is a comment "
-        "rather than an approval."
-    )
-    return with_details(f"{VERDICT_APPROVE}\n\n{note}" if VERDICT else note, pr_data)
-
-
-def submit_approval(repo, pr_number, body=""):
+def submit_approval(repo, pr_number):
     """Submit an APPROVE review. Returns html_url or None."""
-    payload = json.dumps({"event": "APPROVE", "body": body})
+    payload = json.dumps({"event": "APPROVE"})
     rc, out, err = run_cmd(
         [
             "gh",
@@ -747,46 +698,6 @@ def submit_approval(repo, pr_number, body=""):
         except json.JSONDecodeError:
             return ""
     log(f"ERROR: failed to submit approval for PR #{pr_number}: {err}")
-    return None
-
-
-def bot_review_requested(repo, pr_number, bot_username):
-    """Whether the bot is still a requested reviewer on the PR."""
-    rc, out, _ = run_cmd(
-        [
-            "gh",
-            "api",
-            f"repos/{repo}/pulls/{pr_number}/requested_reviewers",
-            "--jq",
-            ".users[].login",
-        ],
-        timeout=30,
-    )
-    return rc == 0 and bot_username in out.split()
-
-
-def submit_comment_review(repo, pr_number, head_sha, body, event="COMMENT"):
-    """Submit a review with no inline comments. Returns html_url or None."""
-    payload = json.dumps({"event": event, "body": body, "commit_id": head_sha})
-    rc, out, err = run_cmd(
-        [
-            "gh",
-            "api",
-            f"repos/{repo}/pulls/{pr_number}/reviews",
-            "--method",
-            "POST",
-            "--input",
-            "-",
-        ],
-        input_data=payload,
-        timeout=30,
-    )
-    if rc == 0:
-        try:
-            return json.loads(out).get("html_url", "")
-        except json.JSONDecodeError:
-            return ""
-    log(f"ERROR: failed to submit review for PR #{pr_number}: {err}")
     return None
 
 
@@ -931,27 +842,12 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 number, bot_username, reapprove=bool(pr_data.get("reviewRequested"))
             )
             if can_approve and pr_data.get("author") == bot_username:
-                # GitHub refuses an approval from the PR's own author, and a
-                # refused approval used to end the run with nothing on the PR:
-                # no review, no sign it had been read. Say it as a comment.
-                url = submit_comment_review(
-                    repo,
-                    number,
-                    head_sha,
-                    own_pr_body(bot_username, head_sha, pr_data),
-                )
-                if url is not None:
-                    result["status"] = "commented"
-                    result["review_url"] = url
-                    log(f"AUTO: {link} - no violations, own PR, commented")
-                else:
-                    log(f"AUTO: {link} - SKIPPED: clean-review comment failed")
+                # GitHub refuses an approval from the PR's own author, and an
+                # overall comment is not an acceptable substitute.
+                result["status"] = "approved"
+                log(f"AUTO: {link} - no violations, own PR, nothing posted")
             elif can_approve:
-                approval_url = submit_approval(
-                    repo,
-                    number,
-                    verdict_body(VERDICT_APPROVE, pr_data, resolved_note(resolved)),
-                )
+                approval_url = submit_approval(repo, number)
                 if approval_url is not None:
                     update_cache(number, head_sha, approve=True)
                     result["status"] = "approved"
@@ -964,29 +860,6 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 # Can't approve but no violations to post
                 result["status"] = "approved"  # Effectively clean
                 log(f"AUTO: {link} - no violations")
-                # GitHub clears a review request only when a review is
-                # submitted. The gate refuses when the bot already approved
-                # this commit or its earlier threads are open, and posting
-                # nothing then leaves the request standing: the 5-minute
-                # review-request poll reviewed one such PR 204 times. Answer it.
-                if bot_review_requested(repo, number, bot_username):
-                    url = submit_comment_review(
-                        repo,
-                        number,
-                        head_sha,
-                        with_details(
-                            f"{VERDICT_APPROVE}\n\nReviewed again at {head_sha[:8]} "
-                            "as requested: no new issues, and no earlier comment is "
-                            "still open."
-                            if VERDICT
-                            else f"Reviewed again at {head_sha[:8]} as requested: "
-                            "no new issues.",
-                            pr_data,
-                        ),
-                    )
-                    if url is not None:
-                        result["review_url"] = url
-                        log(f"AUTO: {link} - answered the review request")
             return result
 
         if auto_mode:
@@ -997,7 +870,6 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
                 number,
                 violations,
                 head_sha,
-                verdict_body(changes_verdict(blocking), pr_data),
                 review_event(blocking, pr_data.get("author"), bot_username),
             )
             result["status"] = "posted"
