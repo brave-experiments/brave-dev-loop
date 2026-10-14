@@ -56,6 +56,9 @@ Starting 3 parallel jobs (bot.concurrentJobs). Each takes a run slot of its own;
   with "All N run slots are busy" and the rest carry on.
 - **`tui` runs one job.** One terminal hosts one interactive session, so the setting is ignored
   there, with a line saying so.
+- **A URL runs one job.** `./run.sh https://github.com/o/r/issues/613` names one story, which
+  only one run may work, so the setting is ignored and the story is worked by a single run,
+  with a line saying so.
 - **The supervisor holds no slot.** `./run.sh --status` shows the jobs, not the command that started
   them. It exits with the highest status any job returned.
 - **Ctrl+C stops every job**, each the way it stops when it is the only run: the claim and the
