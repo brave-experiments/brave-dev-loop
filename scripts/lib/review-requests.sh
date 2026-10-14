@@ -21,7 +21,9 @@ bot_review_requested_prs() {
   #
   # PRs whose author is not a registered org member never leave this function:
   # org_gate.py drops them and comments once, with no model involved, so
-  # neither the gate nor the job ever sees them. A members file it cannot read
+  # neither the gate nor the job ever sees them. The comment is always posted as
+  # the reviewer (the gate itself runs as the bot) and at most once per PR: the
+  # marker counts from any account. A members file it cannot read
   # fails the query, which callers treat as "do nothing".
   gh pr list \
     --repo "$BOT_PR_REPO" \
@@ -30,5 +32,5 @@ bot_review_requested_prs() {
     --limit "${1:-20}" \
     --json number,author \
     --jq '.[] | "\(.number) \(.author.login)"' |
-    python3 "$BOT_DIR/scripts/lib/org_gate.py" filter-queue --repo "$BOT_PR_REPO"
+    "$BOT_DIR/scripts/as-reviewer.sh" -- python3 "$BOT_DIR/scripts/lib/org_gate.py" filter-queue --repo "$BOT_PR_REPO"
 }

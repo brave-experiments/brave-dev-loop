@@ -89,3 +89,27 @@ def test_filter_queue_fails_when_the_members_file_is_gone(tmp_path, monkeypatch)
     monkeypatch.setattr(org_gate, "members_path", lambda: str(tmp_path / "nope"))
     monkeypatch.setattr(sys, "stdin", io.StringIO("1 alice\n"))
     assert org_gate.main(["filter-queue", "--repo", "o/r"]) == 1
+
+
+def test_marker_from_another_account_stops_the_comment(monkeypatch):
+    posted = []
+
+    def fake_gh(args, **k):
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        r = R()
+        if "POST" in args:
+            posted.append(args)
+        elif args[:2] == ["api", "user"]:
+            r.stdout = "netzenbot\n"
+        else:
+            # the reviewer account already left the marker comment
+            r.stdout = "123\n"
+        return r
+
+    monkeypatch.setattr(org_gate, "_gh", fake_gh)
+    assert org_gate.comment_once("o/r", 5, print) is False
+    assert posted == []
