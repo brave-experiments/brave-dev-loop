@@ -40,6 +40,26 @@ Four required sections, in that order. `Closes` first, above everything, or the
 cross-repo issue does not close on merge. Anything else you want to say goes
 after the test plan or inside `<details>`.
 
+### When the PR fixes only part of the issue
+
+`Closes` is the default. Use `Part of` only when you can name what the issue
+still needs, and say it on a line of its own under `User impact:`:
+
+```markdown
+Part of <owner>/<repo>#<issue>
+
+User impact: <as above>
+
+Remaining: <the piece of the issue this PR does not do, in one line>
+```
+
+`Part of` leaves the issue open, so on a PR that finishes the issue it strands a
+finished issue behind a merged fix. The checker enforces the other half of that:
+a `Part of` body with no `Remaining:` line, an empty one, or one that says
+`nothing` is an error, because a PR with nothing left closes its issue. The
+same remaining work is posted as a comment on the issue once the PR exists, so
+whoever opens the issue sees what is left and which PR did the rest.
+
 ## The user-impact line
 
 One line, not a section: above the problem and below `Closes`. It answers the

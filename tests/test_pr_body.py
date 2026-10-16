@@ -330,6 +330,126 @@ def test_no_closes_flag_silences_the_warning(checker):
     assert warnings == []
 
 
+# ── A partial fix ────────────────────────────────────────────────────────────
+
+REMAINING = "Remaining: the retry path still uses the old 60 second bound."
+
+
+def partial(remaining=REMAINING, head="Part of brave/bravebot#158"):
+    """GOOD opening with a `Part of` line and, when given, a Remaining line."""
+    body = GOOD.replace("Closes brave/bravebot#158", head)
+    if remaining is not None:
+        body = body.replace(IMPACT, IMPACT + "\n\n" + remaining)
+    return body
+
+
+def test_a_partial_fix_that_names_what_is_left_passes(checker):
+    errors, warnings = checker.check(partial())
+    assert errors == []
+    assert warnings == []
+
+
+def test_a_partial_fix_needs_no_flag_to_skip_the_missing_closes_warning(checker):
+    _, warnings = checker.check(partial(), require_closes=True)
+    assert not any("Closes" in w for w in warnings)
+
+
+def test_part_of_without_a_remaining_line_is_an_error(checker):
+    errors, _ = checker.check(partial(remaining=None))
+    assert any("Remaining:" in e and "Closes" in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Remaining: nothing",
+        "Remaining: None.",
+        "Remaining: N/A",
+        "Remaining: no further work",
+        "**Remaining:** nothing, this was all of it",
+    ],
+)
+def test_part_of_that_leaves_nothing_should_have_closed_the_issue(checker, line):
+    errors, _ = checker.check(partial(remaining=line))
+    assert any("closes it" in e for e in errors), errors
+
+
+def test_an_empty_remaining_line_is_an_error(checker):
+    errors, _ = checker.check(partial(remaining="Remaining:"))
+    assert any("says nothing after the colon" in e for e in errors), errors
+
+
+def test_a_remaining_line_that_starts_with_no_but_names_work_passes(checker):
+    errors, _ = checker.check(
+        partial(remaining="Remaining: no tests cover the Windows path yet.")
+    )
+    assert errors == []
+
+
+def test_the_remaining_label_tolerates_emphasis_and_case(checker):
+    errors, _ = checker.check(partial(remaining="**remaining:** the retry path"))
+    assert errors == []
+
+
+def test_a_bare_part_of_is_rejected(checker):
+    errors, _ = checker.check(partial(head="Part of #158"))
+    assert any("cross-repo" in e for e in errors), errors
+
+
+def test_a_part_of_line_below_the_top_is_not_a_reference(checker):
+    """GitHub reads only the first line, so the checker does not treat a lower
+    one as the body's declaration; the missing-reference warning still fires."""
+    body = partial(remaining=None).replace("Part of brave/bravebot#158\n\n", "")
+    body = body.replace(
+        "## The problem", "Part of brave/bravebot#158\n\n## The problem"
+    )
+    errors, warnings = checker.check(body)
+    assert not any("Remaining" in e for e in errors), errors
+    assert any("Closes" in w for w in warnings)
+
+
+def test_a_sentence_starting_part_of_is_not_a_reference(checker):
+    body = GOOD.replace(
+        "Closes brave/bravebot#158\n\n", "Part of the problem is old.\n\n"
+    )
+    errors, _ = checker.check(body)
+    assert not any("Remaining" in e for e in errors), errors
+
+
+def test_a_partial_and_a_closing_line_can_share_the_top(checker):
+    body = partial().replace(
+        "Part of brave/bravebot#158",
+        "Part of brave/bravebot#158\nCloses brave/bravebot#159",
+    )
+    errors, _ = checker.check(body)
+    assert errors == []
+
+
+def test_the_cli_accepts_a_partial_fix_without_the_flag(tmp_path):
+    path = tmp_path / "body.md"
+    path.write_text(partial(), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, SCRIPT, "--body-file", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
+
+
+def test_the_workflow_makes_the_agent_comment_what_is_left():
+    """The Remaining line is only checked; the comment on the issue is a step the
+    agent has to be told to take, and nothing else notices when it is skipped."""
+    doc = _doc("workflow-committed.md")
+    assert "gh issue comment" in doc
+    assert "Remaining:" in doc
+
+
+def test_the_spec_doc_and_the_template_show_the_partial_shape():
+    for name in ("pr-descriptions.md", "git-repository.md"):
+        doc = _doc(name)
+        assert "Part of" in doc and "Remaining:" in doc, name
+
+
 # ── What a user sees ─────────────────────────────────────────────────────────
 
 IMPACT = "User impact: a reply that takes 75 seconds now arrives instead of failing."

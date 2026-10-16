@@ -98,6 +98,17 @@ SETUP_COMMAND = re.compile(
     r"(?:npm|yarn|pnpm)\s+(?:install|ci|run\s+(?:build|init|sync)))\b"
 )
 CLOSES_LINE = re.compile(r"^\s*(?:closes|fixes|resolves)\b", re.I)
+# A deliberate partial fix, which leaves its issue open. It needs `#<n>` right
+# after the words so a sentence that merely starts "Part of the problem" is not
+# taken for one, and only the first line counts: GitHub reads no other.
+PART_OF_LINE = re.compile(r"^\s*part of\s+\S*#\d+", re.I)
+QUALIFIED_PART_OF = re.compile(r"^\s*part of\s+[\w.-]+/[\w.-]+#\d+\s*$", re.I)
+# What a `Part of` body says is left. The issue stays open on the strength of
+# it, so it has to name something.
+REMAINING_LINE = re.compile(r"^\s*[*_]{0,2}\s*remaining\s*[*_]{0,2}\s*:\s*(.*)$", re.I)
+NOTHING_REMAINS = re.compile(
+    r"^(?:none|nothing|nil|n/?a|no (?:more|further|remaining|work))\b", re.I
+)
 # The line that says whether anybody outside this repository can tell the change
 # landed. Bold and italic markers are tolerated on either side of the colon,
 # because an author who writes the line at all tends to emphasise the label.
@@ -322,9 +333,10 @@ def check(body, require_closes=True, test_only_change=False, ui_paths_changed=()
 
     # ── The closing line ────────────────────────────────────────────────────
     closes_anywhere = [ln for ln in nonempty if CLOSES_LINE.match(ln)]
-    if closes_anywhere:
-        first = nonempty[0]
-        if not CLOSES_LINE.match(first):
+    first = nonempty[0] if nonempty else ""
+    part_of = PART_OF_LINE.match(first)
+    if closes_anywhere or part_of:
+        if not (CLOSES_LINE.match(first) or part_of):
             errors.append(
                 "the Closes line must be the very first line of the body, above "
                 f"everything else (found {closes_anywhere[0].strip()!r} lower down)"
@@ -336,14 +348,48 @@ def check(body, require_closes=True, test_only_change=False, ui_paths_changed=()
                     "'Closes <owner>/<repo>#<number>' -- a bare '#<n>' does not "
                     "close an issue in another repository"
                 )
-    elif require_closes:
+        if part_of and not QUALIFIED_PART_OF.match(first):
+            errors.append(
+                f"{first.strip()!r}: use the cross-repo form "
+                "'Part of <owner>/<repo>#<number>' so the line links the issue"
+            )
+    if not closes_anywhere and not part_of and require_closes:
         warnings.append(
             "no Closes line: if this PR resolves an issue, "
             "'Closes <owner>/<repo>#<number>' must be the first line"
         )
 
-    # ── What a person using the product can see ─────────────────────────────
     preamble, rest = split_at_first_heading(stripped)
+
+    # ── A partial fix says what it leaves ───────────────────────────────────
+    # `Part of` keeps the issue open, so a PR that used it for work that fixes
+    # the whole issue strands a finished issue. Naming what is left is what
+    # tells the two apart: a PR that cannot name anything closes the issue.
+    if part_of:
+        remaining = next(
+            filter(None, (REMAINING_LINE.match(ln) for ln in preamble)), None
+        )
+        text = remaining.group(1).strip().strip("*_").strip() if remaining else None
+        if text is None:
+            errors.append(
+                "a 'Part of' body must say what is left of the issue: add "
+                "'Remaining: <the piece of the issue this PR does not do>' below "
+                "it. If nothing is left, this PR closes the issue: open with "
+                "'Closes <owner>/<repo>#<number>' instead"
+            )
+        elif not text:
+            errors.append(
+                "the 'Remaining:' line says nothing after the colon: name what is "
+                "left of the issue"
+            )
+        elif NOTHING_REMAINS.match(text):
+            errors.append(
+                f"'Remaining: {text}' says the issue is finished, and a PR that "
+                "finishes it closes it: open with 'Closes <owner>/<repo>#<number>' "
+                "instead of 'Part of'"
+            )
+
+    # ── What a person using the product can see ─────────────────────────────
     stated = next(filter(None, (IMPACT_LINE.match(ln) for ln in preamble)), None)
     if stated:
         impact = stated.group(1).strip().strip("*_").strip()
