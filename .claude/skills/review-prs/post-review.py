@@ -624,6 +624,28 @@ def blocks_merge(violations, still_open):
     return bool(still_open) or any(v.get("severity") != "low" for v in violations)
 
 
+def still_open_as_violations(still_open):
+    """The earlier comments a re-requested review found unanswered, as inline
+    comments on the lines they were first made on. A review carries no body,
+    so this is how a verdict of "not fixed" is said at all."""
+    violations = []
+    for t in still_open:
+        if not t.get("path") or not t.get("line"):
+            continue
+        reason = (t.get("reason") or "").strip()
+        violations.append(
+            {
+                "file": t["path"],
+                "line": t["line"],
+                "severity": "medium",
+                "rule": "earlier-comment",
+                "draft_comment": "**Not fixed.** "
+                + (reason or "The change does not answer the comment above."),
+            }
+        )
+    return violations
+
+
 def review_event(blocking, pr_author, bot_username):
     """The review event for a verdict profile: CHANGES_REQUESTED when something
     must be fixed, COMMENT for nits. GitHub refuses a request for changes on
@@ -825,13 +847,22 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             log(f"STILL OPEN: {t.get('path')}:{t.get('line')} — {t.get('reason')}")
 
         if not violations and still_open:
-            # Nothing new to say: the earlier inline comments already stand,
-            # and an overall review restating them is noise.
-            log(
-                f"AUTO: {link} - {len(still_open)} earlier comments still open, "
-                "nothing posted"
-            )
-            return result
+            if not (auto_mode and pr_data.get("reviewRequested")):
+                # Nothing new to say: the earlier inline comments already
+                # stand, and an overall review restating them is noise.
+                log(
+                    f"AUTO: {link} - {len(still_open)} earlier comments still "
+                    "open, nothing posted"
+                )
+                return result
+            # Someone asked for this review again. Silence leaves the request
+            # open for ever, so answer it: the fix is not good enough.
+            violations = still_open_as_violations(still_open)
+            if not violations:
+                # No line to put the verdict on. Never fall through to an
+                # approval with a comment still open.
+                log(f"AUTO: {link} - earlier comments still open, no line to answer on")
+                return result
 
         if not violations:
             # No violations — attempt approval. A PR someone asked the bot to
