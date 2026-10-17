@@ -54,6 +54,10 @@ Starting 3 parallel jobs (bot.concurrentJobs). Each takes a run slot of its own;
   job that finds none exits without working anything, so `run.sh` refuses the setting instead.
   Slots a run you started by hand already holds are not available to the jobs: those jobs exit
   with "All N run slots are busy" and the rest carry on.
+- **Each job starts 10s after the one before it**, so the jobs do not all run start-up
+  (PRD sync, label sweep, worktree cleanup) and pick a story in the same instant. Set
+  `BOT_JOB_START_DELAY_SECONDS` in the environment to change it; `0` starts them together.
+  The gap is not what stops two jobs working one story — claims do (see below).
 - **`tui` runs one job.** One terminal hosts one interactive session, so the setting is ignored
   there, with a line saying so.
 - **A URL runs one job.** `./run.sh https://github.com/o/r/issues/613` names one story, which

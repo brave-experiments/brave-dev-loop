@@ -20,6 +20,12 @@ LIB = os.path.join(ROOT, "scripts", "lib", "parallel-jobs.sh")
 RUN_SH = os.path.join(ROOT, "run.sh")
 
 
+@pytest.fixture(autouse=True)
+def no_start_delay(monkeypatch):
+    # The default gap between jobs is 10s; tests that are not about it run without.
+    monkeypatch.setenv("BOT_JOB_START_DELAY_SECONDS", "0")
+
+
 def bash(script, **kwargs):
     return subprocess.run(
         ["bash", "-c", f"source {LIB}\n{script}"],
@@ -129,6 +135,87 @@ class TestRunParallelJobs:
         tmpdir.mkdir()
         self.run(tmp_path, "true", env={**os.environ, "TMPDIR": str(tmpdir)})
         assert list(tmpdir.iterdir()) == []
+
+
+class TestStartDelay:
+    # whole-second timestamps: a 2s gap is at least 1s apart however they round
+    def test_each_job_starts_after_the_one_before_it(self, tmp_path):
+        starts = tmp_path / "starts"
+        script = worker(tmp_path, f'echo "$BOT_RUN_JOB $(date +%s)" >> {starts}')
+        out = bash(
+            f"bot_run_parallel_jobs 2 {script}",
+            env={**os.environ, "BOT_JOB_START_DELAY_SECONDS": "2"},
+        )
+        assert out.returncode == 0, out.stderr
+        at = {}
+        for line in starts.read_text().splitlines():
+            job, ts = line.split()
+            at[int(job)] = int(ts)
+        assert at[2] - at[1] >= 1
+
+    def test_the_default_is_ten_seconds(self):
+        out = bash(
+            'echo "$BOT_JOB_START_DELAY_SECONDS"',
+            env={
+                k: v
+                for k, v in os.environ.items()
+                if k != "BOT_JOB_START_DELAY_SECONDS"
+            },
+        )
+        assert out.stdout.strip() == "10"
+
+    def test_it_says_so(self, tmp_path):
+        out = bash(
+            f"bot_run_parallel_jobs 2 {worker(tmp_path, 'true')}",
+            env={**os.environ, "BOT_JOB_START_DELAY_SECONDS": "1"},
+        )
+        assert "Each job starts 1s after the one before it." in out.stdout
+
+    def test_a_single_job_neither_waits_nor_says_so(self, tmp_path):
+        began = time.monotonic()
+        out = bash(
+            f"bot_run_parallel_jobs 1 {worker(tmp_path, 'true')}",
+            env={**os.environ, "BOT_JOB_START_DELAY_SECONDS": "30"},
+        )
+        assert time.monotonic() - began < 10
+        assert "after the one before it" not in out.stdout
+
+    def test_a_signal_during_the_gap_stops_the_started_jobs_at_once(self, tmp_path):
+        marker = f"{4000 + os.getpid() % 1000}.{int(time.time()) % 100:02d}"
+        script = worker(
+            tmp_path,
+            f"""
+            touch {tmp_path}/started-$BOT_RUN_JOB
+            sleep {marker}
+            """,
+        )
+        proc = subprocess.Popen(
+            ["bash", "-c", f"source {LIB}\nbot_run_parallel_jobs 3 {script}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env={**os.environ, "BOT_JOB_START_DELAY_SECONDS": "30"},
+        )
+        try:
+            for _ in range(100):
+                if (tmp_path / "started-1").exists():
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("the first job never started")
+            began = time.monotonic()
+            proc.send_signal(signal.SIGTERM)
+            assert proc.wait(timeout=25) == 130
+            assert time.monotonic() - began < 20
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        assert not (tmp_path / "started-2").exists()
+        survivors = subprocess.run(
+            ["pgrep", "-f", f"sleep {marker}"], capture_output=True, text=True
+        )
+        assert survivors.stdout.strip() == "", "a job's child outlived the stop"
+        assert "Stopping 1 jobs" in proc.stdout.read()
 
 
 class TestStopping:
