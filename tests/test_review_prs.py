@@ -1513,6 +1513,78 @@ class TestEarlierComments:
         assert sent["resolved"] == ["T1"]
         assert "comment" not in sent and "batch" not in sent
 
+    def test_a_requested_review_says_the_comment_is_not_fixed(
+        self, post, sent, monkeypatch
+    ):
+        """A re-request with nothing new used to post nothing, so the request
+        stayed open and the poll gave up after three empty sessions."""
+        posted = []
+        monkeypatch.setattr(
+            post,
+            "post_batch_review",
+            lambda repo, n, vs, sha, event="COMMENT": (
+                posted.append((vs, event)) or ("url", len(vs))
+            ),
+        )
+        pr = dict(
+            self.PR,
+            reviewRequested=True,
+            author="someone",
+            open_threads=[self.thread(2, False, "The message still says X.")],
+        )
+        result = post.process_pr(pr, "o/r", "bot", True)
+        assert result["status"] == "posted" and "approve" not in sent
+        ((vs, event),) = posted
+        assert event == "REQUEST_CHANGES"
+        assert [(v["file"], v["line"]) for v in vs] == [("f2.rs", 2)]
+        assert vs[0]["draft_comment"] == "**Not fixed.** The message still says X."
+
+    def test_a_requested_review_with_nowhere_to_answer_never_approves(
+        self, post, sent, monkeypatch
+    ):
+        monkeypatch.setattr(
+            post, "submit_approval", lambda *a: pytest.fail("a comment is still open")
+        )
+        thread = dict(self.thread(2, False), line=None)
+        pr = dict(self.PR, reviewRequested=True, open_threads=[thread])
+        result = post.process_pr(pr, "o/r", "bot", True)
+        assert result["status"] != "approved" and "batch" not in sent
+
+    def test_a_mixed_set_answers_the_threads_that_have_a_line(
+        self, post, sent, monkeypatch
+    ):
+        posted = []
+        monkeypatch.setattr(
+            post,
+            "post_batch_review",
+            lambda repo, n, vs, sha, event="COMMENT": (
+                posted.append(vs) or ("url", len(vs))
+            ),
+        )
+        outdated = dict(self.thread(3, False), line=None)
+        pr = dict(
+            self.PR,
+            reviewRequested=True,
+            open_threads=[self.thread(2, False, "Still X."), outdated],
+        )
+        post.process_pr(pr, "o/r", "bot", True)
+        assert [(v["file"], v["line"]) for v in posted[0]] == [("f2.rs", 2)]
+
+    def test_an_unrequested_review_stays_silent_with_a_comment_open(self, post, sent):
+        pr = dict(self.PR, open_threads=[self.thread(2, False, "Still X.")])
+        result = post.process_pr(pr, "o/r", "bot", True)
+        assert "batch" not in sent and result["status"] == "skipped"
+
+    def test_nothing_posted_is_not_reported_as_answered(self, post, sent, monkeypatch):
+        """Every line left the diff, so no review was submitted and the request
+        is still open."""
+        monkeypatch.setattr(post, "post_batch_review", lambda *a, **k: (None, 0))
+        pr = dict(
+            self.PR, reviewRequested=True, open_threads=[self.thread(2, False, "X.")]
+        )
+        result = post.process_pr(pr, "o/r", "bot", True)
+        assert result["status"] == "skipped" and result["comments_posted"] == 0
+
     def test_a_thread_without_a_verdict_is_never_resolved(self, post, sent):
         self._run(post, [self.thread(3, False)])
         assert sent["resolved"] == []
