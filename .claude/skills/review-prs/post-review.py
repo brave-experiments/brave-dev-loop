@@ -631,6 +631,7 @@ def still_open_as_violations(still_open):
     violations = []
     for t in still_open:
         if not t.get("path") or not t.get("line"):
+            log(f"NO LINE: {t.get('url')} — cannot answer it inline")
             continue
         reason = (t.get("reason") or "").strip()
         violations.append(
@@ -846,6 +847,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
         for t in still_open:
             log(f"STILL OPEN: {t.get('path')}:{t.get('line')} — {t.get('reason')}")
 
+        answering = False
         if not violations and still_open:
             if not (auto_mode and pr_data.get("reviewRequested")):
                 # Nothing new to say: the earlier inline comments already
@@ -858,6 +860,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             # Someone asked for this review again. Silence leaves the request
             # open for ever, so answer it: the fix is not good enough.
             violations = still_open_as_violations(still_open)
+            answering = True
             if not violations:
                 # No line to put the verdict on. Never fall through to an
                 # approval with a comment still open.
@@ -906,6 +909,14 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             result["status"] = "posted"
             result["comments_posted"] = posted
             result["review_url"] = review_url or ""
+            if answering and not posted:
+                # Every line left the diff: no review went in, so the request
+                # is still open and this must not read as answered.
+                result["status"] = "skipped"
+                log(
+                    f"AUTO: {link} - SKIPPED: no earlier comment is on a line in the diff"
+                )
+                return result
 
             detail_lines = []
             for v in violations:
