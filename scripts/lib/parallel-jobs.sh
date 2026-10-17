@@ -62,8 +62,14 @@ _bot_kill_tree() {
 
 _BOT_JOB_PIDS=()
 _BOT_JOB_DIR=""
+_BOT_JOB_SLEEP_PID=""
 # How long a job gets to clean up after TERM before it is killed outright.
 BOT_JOB_STOP_SECONDS="${BOT_JOB_STOP_SECONDS:-30}"
+# How long after one job starts the next one does. Jobs that start together all
+# run the same start-up (target-repo sync, PRD sync, label sweep, worktree
+# cleanup) and select a story in the same instant; the gap lets the first finish
+# what the others would repeat or skip.
+BOT_JOB_START_DELAY_SECONDS="${BOT_JOB_START_DELAY_SECONDS:-10}"
 
 # The operator pressed Ctrl+C, or something sent TERM: stop every job the way it
 # would have stopped if it were the only run, then leave.
@@ -72,6 +78,7 @@ _bot_jobs_stop() {
   trap '' INT TERM HUP
   echo "" >&2
   echo "Stopping ${#_BOT_JOB_PIDS[@]} jobs..." >&2
+  [ -z "$_BOT_JOB_SLEEP_PID" ] || kill "$_BOT_JOB_SLEEP_PID" 2>/dev/null || true
   for pid in "${_BOT_JOB_PIDS[@]}"; do
     _bot_kill_tree TERM "$pid"
   done
@@ -111,7 +118,18 @@ bot_run_parallel_jobs() {
   trap _bot_jobs_stop INT TERM HUP
 
   echo "Starting $jobs parallel jobs (bot.concurrentJobs). Each takes a run slot of its own; their lines are prefixed [job N]."
+  if [ "$jobs" -gt 1 ] && [ "$BOT_JOB_START_DELAY_SECONDS" -gt 0 ]; then
+    echo "Each job starts ${BOT_JOB_START_DELAY_SECONDS}s after the one before it."
+  fi
   for i in $(seq 1 "$jobs"); do
+    if [ "$i" -gt 1 ] && [ "$BOT_JOB_START_DELAY_SECONDS" -gt 0 ]; then
+      # Backgrounded and waited on, so a TERM ends the gap at once; bash holds a
+      # trap until a foreground command finishes.
+      sleep "$BOT_JOB_START_DELAY_SECONDS" &
+      _BOT_JOB_SLEEP_PID=$!
+      wait "$_BOT_JOB_SLEEP_PID" 2>/dev/null || true
+      _BOT_JOB_SLEEP_PID=""
+    fi
     mkfifo "$_BOT_JOB_DIR/job-$i"
     _bot_prefix_lines "[job $i] " < "$_BOT_JOB_DIR/job-$i" &
     prefixers+=("$!")
