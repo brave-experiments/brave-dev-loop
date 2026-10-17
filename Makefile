@@ -1,4 +1,4 @@
-.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules schedules-run schedules-review remove-schedules remove-schedules-run remove-schedules-review view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase approve merge unmount-worktrees
+.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules schedules-run schedules-review remove-schedules remove-schedules-run remove-schedules-review view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase approve merge unmount-worktrees dashboard tui-dashboard steer
 
 # Prefer .venv when it exists so no target needs an activated shell. PEP 668
 # interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
@@ -200,3 +200,15 @@ unmount-worktrees:
 # Clean up generated/temporary files
 clean:
 	rm -f .run.lock
+
+# Web telemetry and control dashboard
+dashboard:
+	@$(PYTHON) scripts/web_dashboard.py $(if $(PORT),--port $(PORT)) $(if $(HOST),--host $(HOST))
+
+# Terminal telemetry dashboard
+tui-dashboard:
+	@$(PYTHON) scripts/tui_dashboard.py $(if $(SLOT),--slot $(SLOT))
+
+# Human-in-the-loop steering CLI
+steer:
+	@$(PYTHON) scripts/steer-loop.py $(if $(HINT),"$(HINT)") $(if $(SLOT),--slot $(SLOT))

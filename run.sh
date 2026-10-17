@@ -65,6 +65,19 @@ if [ "${1:-}" = "--status" ]; then
   exec "$SCRIPT_DIR/scripts/run-status.sh" "${@:2}"
 fi
 
+# Telemetry and Human-in-the-Loop control plane
+if [ "${1:-}" = "--dashboard" ] || [ "${1:-}" = "dashboard" ] || [ "${1:-}" = "web" ]; then
+  exec python3 "$SCRIPT_DIR/scripts/web_dashboard.py" "${@:2}"
+fi
+
+if [ "${1:-}" = "--tui-dashboard" ] || [ "${1:-}" = "tui-dashboard" ]; then
+  exec python3 "$SCRIPT_DIR/scripts/tui_dashboard.py" "${@:2}"
+fi
+
+if [ "${1:-}" = "--steer" ] || [ "${1:-}" = "steer" ]; then
+  exec python3 "$SCRIPT_DIR/scripts/steer-loop.py" "${@:2}"
+fi
+
 # Parse arguments
 MAX_ITERATIONS=10
 
@@ -306,6 +319,10 @@ HOUSEKEEPING_LOG="$RUN_SESSION_DIR/housekeeping.log"
 BOT_RUN_SESSION_ID="$RUN_SESSION_ID"
 BOT_RUN_SESSION_DIR="$RUN_SESSION_DIR"
 export BOT_RUN_SLOT BOT_RUN_PID BOT_RUN_SESSION_ID BOT_RUN_SESSION_DIR
+python3 "$SCRIPT_DIR/scripts/lib/event_stream.py" emit \
+  --session-dir "$RUN_SESSION_DIR" --type "SESSION_START" \
+  --slot "$BOT_RUN_SLOT" \
+  --payload "{\"sessionId\": \"$RUN_SESSION_ID\", \"agent\": \"${CLI_AGENT:-$BOT_AGENT}\", \"pid\": $BOT_RUN_PID}" >/dev/null 2>&1 || true
 CURRENT_STORY_ID=""
 TITLE_WATCH_PID=""
 
@@ -491,6 +508,10 @@ quiet_step() {
 
 cleanup_run() {
   stop_title_watch
+  [ -n "$RUN_SESSION_DIR" ] && python3 "$SCRIPT_DIR/scripts/lib/event_stream.py" emit \
+    --session-dir "$RUN_SESSION_DIR" --type "SESSION_END" \
+    --slot "$BOT_RUN_SLOT" \
+    --payload "{\"sessionId\": \"$RUN_SESSION_ID\"}" >/dev/null 2>&1 || true
 
   # Hand back the worktrees this session finished with, before the claim goes:
   # a run interrupted mid-iteration still holds one, and that claim is what
@@ -738,8 +759,43 @@ while [ $loop_count -lt $MAX_ITERATIONS ]; do
   printf 'loop %s: %s (%s) %s\n' "$loop_count" "$STORY_ID" "$STORY_STATUS" "$STORY_TITLE" \
     >> "$RUN_SESSION_DIR/stories.txt"
   bot_slot_meta_set "storyId=$STORY_ID" "status=$STORY_STATUS" "runId=$RUN_ID" \
-    "loop:num=$loop_count" "log=$ITERATION_LOG" "agent=$BOT_AGENT"
+    "loop:num=$loop_count" "log=$ITERATION_LOG" "agent=$BOT_AGENT" \
+    "sessionDir=$RUN_SESSION_DIR"
   bot_slot_heartbeat
+
+  # Telemetry: emit ITERATION_START
+  START_PAYLOAD=$(jq -nc --argjson loop "$loop_count" --arg title "$STORY_TITLE" \
+    --arg status "$STORY_STATUS" --arg tier "$TIER_NAME" \
+    '{loop: $loop, title: $title, status: $status, tier: $tier}' 2>/dev/null || echo '{}')
+  python3 "$SCRIPT_DIR/scripts/lib/event_stream.py" emit \
+    --session-dir "$RUN_SESSION_DIR" --type "ITERATION_START" \
+    --story-id "$STORY_ID" --slot "$BOT_RUN_SLOT" \
+    --payload "$START_PAYLOAD" >/dev/null 2>&1 || true
+
+  # Check if paused by operator
+  while python3 "$SCRIPT_DIR/scripts/lib/event_stream.py" is-paused --session-dir "$RUN_SESSION_DIR" 2>/dev/null; do
+    echo "  [PAUSED] Loop execution is paused by operator via control plane. Standing by..."
+    sleep 3
+  done
+
+  # Check for operator steering hints
+  STEER_HINTS=$(python3 "$SCRIPT_DIR/scripts/lib/event_stream.py" pop-steer --session-dir "$RUN_SESSION_DIR" 2>/dev/null || echo "[]")
+  if [ "$STEER_HINTS" != "[]" ] && [ -n "$STEER_HINTS" ]; then
+    HINTS_FORMATTED=$(echo "$STEER_HINTS" | jq -r 'map("- " + .) | join("\n")' 2>/dev/null || true)
+    if [ -n "$HINTS_FORMATTED" ]; then
+      echo "  [STEER] Injecting operator steering hint into prompt:"
+      printf '%s\n' "$HINTS_FORMATTED" | sed 's/^/    /'
+      EXTRA_PROMPT="$EXTRA_PROMPT
+
+Operator Guidance / Steering:
+$HINTS_FORMATTED"
+      PAYLOAD_JSON=$(jq -nc --argjson h "$STEER_HINTS" '{hints: $h}' 2>/dev/null || echo '{"hints":[]}')
+      python3 "$SCRIPT_DIR/scripts/lib/event_stream.py" emit \
+        --session-dir "$RUN_SESSION_DIR" --type "STEER_HINT_APPLIED" \
+        --story-id "$STORY_ID" --slot "$BOT_RUN_SLOT" \
+        --payload "$PAYLOAD_JSON" >/dev/null 2>&1 || true
+    fi
+  fi
 
   # Task confirmed — proceed with iteration setup
   # Store the current iteration log path in run-state.json
@@ -1253,6 +1309,12 @@ Additional context: $EXTRA_PROMPT"
   # The iteration is over: let another run pick this story up.
   release_claim
   bot_slot_heartbeat
+
+  # Telemetry: emit ITERATION_END
+  python3 "$SCRIPT_DIR/scripts/lib/event_stream.py" emit \
+    --session-dir "$RUN_SESSION_DIR" --type "ITERATION_END" \
+    --story-id "$STORY_ID" --slot "$BOT_RUN_SLOT" \
+    --payload "{\"loop\": $loop_count, \"storyId\": \"$STORY_ID\"}" >/dev/null 2>&1 || true
 
   echo "Loop $loop_count complete. Starting fresh context..."
   sleep 2
