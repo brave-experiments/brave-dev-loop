@@ -1483,21 +1483,21 @@ class TestBotListSshKeys:
         ]
 
     def test_collapses_pair_whose_halves_are_named_differently(self, tmp_path):
-        # netzenbot.pub / netzenbot.ppk. The name rule cannot see this pair, so
+        # botkey.pub / botkey.ppk. The name rule cannot see this pair, so
         # both halves were offered as if they were two keys — and with opposite
-        # [needs ssh-agent] markers, since ssh finds no `netzenbot` beside the
+        # [needs ssh-agent] markers, since ssh finds no `botkey` beside the
         # .pub to fall back to. Matching fingerprints collapse them to the half
         # that still authenticates from cron.
         ssh = tmp_path / ".ssh"
         ssh.mkdir()
-        key = ssh / "netzenbot"
+        key = ssh / "botkey"
         subprocess.run(
             ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
         )
-        key.rename(ssh / "netzenbot.ppk")
+        key.rename(ssh / "botkey.ppk")
         out = run_identity_snippet("bot_list_ssh_keys", home=tmp_path).stdout
         listed = out.split()
-        assert [os.path.basename(line) for line in listed] == ["netzenbot.ppk"]
+        assert [os.path.basename(line) for line in listed] == ["botkey.ppk"]
         # The surviving entry is the one that does not depend on ssh-agent.
         assert (
             run_identity_snippet(f"bot_identity_needs_agent '{listed[0]}'").returncode

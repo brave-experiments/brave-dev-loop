@@ -52,7 +52,7 @@ bot_key_fingerprint() {
 #   private file beside it, so the .pub is the strictly more capable target.
 #
 #   By fingerprint — a .pub is dropped when a listed private key turns out to
-#   be its other half under an unrelated name (netzenbot.pub / netzenbot.ppk).
+#   be its other half under an unrelated name (botkey.pub / botkey.ppk).
 #   The name rule cannot see that pair, and listing both halves offers the
 #   same key twice: once as a path that works with or without ssh-agent, and
 #   once as a path that only works while the agent holds it, since ssh has no
@@ -116,7 +116,7 @@ bot_identity_needs_agent() {
 # "unknown_key" on every bot commit.
 #
 # ssh signing wants the *public* half. Accepts both the id_ed25519 ->
-# id_ed25519.pub and the netzenbot.ppk -> netzenbot.pub spellings, and falls
+# id_ed25519.pub and the botkey.ppk -> botkey.pub spellings, and falls
 # back to the private key, from which ssh-keygen derives the public part.
 bot_signing_key() {
   local override="$1" ssh_key="$2" key
