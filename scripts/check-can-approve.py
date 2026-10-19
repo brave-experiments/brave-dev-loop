@@ -212,6 +212,14 @@ def main():
         "review again wants an answer, and an approval is the only one that "
         "says the PR passed",
     )
+    parser.add_argument(
+        "--unresolved-ok",
+        action="store_true",
+        help="Do not block on the bot's unresolved inline threads. For a caller "
+        "that has already ruled on each of them: the bot may lack the right to "
+        "resolve its own threads, and an addressed thread it cannot close is "
+        "not a reason to withhold the approval",
+    )
     args = parser.parse_args()
 
     if "/" in args.repo:
@@ -240,7 +248,7 @@ def main():
         )
 
     # Bot must have NO unresolved inline threads.
-    if threads_info["unresolved_bot_threads"] > 0:
+    if threads_info["unresolved_bot_threads"] > 0 and not args.unresolved_ok:
         fail(
             f"{threads_info['unresolved_bot_threads']} of "
             f"{threads_info['total_bot_threads']} bot review threads "

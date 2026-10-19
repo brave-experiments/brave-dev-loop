@@ -724,11 +724,13 @@ def submit_approval(repo, pr_number):
     return None
 
 
-def check_can_approve(pr_number, bot_username, reapprove=False):
+def check_can_approve(pr_number, bot_username, reapprove=False, unresolved_ok=False):
     """Run the approval gate script. Returns True if approval is allowed."""
     cmd = ["python3", CHECK_CAN_APPROVE, str(pr_number), bot_username]
     if reapprove:
         cmd.append("--reapprove")
+    if unresolved_ok:
+        cmd.append("--unresolved-ok")
     rc, out, err = run_cmd(cmd, timeout=60)
     return rc == 0
 
@@ -872,8 +874,15 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             # review again is approved again even when the bot approved it
             # before: they asked for an answer, and a comment saying "no new
             # issues" does not tell them, or GitHub, that it passed.
+            # Every earlier thread was ruled on above: still_open is empty, so
+            # each one is addressed. Whether GitHub shows it resolved is not
+            # the question, and the bot often cannot resolve its own threads
+            # (triage access), which would withhold every approval.
             can_approve = check_can_approve(
-                number, bot_username, reapprove=bool(pr_data.get("reviewRequested"))
+                number,
+                bot_username,
+                reapprove=bool(pr_data.get("reviewRequested")),
+                unresolved_ok=True,
             )
             if can_approve and pr_data.get("author") == bot_username:
                 # GitHub refuses an approval from the PR's own author, and an

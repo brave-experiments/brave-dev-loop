@@ -1385,7 +1385,7 @@ class TestCleanReviewTheGateRefuses:
         a comment. Whoever asked wants an approval if the PR passes."""
         approved = []
         monkeypatch.setattr(
-            post, "check_can_approve", lambda n, b, reapprove=False: reapprove
+            post, "check_can_approve", lambda n, b, reapprove=False, **k: reapprove
         )
         monkeypatch.setattr(
             post, "submit_approval", lambda repo, n: approved.append(n) or "u"
@@ -1394,6 +1394,23 @@ class TestCleanReviewTheGateRefuses:
         result = post.process_pr(pr, "o/r", "bot", True)
         assert approved == [7] and posted == []
         assert result["status"] == "approved" and result["review_url"] == "u"
+
+    def test_the_approval_does_not_wait_for_threads_to_be_resolved(
+        self, post, posted, monkeypatch
+    ):
+        """The validator ruled on every earlier thread, and the bot cannot
+        resolve its own on a repo where it has triage access. The gate must not
+        read GitHub's resolved flag for a PR that reached this point."""
+        asked = []
+        monkeypatch.setattr(
+            post, "check_can_approve", lambda n, b, **k: asked.append(k) or True
+        )
+        monkeypatch.setattr(post, "submit_approval", lambda repo, n: "u")
+        monkeypatch.setattr(post, "resolve_review_thread", lambda t: False)
+        pr = dict(self.PR, open_threads=[{"thread_id": "t", "addressed": True}])
+        result = post.process_pr(pr, "o/r", "bot", True)
+        assert asked[0]["unresolved_ok"] is True
+        assert result["review_url"] == "u"
 
 
 class TestSweepCutoff:
@@ -1774,6 +1791,8 @@ class TestApprovalGateVerdictBodies:
         assert run("--reapprove") == 0
         threads["unresolved_bot_threads"] = 1
         assert run("--reapprove") == 1, "an open thread still blocks"
+        assert run("--reapprove", "--unresolved-ok") == 0
+        assert run("--unresolved-ok") == 1, "the earlier approval still blocks"
 
 
 class TestDedupKeepsDistinctFindings:
