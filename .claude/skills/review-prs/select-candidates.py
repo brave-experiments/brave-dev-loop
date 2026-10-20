@@ -32,6 +32,8 @@ def _load(name, filename):
 
 _post = _load("post_review", "post-review.py")
 _prep = _load("prepare_review", "prepare-review.py")
+# scripts/ is on sys.path once the two modules above have loaded.
+import lib.rule_index as rule_index_lib
 
 # Twice the posting cap, so the cap still has a choice after the validator drops some.
 CANDIDATE_LIMIT = 2 * _post.MAX_COMMENTS_PER_PR
@@ -158,6 +160,22 @@ def load_open_threads(pr):
     ]
 
 
+def rule_index(pr, bp_dir):
+    """The rules this PR was checked against: the docs its detect passes read."""
+    docs = [
+        p["doc"]
+        for p in pr.get("subagent_prompts", [])
+        if p.get("kind") == "rules" and p.get("doc")
+    ]
+    return rule_index_lib.index_for(bp_dir, docs, _prep.BP_LINK_BASE)
+
+
+def docs_dir_in_repo(bp_dir):
+    """Where the rule docs sit inside the repo, or "" when they sit outside it."""
+    rel = os.path.relpath(bp_dir, _prep.TARGET_REPO_PATH)
+    return "" if rel.startswith("..") else rel
+
+
 def write_validator(pr, candidates, bot_username, bp_dir, threads=()):
     pr_work_dir = os.path.dirname(pr["file_hashes_file"])
     numbered = []
@@ -185,7 +203,12 @@ def write_validator(pr, candidates, bot_username, bp_dir, threads=()):
         "prior_comments": prior,
         "bot_username": bot_username,
         "guidance": _prep.REVIEW_GUIDANCE,
+        "link_rules": _prep.REVIEW_LINK_RULES,
+        "propose": _prep.REVIEW_PROPOSE_PRACTICES,
     }
+    if _prep.REVIEW_LINK_RULES or _prep.REVIEW_PROPOSE_PRACTICES:
+        ctx["rule_index"] = rule_index(pr, bp_dir)
+        ctx["docs_dir"] = docs_dir_in_repo(bp_dir)
     prompt_file = os.path.join(pr_work_dir, "validate_prompt.txt")
     results_file = os.path.join(pr_work_dir, "validated.json")
     prompt = _prep.build_validate_prompt(

@@ -282,6 +282,30 @@ def review_request_changes(profile):
     return isinstance(review, dict) and review.get("requestChanges") is True
 
 
+def review_link_rules(profile):
+    """Whether the validator links a finding to the rule it breaks.
+
+    `review.linkRules` in profile.json. Only a JSON `true` turns it on. The
+    bug pass and the project-guidance pass write findings with no rule link, so
+    a finding that breaks a documented rule shows no rule unless the validator,
+    which reads the source and has the project's rule index, names one.
+    """
+    review = profile.get("review")
+    return isinstance(review, dict) and review.get("linkRules") is True
+
+
+def review_propose_practices(profile):
+    """Whether a review may file an issue proposing a new best practice.
+
+    `review.proposeBestPractices` in profile.json. Only a JSON `true` turns it
+    on. The validator may then describe one rule the review showed the project
+    lacks, and collect-results.py files it as an issue, never as a change to
+    the best-practices docs.
+    """
+    review = profile.get("review")
+    return isinstance(review, dict) and review.get("proposeBestPractices") is True
+
+
 def build_research(profile, config, base_dir=None):
     """Render a profile's pre-implementation reading steps.
 

@@ -11,6 +11,8 @@ the rules they cite, the diff, the path of the source tree, and the path to
 write your results to.
 
 Only drop, keep or tighten the candidates you were given. Do not add findings.
+A proposal is not a finding: when the prompt file asks for a rule link on a
+candidate or for best-practice proposals, write them in the fields it names.
 
 Never post anything to GitHub, and run no `gh` command except the one the
 prompt file allows, if it allows one. When the results file is written, reply

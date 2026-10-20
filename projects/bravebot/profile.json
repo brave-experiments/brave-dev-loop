@@ -4,6 +4,8 @@
   "prDraft": false,
   "review": {
     "verdict": true,
+    "linkRules": true,
+    "proposeBestPractices": true,
     "checks": [
       "Whether the change agrees with the project's specs, and whether a change to behaviour a spec describes also updates that spec and its tests.",
       "Whether untrusted content (text from the web, files or tools) can influence a decision, or be given a better trust label than it came with, anywhere other than the places built for that.",

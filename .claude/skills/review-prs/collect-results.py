@@ -11,6 +11,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -21,8 +22,16 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
 
 sys.path.insert(0, os.path.join(BOT_DIR, "scripts"))
-from lib.load_config import load_config, load_profile, review_checks
+from lib.load_config import (
+    get_config,
+    load_config,
+    load_profile,
+    resolve_docs_dir,
+    review_checks,
+    review_propose_practices,
+)
 from lib.reviewer_account import ensure_reviewer
+from lib.rule_index import heading_of, names_no_rule
 
 
 def log(msg):
@@ -37,7 +46,48 @@ def load_manifest(work_dir):
         return json.load(f)
 
 
-def collect_violations(pr):
+def settle_rule_links(violations, bp_dir):
+    """Keep only rule links that name a rule in the project's docs.
+
+    A validator writes these, and nothing else has checked them: select-candidates.py
+    only vetted the ones on the detect passes' candidates. A `rule_link` that names
+    no rule is dropped, and a `cited_rule_link` (the link a validator found for a
+    finding that came with none) is kept only when it names one, with the rule's
+    heading taken from the docs rather than from the model. The finding stays.
+    post-review.py then keeps a finding with no rule link only when it is high
+    severity, as it does for any such finding.
+    """
+    for v in violations:
+        link = v.get("rule_link")
+        if link and bp_dir and names_no_rule(link, bp_dir):
+            log(
+                f"INVALID_LINK: {v.get('file')}:{v.get('line')} cites {link}, "
+                "which names no rule; link dropped"
+            )
+            del v["rule_link"]
+            draft = v.get("draft_comment")
+            if isinstance(draft, str):
+                v["draft_comment"] = re.sub(
+                    r"\s*\(?\[[^\]]*\]\(" + re.escape(link) + r"\)\)?",
+                    "",
+                    draft,
+                ).strip()
+        cited = v.pop("cited_rule_link", None)
+        v.pop("cited_rule", None)
+        if not cited or v.get("rule_link"):
+            continue
+        heading = heading_of(cited, bp_dir) if bp_dir else None
+        if heading:
+            v["cited_rule_link"], v["cited_rule"] = cited, heading
+        else:
+            log(
+                f"INVALID_LINK: {v.get('file')}:{v.get('line')} cites {cited}, "
+                "which names no rule; link not added"
+            )
+    return violations
+
+
+def collect_violations(pr, bp_dir=None):
     """(violations, validation_log, skip_reason); skip_reason is set only for an unfinished review."""
     if pr.get("review_incomplete"):
         return [], [], "no detect subagent wrote results"
@@ -54,7 +104,18 @@ def collect_violations(pr):
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         return [], [], f"the validator wrote no results ({e})"
-    return data.get("violations", []), data.get("validation_log", []), None
+    violations = settle_rule_links(data.get("violations", []), bp_dir)
+    return violations, data.get("validation_log", []), None
+
+
+def collect_proposals(pr):
+    """The best-practice proposals the PR's validator wrote, as it wrote them."""
+    try:
+        with open((pr.get("validation") or {}).get("results_file", "")) as f:
+            value = json.load(f).get("proposals")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return []
+    return [p for p in value if isinstance(p, dict)] if isinstance(value, list) else []
 
 
 def collect_open_threads(pr):
@@ -273,12 +334,12 @@ def describe_checks(pr, violations, project_checks=()):
     )
 
 
-def build_post_review_input(manifest, project_checks=()):
+def build_post_review_input(manifest, project_checks=(), bp_dir=None):
     """Build the input JSON structure for post-review.py."""
     pr_results = []
 
     for pr in manifest.get("prs", []):
-        violations, validation_log, skip_reason = collect_violations(pr)
+        violations, validation_log, skip_reason = collect_violations(pr, bp_dir)
         if skip_reason:
             log(
                 f"NOT REVIEWED: PR #{pr['number']} — {skip_reason}; nothing "
@@ -298,12 +359,32 @@ def build_post_review_input(manifest, project_checks=()):
                 "violations": violations,
                 "open_threads": collect_open_threads(pr),
                 "validation_log": validation_log,
+                "proposals": collect_proposals(pr),
                 "checks_details": describe_checks(pr, violations, project_checks),
                 "description_details": describe_pr(pr),
             }
         )
 
     return {"pr_results": pr_results}
+
+
+def file_best_practice_proposals(pr_results, pr_repo, issue_repo, bp_dir, dry_run):
+    """Turn the validators' proposals into issues. Never fails the run: the review is posted."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "file_proposals", os.path.join(SCRIPT_DIR, "file-proposals.py")
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.file_proposals(
+            [r for r in pr_results if r.get("proposals")],
+            pr_repo,
+            issue_repo,
+            bp_dir,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        log(f"WARNING: best-practice proposals not filed: {e}")
 
 
 def cleanup_worktrees(manifest):
@@ -386,8 +467,10 @@ def main():
     print_cached_and_progress(manifest)
 
     # Build post-review input
-    profile = load_profile(load_config(), BOT_DIR)
-    post_review_data = build_post_review_input(manifest, review_checks(profile))
+    config = load_config()
+    profile = load_profile(config, BOT_DIR)
+    bp_dir = os.path.join(resolve_docs_dir(config, BOT_DIR), "best-practices")
+    post_review_data = build_post_review_input(manifest, review_checks(profile), bp_dir)
 
     # Collection stats
     prs = manifest.get("prs", [])
@@ -457,6 +540,15 @@ def main():
     # Pass through stdout (result JSON)
     if result.stdout:
         print(result.stdout, end="")
+
+    if review_propose_practices(profile):
+        file_best_practice_proposals(
+            post_review_data["pr_results"],
+            pr_repo,
+            get_config(config, "project.issueRepository") or pr_repo,
+            bp_dir,
+            dry_run=not auto_mode,
+        )
 
     cleanup_worktrees(manifest)
 
