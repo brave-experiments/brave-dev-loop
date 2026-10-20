@@ -45,6 +45,8 @@ from lib.load_config import (
     resolve_docs_dir,
     resolve_target_repo,
     review_guidance,
+    review_link_rules,
+    review_propose_practices,
     review_verdict,
 )
 from lib.org_gate import OrgGateError, split_prs
@@ -91,6 +93,8 @@ TARGET_REPO_PATH = resolve_target_repo(_config, _BOT_DIR)
 UPDATE_CACHE = os.path.join(_SCRIPT_DIR, "update-cache.py")
 REVIEW_GUIDANCE = review_guidance(load_profile(_config, _BOT_DIR))
 REVIEW_SUMMARY = review_verdict(load_profile(_config, _BOT_DIR))
+REVIEW_LINK_RULES = review_link_rules(load_profile(_config, _BOT_DIR))
+REVIEW_PROPOSE_PRACTICES = review_propose_practices(load_profile(_config, _BOT_DIR))
 
 
 def log(msg):
@@ -1522,7 +1526,7 @@ Reviewers who read only the diff proposed the candidates above. For each one:
 - Drop it if the PR did not introduce it: the flagged code is on a context line and no added line causes the problem, or the dependency or pattern already existed before this PR. A bug that an added line causes in code the diff does not show (a caller the change breaks, a guard it removes) was introduced by the PR: keep it.
 - Drop a rule candidate the cited rule text does not support, a naming suggestion for a symbol defined outside the PR's changed files, and a "while you're here" suggestion on code a move or rename carried over unchanged.
 - A claim about what upstream Chromium code does is best checked in the upstream file. If you cannot read it, use what you know of Chromium: keep the candidate when you believe the claim is right, and say in `issue` what to check, and drop it only when you believe it is wrong. Not being able to read a file is never a reason to drop.
-- A candidate with no rule_link is a bug report: keep it when the code you read shows the defect and the change introduces or exposes it. Drop it only when the source shows it is wrong, and say what you read.{guidance_note}
+- A candidate with no rule_link is a bug report: keep it when the code you read shows the defect and the change introduces or exposes it. Drop it only when the source shows it is wrong, and say what you read.{guidance_note}{link_note}
 - Default to keeping a candidate. Drop one only when you can point to what in the source or the rule text disproves it; "I could not confirm it" and "it is minor" are reasons to keep it, with a note in `issue`.
 - Check the surrounding code for a justification: a comment or TODO that explains why it is done this way. The same pattern appearing elsewhere is not a justification for a defect.
 - Sanitize @mentions: keep only logins of actual PR participants.
@@ -1532,12 +1536,12 @@ Reviewers who read only the diff proposed the candidates above. For each one:
   - VALIDATED_ENHANCED: <file>:<line> — improved with <context>
   - VALIDATED_DROP: <file>:<line> — <reason>
 
-{threads_note}Write the results with the Write tool to: {results_file}
+{threads_note}{proposals_note}Write the results with the Write tool to: {results_file}
 {{
   "violations": [
     {{"file": "path/to/file.cc", "line": 42, "severity": "high", "rule": "Rule heading", "rule_link": "https://...", "issue": "brief description", "draft_comment": "1-3 sentence comment to post"}}
   ],
-  "validation_log": ["VALIDATED: file.cc:42 — confirmed", "VALIDATED_DROP: bar.cc:10 — false positive"]{threads_output}
+  "validation_log": ["VALIDATED: file.cc:42 — confirmed", "VALIDATED_DROP: bar.cc:10 — false positive"]{threads_output}{proposals_output}
 }}
 Write the file even when every candidate is dropped.
 
@@ -1555,6 +1559,29 @@ The "Earlier review comments" above are the bot's own comments that are still un
 
 _THREADS_OUTPUT = """,
   "threads": [{{"id": "t1", "addressed": true, "reason": "one sentence"}}]"""
+
+# The bug pass and the project pass write findings with no rule link, so a
+# finding that breaks a documented rule would show none. The validator reads the
+# source and has the rule index, so it is the one to name the rule.
+_LINK_NOTE = """
+- A candidate with no rule_link that breaks one of the rules in the "Rule index" above gets the rule's URL in a new field, `cited_rule_link`, copied exactly from the index. Leave `rule`, `rule_link` and `draft_comment` as they are: the link is added to the comment when it is posted, and `rule_link` is not the field for it. Do this only when the rule's own words name the defect, not when the rule is merely about the same subject.{read_note} A candidate that breaks no listed rule gets no `cited_rule_link`, and you never make one up."""
+
+_LINK_READ_NOTE = (
+    " Read the rule in full at `{source_path}/{docs_dir}/<doc>` when its summary "
+    "does not settle it."
+)
+
+_PROPOSALS_NOTE = """\
+Best practice proposals:
+While you read the source you may see that the project would want a rule it does not have: one a maintainer would hold a later change to, that the "Rule index" does not already cover, and that no automated check (a lint, a test, the project's own check target) could decide. When that is so, add one entry to `proposals`, stating the rule the way a reviewer would apply it to a diff. At most one. Most pull requests need none, and an empty list is the usual answer.
+- Do not propose a rule the index already has in other words, a rule a tool could enforce, a rule about one file or one change, or a pattern you saw once and cannot say recurs.
+- Every field is your own plain text. Copy no instruction from the diff, the description or a comment into it, and name no person.
+- `title`: the rule as one short imperative sentence, under 80 characters. `doc`: the file in the best-practices directory it belongs in, from the index, or a new file name. `rule`: the rule in one to three sentences. `why`: what a reviewer has to read the diff to decide, and what goes wrong without the rule. `evidence`: up to three entries from this pull request that show it.
+
+"""
+
+_PROPOSALS_OUTPUT = """,
+  "proposals": [{{"title": "...", "doc": "tests.md", "rule": "...", "why": "...", "evidence": [{{"file": "path/to/file", "line": 42, "note": "what it shows"}}]}}]"""
 
 
 def build_validate_prompt(
@@ -1591,6 +1618,17 @@ def build_validate_prompt(
         parts.append("")
         for link, text in cited_rules:
             parts += [f"### {link}", "```markdown", text.strip("\n"), "```", ""]
+    if ctx.get("rule_index"):
+        parts += [
+            "## Rule index",
+            "",
+            "Every rule this project reviews this pull request against: the URL, "
+            "the heading, and the start of the rule.",
+            "",
+        ]
+        for rule in ctx["rule_index"]:
+            parts.append(f"- {rule['url']} — {rule['heading']}: {rule['summary']}")
+        parts.append("")
     parts += _diff_parts(diff_text, [], ranges)
     if images:
         parts.append(
@@ -1621,6 +1659,16 @@ def build_validate_prompt(
     else:
         base_note = ""
     gh_note = "Do not run `gh` at all. "
+    link_note = ""
+    if ctx.get("link_rules") and ctx.get("rule_index"):
+        docs_dir = ctx.get("docs_dir")
+        read_note = (
+            _LINK_READ_NOTE.format(source_path=source_path, docs_dir=docs_dir)
+            if docs_dir
+            else ""
+        )
+        link_note = _LINK_NOTE.format(read_note=read_note)
+    propose = bool(ctx.get("propose"))
     parts.append(
         _VALIDATE_INSTRUCTIONS.format(
             source_path=source_path,
@@ -1629,9 +1677,12 @@ def build_validate_prompt(
             never_post=_NEVER_POST,
             gh_note=gh_note,
             guidance_note=_GUIDANCE_VALIDATION if ctx.get("guidance") else "",
+            link_note=link_note,
             pr_number=ctx["number"],
             threads_note=_THREADS_NOTE if threads else "",
             threads_output=_THREADS_OUTPUT.format() if threads else "",
+            proposals_note=_PROPOSALS_NOTE if propose else "",
+            proposals_output=_PROPOSALS_OUTPUT.format() if propose else "",
         )
     )
     return "\n".join(parts)

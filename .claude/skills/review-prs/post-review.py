@@ -271,6 +271,13 @@ def embed_rule_link_in_comment(violation):
     contain it, append a markdown link at the end.
     """
     rule_link = violation.get("rule_link")
+    rule_name = violation.get("rule", "best practice")
+    if not rule_link:
+        # A link the validator found for a finding that came with none. It is
+        # shown but is not `rule_link`, which the dedup passes treat as a claim
+        # that the finding is that rule's one violation in the file.
+        rule_link = violation.get("cited_rule_link")
+        rule_name = violation.get("cited_rule") or "best practice"
     draft = violation.get("draft_comment", "")
     if not rule_link or not draft:
         return
@@ -288,7 +295,6 @@ def embed_rule_link_in_comment(violation):
             return
 
     # Append a best practice link
-    rule_name = violation.get("rule", "best practice")
     violation["draft_comment"] = f"{draft} ([{rule_name}]({rule_link}))"
 
 
