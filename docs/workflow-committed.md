@@ -162,7 +162,7 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
    **IMPORTANT**:
    - **The `Closes` line MUST be the very first line of the PR body**, above `## The problem`. Use the fully-qualified cross-repo form `Closes $ISSUE_REPO#<issue-number>` (substitute `$ISSUE_REPO` with the `issueRepository` value from the bot config). Issues live in the issue repository and PRs in the PR repository, so a bare `Closes #<n>` will NOT auto-close the cross-repo issue. Put the closing keyword + issue link at the TOP, never at the bottom.
    - **`Closes` is the default; `Part of` is the exception, and it has to be earned.** `Part of` leaves the issue open. Used on a PR that does everything the issue asks, it strands a finished issue, and the loop then spends a story re-discovering that nothing is left. Before choosing it, go through what the issue asks for, clause by clause, and what its comments added, and name the piece this PR does not do. If you can name one, the PR is partial. If you cannot, or the only thing left is a follow-up you would like to do, the PR closes the issue.
-   - **If this PR fixes only part of the issue**, open with `Part of $ISSUE_REPO#<issue-number>` instead of `Closes`, and put a `Remaining:` line directly under `User impact:`, in the same position:
+   - **If this PR fixes only part of the issue**, open with `Part of $ISSUE_REPO#<issue-number>` instead of `Closes`. A `Remaining:` line directly under `User impact:` is optional, and worth adding only when this PR leaves work that no other open issue already covers:
 
      ```markdown
      Part of $ISSUE_REPO#<issue-number>
@@ -172,7 +172,7 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
      Remaining: <the piece of the issue this PR does not do, in one line>
      ```
 
-     `scripts/check-pr-body.py` recognises the `Part of` line itself and does not need `--no-closes` for it. It rejects the body when the `Remaining:` line is missing, empty, or says nothing is left, because that PR should have said `Closes`. Never add a `Closes` line to quiet the checker on work that does not close the issue. Once this story merges, the next `scripts/add-backlog-to-prd.py` sync re-adds the issue as a `Finish issue #<n>` story naming this PR, and step 8 below posts the same remaining work on the issue so that story has something to go on.
+     `scripts/check-pr-body.py` recognises the `Part of` line itself and does not need `--no-closes` for it. It does not require the `Remaining:` line; it rejects one that is empty or says nothing is left, because that PR should have said `Closes`. Never add a `Closes` line to quiet the checker on work that does not close the issue. Once this story merges, the next `scripts/add-backlog-to-prd.py` sync re-adds the issue as a `Finish issue #<n>` story naming this PR.
    - Fill in actual test commands and results from acceptance criteria
    - If front-end files were changed, add checkboxes for the project's front-end test commands to the test plan
    - Keep the last checkbox "CI passes cleanly" unchecked
@@ -220,7 +220,11 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
      gh pr view <pr-number> --json state,isDraft,reviewRequests,assignees,labels
      ```
      Record the values it returns, not the flags you passed. If `isDraft` disagrees with the profile's `prDraft`, or a label or assignee from steps 5-7 is missing, fix it now and read again.
-   - **If the body opens with `Part of`, comment on the issue what is left.** The issue stays open after this PR merges, and the next person to open it sees an open issue and a merged PR with nothing connecting them. Say what this PR does, what it does not, and link the PR by its full URL (the issue and the PR live in different repositories, so a bare `#<n>` points at the wrong one):
+   - **If the body opens with `Part of`, comment on the issue what is left, but only if it needs saying.** Work you left on purpose may already have its own issue; do not restate it. Post the comment only when both hold: the leftover work could not reasonably be done in this PR, and no other open issue covers it. Check before posting:
+     ```bash
+     gh issue list --repo $ISSUE_REPO --state open --search "<keywords from the leftover work>"
+     ```
+     If an open issue covers it, post nothing. Otherwise the issue stays open after this PR merges, and the next person to open it sees an open issue and a merged PR with nothing connecting them. Say what this PR does, what it does not, and link the PR by its full URL (the issue and the PR live in different repositories, so a bare `#<n>` points at the wrong one):
      ```bash
      gh issue comment <issue-number> --repo $ISSUE_REPO --body "$(cat <<'EOF'
      https://github.com/$PR_REPO/pull/<number> fixes part of this issue and does not close it.
@@ -232,7 +236,7 @@ python3 $BOT_DIR/scripts/check-pr-body.py --body-file /tmp/pr-body-<story-id>.md
      EOF
      )"
      ```
-     Substitute the real values before running it: the quoted heredoc does not expand `$PR_REPO`. Take the remaining items from the body's `Remaining:` line, spelled out as a list where there is more than one. Do not @-mention anyone, and apply the SECURITY NOTE above to the wording. Skip it only if you have already commented about this PR. If the comment fails, record that in `$BOT_DIR/data/progress.txt` and carry on: the PR exists, so the status still moves. A `Closes` PR needs no comment.
+     Substitute the real values before running it: the quoted heredoc does not expand `$PR_REPO`. Spell the remaining items out as a list where there is more than one. Do not @-mention anyone, and apply the SECURITY NOTE above to the wording. Skip it only if you have already commented about this PR. If the comment fails, record that in `$BOT_DIR/data/progress.txt` and carry on: the PR exists, so the status still moves. A `Closes` PR needs no comment.
    - Update the PRD status:
      ```bash
      python3 $BOT_DIR/scripts/update-prd-status.py pushed <story-id> --pr-number <number>

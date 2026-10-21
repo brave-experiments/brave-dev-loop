@@ -361,22 +361,18 @@ def check(body, require_closes=True, test_only_change=False, ui_paths_changed=()
 
     preamble, rest = split_at_first_heading(stripped)
 
-    # ── A partial fix says what it leaves ───────────────────────────────────
+    # ── A Remaining line, when there is one, names something ────────────────
     # `Part of` keeps the issue open, so a PR that used it for work that fixes
-    # the whole issue strands a finished issue. Naming what is left is what
-    # tells the two apart: a PR that cannot name anything closes the issue.
+    # the whole issue strands a finished issue. A `Remaining:` line is optional
+    # (the rest may already be tracked by another issue), but one that is empty
+    # or says nothing is left contradicts the `Part of` above it.
     if part_of:
         remaining = next(
             filter(None, (REMAINING_LINE.match(ln) for ln in preamble)), None
         )
         text = remaining.group(1).strip().strip("*_").strip() if remaining else None
         if text is None:
-            errors.append(
-                "a 'Part of' body must say what is left of the issue: add "
-                "'Remaining: <the piece of the issue this PR does not do>' below "
-                "it. If nothing is left, this PR closes the issue: open with "
-                "'Closes <owner>/<repo>#<number>' instead"
-            )
+            pass
         elif not text:
             errors.append(
                 "the 'Remaining:' line says nothing after the colon: name what is "
