@@ -354,9 +354,12 @@ def test_a_partial_fix_needs_no_flag_to_skip_the_missing_closes_warning(checker)
     assert not any("Closes" in w for w in warnings)
 
 
-def test_part_of_without_a_remaining_line_is_an_error(checker):
-    errors, _ = checker.check(partial(remaining=None))
-    assert any("Remaining:" in e and "Closes" in e for e in errors), errors
+def test_part_of_without_a_remaining_line_passes(checker):
+    """The rest of the issue may already be tracked elsewhere, so the line is
+    optional; only one that is present has to say something."""
+    errors, warnings = checker.check(partial(remaining=None))
+    assert errors == []
+    assert warnings == []
 
 
 @pytest.mark.parametrize(
@@ -436,11 +439,12 @@ def test_the_cli_accepts_a_partial_fix_without_the_flag(tmp_path):
     assert result.returncode == 0, result.stdout
 
 
-def test_the_workflow_makes_the_agent_comment_what_is_left():
-    """The Remaining line is only checked; the comment on the issue is a step the
-    agent has to be told to take, and nothing else notices when it is skipped."""
+def test_the_workflow_tells_the_agent_when_to_comment_what_is_left():
+    """The comment on the issue is a step the agent has to be told to take, and
+    only when the work cannot go in this PR and no open issue covers it."""
     doc = _doc("workflow-committed.md")
     assert "gh issue comment" in doc
+    assert "gh issue list" in doc
     assert "Remaining:" in doc
 
 
