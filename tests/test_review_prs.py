@@ -536,12 +536,27 @@ class TestProcessPr:
 
     THREAD = {"thread_id": "T1", "path": "browser/a.cc", "line": 1, "body": "x"}
 
-    def _requested(self, prep, tmp_dir, prior, monkeypatch, threads=()):
+    def _requested(
+        self,
+        prep,
+        tmp_dir,
+        prior,
+        monkeypatch,
+        threads=(),
+        approved="same",
+        approval=True,
+    ):
+        """A requested PR. `approved` is the hashes recorded when the bot's
+        approval was posted (the cache's `_approved_files`); `approval` is
+        whether the bot's latest review on the host is an approval."""
         monkeypatch.setattr(prep, "fetch_open_bot_threads", lambda *a: list(threads))
+        monkeypatch.setattr(prep, "bot_last_review_approved", lambda *a: approval)
         work = os.path.join(tmp_dir, "work")
         os.makedirs(work, exist_ok=True)
         pr = dict(PR, reviewRequested=True)
-        return prep.process_pr(pr, "bot", set(), work, True, prior)
+        if approved == "same":
+            approved = prior
+        return prep.process_pr(pr, "bot", set(), work, True, prior, approved)
 
     def test_a_re_request_with_an_unchanged_patch_writes_no_prompt(
         self, prep, stubbed, tmp_dir, monkeypatch
@@ -559,16 +574,13 @@ class TestProcessPr:
             monkeypatch.setattr(
                 prep, name, lambda *a, **k: pytest.fail("an unchanged patch was read")
             )
-        result, error = self._requested(
-            prep, tmp_dir, self._hashes(prep), monkeypatch, [self.THREAD]
-        )
+        result, error = self._requested(prep, tmp_dir, self._hashes(prep), monkeypatch)
         assert error is None
         assert result["patch_unchanged"] is True and result["reviewRequested"] is True
         assert result["subagent_prompts"] == [] and result["summary_prompt"] is None
         assert result["files_reviewed"] == 0
         assert not prep.pr_needs_model(result)
-        with open(result["open_threads_file"]) as f:
-            assert json.load(f) == [self.THREAD]
+        assert result["open_threads_file"] is None
         assert not [
             f
             for f in os.listdir(os.path.dirname(result["file_hashes_file"]))
@@ -634,67 +646,179 @@ class TestProcessPr:
         assert not prep.patch_unchanged(None, {"a": "1"})
         assert not prep.patch_unchanged({}, {})
 
-    def test_an_unchanged_patch_is_answered_by_the_scripts_alone(
+    def _scripts(
+        self,
+        prep,
+        post,
+        sel,
+        collect,
+        tmp_dir,
+        monkeypatch,
+        capsys,
+        entry,
+        cache_calls=None,
+    ):
+        """select-candidates -> collect -> post-review on one entry with no
+        agent between them. Returns (what post-review sent, its results)."""
+        work = os.path.join(tmp_dir, "run")
+        os.makedirs(work)
+        manifest = os.path.join(work, "manifest.json")
+        with open(manifest, "w") as f:
+            json.dump({"pr_repo": "o/r", "bot_username": "bot", "prs": [entry]}, f)
+        monkeypatch.setattr(sys, "argv", ["select-candidates.py", "--work-dir", work])
+        sel.main()
+        capsys.readouterr()
+        with open(manifest) as f:
+            entry = json.load(f)["prs"][0]
+        sent = {}
+        monkeypatch.setattr(
+            post,
+            "update_cache",
+            lambda *a, **k: cache_calls is None or cache_calls.append((a, k)),
+        )
+        monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
+        monkeypatch.setattr(post, "resolve_review_thread", lambda t: True)
+        monkeypatch.setattr(
+            post, "check_can_approve", lambda n, b, reapprove=False, **k: reapprove
+        )
+        monkeypatch.setattr(
+            post, "submit_approval", lambda r, n: sent.update(approve=n) or "u"
+        )
+        monkeypatch.setattr(
+            post,
+            "post_batch_review",
+            lambda r, n, vs, sha, event="COMMENT": sent.update(batch=vs) or ("u", 1),
+        )
+        results = [
+            post.process_pr(r, "o/r", "bot", True)
+            for r in collect.build_post_review_input({"prs": [entry]})["pr_results"]
+        ]
+        return sent, results
+
+    def test_a_patch_the_bot_approved_is_re_approved_by_the_scripts_alone(
         self, prep, post, sel, collect, stubbed, tmp_dir, monkeypatch, capsys
     ):
         """prepare -> select-candidates -> collect -> post-review, with no
-        detector or validator between them. With no open comment the request
-        is answered with an approval; with one open it is answered
-        "Not fixed." on its line. Both are posted by the scripts."""
-        for threads, expect in (([], "approve"), ([self.THREAD], "answer")):
-            work = os.path.join(tmp_dir, f"run-{expect}")
-            os.makedirs(work)
-            monkeypatch.setattr(
-                prep, "fetch_open_bot_threads", lambda *a, t=threads: list(t)
-            )
-            result, _ = prep.process_pr(
-                dict(PR, reviewRequested=True),
-                "bot",
-                set(),
-                work,
-                True,
-                self._hashes(prep),
-            )
-            manifest = os.path.join(work, "manifest.json")
-            with open(manifest, "w") as f:
-                json.dump({"pr_repo": "o/r", "bot_username": "bot", "prs": [result]}, f)
-            monkeypatch.setattr(
-                sys, "argv", ["select-candidates.py", "--work-dir", work]
-            )
-            sel.main()
-            assert json.loads(capsys.readouterr().out)["validators"] == []
-            with open(manifest) as f:
-                entry = json.load(f)["prs"][0]
-            (pr_result,) = collect.build_post_review_input({"prs": [entry]})[
-                "pr_results"
-            ]
+        detector or validator between them: the approval is posted by script."""
+        prior = self._hashes(prep)
+        entry, _ = self._requested(prep, tmp_dir, prior, monkeypatch)
+        assert not prep.pr_needs_model(entry)
+        calls = []
+        sent, results = self._scripts(
+            prep, post, sel, collect, tmp_dir, monkeypatch, capsys, entry, calls
+        )
+        assert sent == {"approve": 42}
+        assert [r["status"] for r in results] == ["approved"]
+        # the approval records the hashes it was given at, which is what the
+        # next request is compared with
+        (approving,) = [k for a, k in calls if k.get("approve")]
+        assert approving["file_hashes_file"] == entry["file_hashes_file"]
 
-            sent = {}
-            monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
-            monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
-            monkeypatch.setattr(post, "resolve_review_thread", lambda t: True)
-            monkeypatch.setattr(
-                post, "check_can_approve", lambda n, b, reapprove=False, **k: reapprove
+    def _model_scenarios(self, prep):
+        prior = self._hashes(prep)
+        stale = dict(prior, **{"browser/a.cc": "0" * 16})
+        return {
+            "the bot never approved it": dict(approval=False),
+            "a later bot review replaced the approval": dict(approval=False),
+            "no hashes were recorded at the approval": dict(approved=None),
+            "an empty record": dict(approved={}),
+            "the cache was written by a review after the approval": dict(
+                approved=stale
+            ),
+            "a bot comment is still open": dict(threads=[self.THREAD]),
+        }
+
+    def test_an_unchanged_patch_the_bot_did_not_approve_goes_to_the_model(
+        self, prep, post, sel, collect, stubbed, tmp_dir, monkeypatch, capsys
+    ):
+        """An unchanged diff alone never produces an approval. In each case the
+        entry carries prompts, so the agent starts, and the scripts run
+        without it (as after a failed session) post nothing."""
+        prior = self._hashes(prep)
+        for i, (why, kw) in enumerate(self._model_scenarios(prep).items()):
+            run = os.path.join(tmp_dir, f"case{i}")
+            os.makedirs(run)
+            entry, _ = self._requested(prep, run, prior, monkeypatch, **kw)
+            assert "patch_unchanged" not in entry, why
+            assert entry["subagent_prompts"] and prep.pr_needs_model(entry), why
+            assert (entry["files_reviewed"], entry["files_total"]) == (3, 3), why
+            sent, results = self._scripts(
+                prep, post, sel, collect, run, monkeypatch, capsys, entry
             )
-            monkeypatch.setattr(
-                post, "submit_approval", lambda r, n: sent.update(approve=n) or "u"
-            )
-            monkeypatch.setattr(
-                post,
-                "post_batch_review",
-                lambda r, n, vs, sha, event="COMMENT": (
-                    sent.update(batch=[v["draft_comment"] for v in vs]) or ("u", 1)
-                ),
-            )
-            out = post.process_pr(pr_result, "o/r", "bot", True)
-            if expect == "approve":
-                assert sent == {"approve": 42} and out["status"] == "approved"
-            else:
-                assert out["status"] == "posted" and "approve" not in sent
-                assert sent["batch"] == [
-                    "**Not fixed.** The pull request's changes are the same as "
-                    "when this was raised."
-                ]
+            assert "approve" not in sent and results == [], why
+
+    def test_no_lookup_is_made_for_a_patch_with_no_approved_record(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        """The cheap checks come first: no record, no call to GitHub."""
+        monkeypatch.setattr(
+            prep,
+            "bot_last_review_approved",
+            lambda *a: pytest.fail("looked up reviews without a record"),
+        )
+        monkeypatch.setattr(prep, "fetch_open_bot_threads", lambda *a: [])
+        work = os.path.join(tmp_dir, "work")
+        os.makedirs(work)
+        entry, _ = prep.process_pr(
+            dict(PR, reviewRequested=True),
+            "bot",
+            set(),
+            work,
+            True,
+            self._hashes(prep),
+            None,
+        )
+        assert entry["subagent_prompts"]
+
+    @pytest.mark.parametrize(
+        "reviews, expected",
+        [
+            ([("bot", "APPROVED")], True),
+            ([("bot", "CHANGES_REQUESTED"), ("bot", "APPROVED")], True),
+            ([("bot", "APPROVED"), ("bot", "CHANGES_REQUESTED")], False),
+            ([("bot", "APPROVED"), ("bot", "COMMENTED")], False),
+            ([("bot", "APPROVED"), ("bot", "DISMISSED")], False),
+            ([("bot", "APPROVED"), ("bot", "PENDING")], True),
+            ([("bot", "APPROVED"), ("someone", "COMMENTED")], True),
+            ([("someone", "APPROVED")], False),
+            ([("bot", "COMMENTED")], False),
+            ([], False),
+        ],
+    )
+    def test_the_bots_own_latest_review_decides(
+        self, prep, monkeypatch, reviews, expected
+    ):
+        pages = [
+            [
+                {"user": {"login": who}, "state": state}
+                for who, state in reviews[i : i + 2]
+            ]
+            for i in range(0, len(reviews), 2)
+        ]
+        monkeypatch.setattr(
+            prep.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, json.dumps(pages), ""),
+        )
+        assert prep.bot_last_review_approved(42, "bot") is expected
+
+    @pytest.mark.parametrize(
+        "rc, out", [(1, ""), (0, "not json"), (0, "{}"), (0, "[[{}]]")]
+    )
+    def test_a_lookup_that_fails_is_not_an_approval(self, prep, monkeypatch, rc, out):
+        monkeypatch.setattr(
+            prep.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a, rc, out, "boom"),
+        )
+        assert prep.bot_last_review_approved(42, "bot") is False
+
+    def test_a_lookup_that_raises_is_not_an_approval(self, prep, monkeypatch):
+        def raises(*a, **k):
+            raise subprocess.TimeoutExpired("gh", 60)
+
+        monkeypatch.setattr(prep.subprocess, "run", raises)
+        assert prep.bot_last_review_approved(42, "bot") is False
 
     def test_a_re_review_reads_only_the_changed_files(self, prep, stubbed, tmp_dir):
         prior = self._hashes(prep)
@@ -1480,6 +1604,26 @@ class TestUpdateCache:
         assert cache["_files"] == {"7": {"a.cc": "1234"}}
         cache = self._run(bot, "7", "sha8")
         assert cache["_files"] == {"7": {"a.cc": "1234"}}
+
+    def test_an_approval_records_the_hashes_it_was_given_at(self, bot, tmp_dir):
+        hashes = os.path.join(tmp_dir, "h.json")
+        with open(hashes, "w") as f:
+            json.dump({"a.cc": "1234"}, f)
+        cache = self._run(bot, "7", "sha7", "--approve", f"--file-hashes={hashes}")
+        assert cache["_approved_files"] == {"7": {"a.cc": "1234"}}
+        with open(hashes, "w") as f:
+            json.dump({"a.cc": "9999"}, f)
+        cache = self._run(bot, "7", "sha8", f"--file-hashes={hashes}")
+        assert cache["_files"] == {"7": {"a.cc": "9999"}}
+        assert cache["_approved_files"] == {"7": {"a.cc": "1234"}}, "not an approval"
+
+    def test_an_approval_without_hashes_clears_the_record(self, bot, tmp_dir):
+        hashes = os.path.join(tmp_dir, "h.json")
+        with open(hashes, "w") as f:
+            json.dump({"a.cc": "1234"}, f)
+        self._run(bot, "7", "sha7", "--approve", f"--file-hashes={hashes}")
+        cache = self._run(bot, "7", "sha8", "--approve")
+        assert "7" not in cache["_approved_files"]
 
     def test_trims_the_oldest_entries(self, bot, tmp_dir):
         with open(os.path.join(bot, ".ignore", "review-prs-cache.json"), "w") as f:

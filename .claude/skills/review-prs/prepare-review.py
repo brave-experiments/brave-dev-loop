@@ -344,6 +344,42 @@ def prior_hashes_for(pr, prior_files):
     return prior_files.get(str(pr["number"]))
 
 
+def bot_last_review_approved(pr_number, bot_username):
+    """Whether the bot's own most recent review of the PR is an approval.
+
+    Read from the host, not the cache. Only a review the bot submitted counts,
+    and only the latest of them: an approval a later CHANGES_REQUESTED or
+    COMMENTED review followed does not. Any failure to find out is False, so a
+    caller never takes the no-model path on a guess.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                f"repos/{PR_REPO}/pulls/{pr_number}/reviews",
+                "--paginate",
+                "--slurp",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "gh api failed")
+        reviews = [r for page in json.loads(result.stdout) for r in page]
+        mine = [
+            r
+            for r in reviews
+            if (r.get("user") or {}).get("login") == bot_username
+            and r.get("state") != "PENDING"
+        ]
+        return bool(mine) and mine[-1].get("state") == "APPROVED"
+    except Exception as e:
+        log(f"  WARNING: bot reviews of #{pr_number} not read: {e}")
+        return False
+
+
 def patch_unchanged(prior_hashes, hashes):
     """Whether the PR's patch is what it was at the last review.
 
@@ -1872,8 +1908,35 @@ def bot_thread_state(pr_number, bot_username, pr_work_dir):
     return thread_resolution, open_threads_file, open_threads_failed
 
 
+def _answer_unchanged_request(
+    pr, bot_username, approved_hashes, hashes, pr_number, pr_work_dir
+):
+    """The bot's thread state when this request may be answered without a model.
+
+    None when it may not: no record of the hashes the bot approved at, a patch
+    that differs from them, a latest bot review that is not an approval, or a
+    bot comment still open. Otherwise (thread_resolution, None, False).
+    """
+    if not patch_unchanged(approved_hashes, hashes):
+        return None
+    if not bot_last_review_approved(pr_number, bot_username):
+        log(f"  PR #{pr_number}: the bot's latest review is not an approval")
+        return None
+    state = bot_thread_state(pr_number, bot_username, pr_work_dir)
+    _, open_threads_file, open_threads_failed = state
+    if open_threads_file or open_threads_failed:
+        return None
+    return state
+
+
 def process_pr(
-    pr, bot_username, org_members, work_dir, auto_mode=False, prior_hashes=None
+    pr,
+    bot_username,
+    org_members,
+    work_dir,
+    auto_mode=False,
+    prior_hashes=None,
+    approved_hashes=None,
 ):
     """Write the detect prompts for one PR. Returns (manifest entry, error)."""
     pr_number = pr["number"]
@@ -1904,7 +1967,19 @@ def process_pr(
     else:
         changed = list(sections)
     rerequested = bool(pr.get("reviewRequested"))
-    unchanged = patch_unchanged(prior_hashes, hashes)
+    answered = None
+    if rerequested and patch_unchanged(prior_hashes, hashes):
+        # An unchanged diff is never a reason to approve. The request is
+        # answered without a model only for a patch the bot itself approved: the
+        # hashes recorded when that approval was posted match, the bot's latest
+        # review on the host is that approval, and it has no comment still open.
+        # Anything else, including a lookup that failed, is read as before.
+        answered = _answer_unchanged_request(
+            pr, bot_username, approved_hashes, hashes, pr_number, pr_work_dir
+        )
+        if answered is None:
+            prior_hashes = None
+            changed = list(sections)
     if prior_hashes and not changed and not rerequested:
         log(f"  PR #{pr_number}: no file changed since the last review")
         return {
@@ -1915,18 +1990,11 @@ def process_pr(
             "file_hashes_file": hashes_file,
         }, None
 
-    if unchanged and rerequested:
-        # Someone asked again, but the patch is what the bot already reviewed:
-        # there is nothing for a detector or the validator to read. The entry has
-        # no prompts, so post-review answers from the host's state alone: it
-        # approves again when no comment is open, and answers each open comment
-        # "Not fixed." otherwise. A rebase that touches no file lands here too.
+    if answered is not None:
+        thread_resolution, open_threads_file, open_threads_failed = answered
         log(
-            f"  PR #{pr_number}: patch unchanged since the last review; "
+            f"  PR #{pr_number}: patch unchanged since the bot approved it; "
             "answering the request without a model"
-        )
-        thread_resolution, open_threads_file, open_threads_failed = bot_thread_state(
-            pr_number, bot_username, pr_work_dir
         )
         return {
             "number": pr_number,
@@ -2261,12 +2329,11 @@ def pr_needs_model(entry):
     """Whether a manifest entry has anything for a detector or the validator.
 
     An entry with a detect prompt or a summary prompt does. One with open bot
-    threads does too, because the validator rules on them, unless its patch is
-    unchanged: those threads are answered "Not fixed." without a model.
+    threads does too, because the validator rules on them.
     """
     if entry.get("subagent_prompts") or entry.get("summary_prompt"):
         return True
-    return bool(entry.get("open_threads_file")) and not entry.get("patch_unchanged")
+    return bool(entry.get("open_threads_file"))
 
 
 def record_review(pr_number, head_sha, hashes_file):
@@ -2383,6 +2450,7 @@ def main():
         )
     cache = _fp_mod.load_cache()
     prior_files = {} if full else cache.get("_files", {})
+    approved_files = {} if full else cache.get("_approved_files", {})
 
     if mode == "single":
         # Uplifts (base 1.98.x and the like) are skipped even when asked for by number
@@ -2501,6 +2569,7 @@ def main():
                     work_dir,
                     auto_mode,
                     prior_hashes_for(pr, prior_files),
+                    approved_files.get(str(pr["number"])),
                 ): pr
                 for pr in prs_to_process
             }

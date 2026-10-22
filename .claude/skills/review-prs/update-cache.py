@@ -9,6 +9,9 @@ Usage:
   update-cache.py <pr_number> <head_ref_oid>            # Update SHA only
   update-cache.py <pr_number> <head_ref_oid> --approve   # Update SHA + mark approved
   update-cache.py <pr_number> <head_ref_oid> --file-hashes=<path>   # + per-file hashes
+
+With --approve and --file-hashes the hashes are also kept as `_approved_files`:
+the patch the bot approved. An approval without hashes clears that record.
 """
 
 import json
@@ -66,6 +69,13 @@ with locked_json_update(cache_path) as cache:
         approved = set(cache.get("_approved", []))
         approved.add(pr_number)
         cache["_approved"] = sorted(approved)
+        approved_files = cache.get("_approved_files", {})
+        approved_files.pop(pr_number, None)
+        if file_hashes is not None:
+            approved_files[pr_number] = file_hashes
+        while len(approved_files) > MAX_FILE_HASH_ENTRIES:
+            approved_files.pop(next(iter(approved_files)))
+        cache["_approved_files"] = approved_files
 
     if file_hashes is not None:
         files = cache.get("_files", {})

@@ -898,7 +898,12 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
             elif can_approve:
                 approval_url = submit_approval(repo, number)
                 if approval_url is not None:
-                    update_cache(number, head_sha, approve=True)
+                    update_cache(
+                        number,
+                        head_sha,
+                        approve=True,
+                        file_hashes_file=pr_data.get("fileHashesFile"),
+                    )
                     result["status"] = "approved"
                     result["review_url"] = approval_url
                     log(f"APPROVE: {link} - no violations, approved")

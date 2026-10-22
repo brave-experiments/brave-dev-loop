@@ -118,11 +118,6 @@ def collect_proposals(pr):
     return [p for p in value if isinstance(p, dict)] if isinstance(value, list) else []
 
 
-PATCH_UNCHANGED_REASON = (
-    "The pull request's changes are the same as when this was raised."
-)
-
-
 def collect_open_threads(pr):
     """The bot's unresolved threads with the validator's verdict on each.
 
@@ -146,8 +141,6 @@ def collect_open_threads(pr):
     for i, t in enumerate(threads, 1):
         v = verdicts.get(f"t{i}", {})
         reason = v.get("reason")
-        if not v and pr.get("patch_unchanged"):
-            reason = PATCH_UNCHANGED_REASON
         collected.append(
             {
                 "thread_id": t["thread_id"],
