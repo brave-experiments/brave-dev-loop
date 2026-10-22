@@ -336,13 +336,24 @@ def load_org_members():
 def prior_hashes_for(pr, prior_files):
     """The per-file hashes a PR is compared against, or None to read it whole.
 
-    Someone who asked for this review wants the whole PR read, not the files a
-    hash says changed: the code around an unchanged diff changes too, as it does
-    with a rebase.
+    A PR the bot reviewed before is read only in the files whose change differs
+    from the cached hash, whether the sweep or a review request brought it back.
+    A PR with no entry (never reviewed, or cached before hashes were kept) is
+    read whole.
     """
-    if pr.get("reviewRequested"):
-        return None
     return prior_files.get(str(pr["number"]))
+
+
+def patch_unchanged(prior_hashes, hashes):
+    """Whether the PR's patch is what it was at the last review.
+
+    True only when the cached per-file hashes and the current ones name the same
+    files and every hash matches. A hash is `section_hash` of that file's diff
+    against the merge base, which ignores blob ids and hunk offsets, so a rebase
+    that touched none of the PR's files compares equal and one that resolved a
+    conflict in a file does not. No cached hashes is never unchanged.
+    """
+    return bool(prior_hashes) and prior_hashes == hashes
 
 
 def parse_args():
@@ -1832,6 +1843,35 @@ def _text_pages(text):
     return pages
 
 
+def bot_thread_state(pr_number, bot_username, pr_work_dir):
+    """Resolve the bot's threads a person answered, then list the ones still open.
+
+    Returns (thread_resolution, open_threads_file, open_threads_failed).
+    """
+    try:
+        thread_resolution = resolve_bot_threads(pr_number, bot_username)
+    except Exception as e:
+        thread_resolution = {
+            "resolved": 0,
+            "unresolved_bot_threads": 0,
+            "total_bot_threads": 0,
+        }
+        log(f"  WARNING: thread resolution failed for #{pr_number}: {e}")
+
+    open_threads_file = None
+    open_threads_failed = False
+    try:
+        open_threads = fetch_open_bot_threads(pr_number, bot_username)
+        if open_threads:
+            open_threads_file = os.path.join(pr_work_dir, "open_threads.json")
+            with open(open_threads_file, "w") as f:
+                json.dump(open_threads, f, indent=2)
+    except Exception as e:
+        open_threads_failed = True
+        log(f"  WARNING: open threads failed for #{pr_number}: {e}")
+    return thread_resolution, open_threads_file, open_threads_failed
+
+
 def process_pr(
     pr, bot_username, org_members, work_dir, auto_mode=False, prior_hashes=None
 ):
@@ -1863,11 +1903,8 @@ def process_pr(
         changed = [p for p in sections if prior_hashes.get(p) != hashes[p]]
     else:
         changed = list(sections)
-    # Someone who asks the bot again without pushing wants to hear back: an
-    # unchanged PR still goes to the validator, which rules on the bot's open
-    # threads, and post-review submits a verdict. Returning `unchanged` here
-    # posted nothing, so the request stood and every poll reviewed it again.
     rerequested = bool(pr.get("reviewRequested"))
+    unchanged = patch_unchanged(prior_hashes, hashes)
     if prior_hashes and not changed and not rerequested:
         log(f"  PR #{pr_number}: no file changed since the last review")
         return {
@@ -1876,6 +1913,40 @@ def process_pr(
             "title": pr_title,
             "headRefOid": head_sha,
             "file_hashes_file": hashes_file,
+        }, None
+
+    if unchanged and rerequested:
+        # Someone asked again, but the patch is what the bot already reviewed:
+        # there is nothing for a detector or the validator to read. The entry has
+        # no prompts, so post-review answers from the host's state alone: it
+        # approves again when no comment is open, and answers each open comment
+        # "Not fixed." otherwise. A rebase that touches no file lands here too.
+        log(
+            f"  PR #{pr_number}: patch unchanged since the last review; "
+            "answering the request without a model"
+        )
+        thread_resolution, open_threads_file, open_threads_failed = bot_thread_state(
+            pr_number, bot_username, pr_work_dir
+        )
+        return {
+            "number": pr_number,
+            "title": pr_title,
+            "headRefOid": head_sha,
+            "baseRefName": base_ref,
+            "author": author,
+            "hasApproval": has_approval,
+            "isExternalContributor": is_external,
+            "reviewRequested": True,
+            "patch_unchanged": True,
+            "thread_resolution": thread_resolution,
+            "subagent_prompts": [],
+            "summary_prompt": None,
+            "file_hashes_file": hashes_file,
+            "open_threads_file": open_threads_file,
+            "open_threads_failed": open_threads_failed,
+            "files_reviewed": 0,
+            "files_total": len(sections),
+            "rereview": True,
         }, None
 
     rereview_note = None
@@ -1912,27 +1983,9 @@ def process_pr(
         images = []
         log(f"  WARNING: image extraction failed for #{pr_number}: {e}")
 
-    try:
-        thread_resolution = resolve_bot_threads(pr_number, bot_username)
-    except Exception as e:
-        thread_resolution = {
-            "resolved": 0,
-            "unresolved_bot_threads": 0,
-            "total_bot_threads": 0,
-        }
-        log(f"  WARNING: thread resolution failed for #{pr_number}: {e}")
-
-    open_threads_file = None
-    open_threads_failed = False
-    try:
-        open_threads = fetch_open_bot_threads(pr_number, bot_username)
-        if open_threads:
-            open_threads_file = os.path.join(pr_work_dir, "open_threads.json")
-            with open(open_threads_file, "w") as f:
-                json.dump(open_threads, f, indent=2)
-    except Exception as e:
-        open_threads_failed = True
-        log(f"  WARNING: open threads failed for #{pr_number}: {e}")
+    thread_resolution, open_threads_file, open_threads_failed = bot_thread_state(
+        pr_number, bot_username, pr_work_dir
+    )
 
     try:
         applicable_docs = docs_for_flags(
@@ -2202,6 +2255,18 @@ def process_pr(
         f"(~{total_prompt_chars // 4:,} tokens)"
     )
     return pr_result, None
+
+
+def pr_needs_model(entry):
+    """Whether a manifest entry has anything for a detector or the validator.
+
+    An entry with a detect prompt or a summary prompt does. One with open bot
+    threads does too, because the validator rules on them, unless its patch is
+    unchanged: those threads are answered "Not fixed." without a model.
+    """
+    if entry.get("subagent_prompts") or entry.get("summary_prompt"):
+        return True
+    return bool(entry.get("open_threads_file")) and not entry.get("patch_unchanged")
 
 
 def record_review(pr_number, head_sha, hashes_file):
@@ -2506,6 +2571,7 @@ def main():
         "full": full,
         "fetch_summary": fetch_summary,
         "progress_lines": progress_lines,
+        "needs_model": any(pr_needs_model(p) for p in processed_prs),
         "prs": processed_prs,
         "cached_prs": processed_cached,
         "errors": errors,
