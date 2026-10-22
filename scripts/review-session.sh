@@ -55,6 +55,20 @@ fi
 AUTO=()
 [ "$(jq -r '.auto_mode' "$WORK_DIR/manifest.json")" = "true" ] && AUTO=(--auto)
 
+# Nothing for a model to read: every PR is one whose patch is what the bot already
+# reviewed (prepare-review.py sets `needs_model` false), so there is no detector or
+# validator to run. select-candidates.py, which the session would have run,
+# records that, and the collector answers each request from GitHub's state: an
+# approval, or "Not fixed." on a comment still open. No agent is started. A
+# manifest without the key (an older prepare-review.py) still gets a session.
+if [ "$(jq -r '.needs_model' "$WORK_DIR/manifest.json")" = "false" ]; then
+  echo "Nothing in this run needs a model; answering without a session." >&2
+  RC=0
+  python3 "$SKILL_DIR/select-candidates.py" --work-dir "$WORK_DIR" >/dev/null || RC=$?
+  python3 "$SKILL_DIR/collect-results.py" --work-dir "$WORK_DIR" "${AUTO[@]}" || RC=$?
+  exit "$RC"
+fi
+
 # An empty gh config directory as well as no token: gh falls back to its default
 # config directory, which holds the bot's login.
 NO_GH=$(mktemp -d)

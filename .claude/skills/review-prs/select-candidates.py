@@ -255,6 +255,14 @@ def main():
     incomplete = []
     for pr in manifest.get("prs", []):
         number = pr["number"]
+        if pr.get("patch_unchanged"):
+            # prepare-review.py found the patch what it was at the last review:
+            # no detector ran and no validator is written, so open threads are
+            # answered from the host's state alone.
+            log(f"PR #{number}: patch unchanged since the last review; no validator")
+            pr["detected"] = 0
+            pr["validation"] = None
+            continue
         violations, missing, total = load_candidates(pr)
         if total and missing == total:
             log(f"PR #{number}: no detect results at all; not reviewed")

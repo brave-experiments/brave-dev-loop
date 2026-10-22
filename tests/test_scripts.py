@@ -4398,8 +4398,16 @@ class TestReviewRequestQueue:
                 "import json, os, sys, tempfile\n"
                 "open(os.environ['PREPARE_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
                 "d = tempfile.mkdtemp(prefix=f'pr{sys.argv[1]}-', dir=os.environ['WORK_ROOT'])\n"
-                "json.dump({'auto_mode': '--auto' in sys.argv}, open(f'{d}/manifest.json', 'w'))\n"
+                "m = {'auto_mode': '--auto' in sys.argv}\n"
+                "if 'NEEDS_MODEL' in os.environ: m['needs_model'] = os.environ['NEEDS_MODEL'] == 'true'\n"
+                "json.dump(m, open(f'{d}/manifest.json', 'w'))\n"
                 "print(json.dumps({'work_dir': d}))\n"
+            )
+        with open(os.path.join(skill, "select-candidates.py"), "w") as f:
+            f.write(
+                "import os, sys\n"
+                "open(os.environ['SELECT_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                "print('{}')\n"
             )
         with open(os.path.join(skill, "collect-results.py"), "w") as f:
             f.write(
@@ -4437,6 +4445,7 @@ class TestReviewRequestQueue:
             "CLAUDE_LOG": os.path.join(tmp_dir, "claude.log"),
             "PREPARE_LOG": os.path.join(tmp_dir, "prepare.log"),
             "COLLECT_LOG": os.path.join(tmp_dir, "collect.log"),
+            "SELECT_LOG": os.path.join(tmp_dir, "select.log"),
         }
         work_root = os.path.join(tmp_dir, "work")
         os.makedirs(work_root, exist_ok=True)
@@ -4481,6 +4490,30 @@ class TestReviewRequestQueue:
         result, _, _ = self._run(self.GATE, tmp_dir, self._stubs(tmp_dir, gh_rc=1))
         assert result.returncode == 1
         assert "Could not query review requests" in result.stderr
+
+    def test_a_run_with_nothing_for_a_model_starts_no_agent(self, tmp_dir):
+        """A re-request on a PR whose patch is unchanged since the last review
+        is answered by prepare-review.py, select-candidates.py and
+        collect-results.py. The agent binary must not run at all."""
+        result, _, claude_log = self._run(
+            self.JOB,
+            tmp_dir,
+            self._stubs(tmp_dir, queue="101"),
+            {"NEEDS_MODEL": "false"},
+        )
+        assert result.returncode == 0, result.stderr
+        assert claude_log == [], "an unchanged patch started a model session"
+        assert len(self._read(os.path.join(tmp_dir, "prepare.log"))) == 1
+        assert len(self._read(os.path.join(tmp_dir, "select.log"))) == 1
+        assert "--auto" in self._read(os.path.join(tmp_dir, "collect.log"))[0]
+
+    def test_a_run_with_something_to_read_still_starts_the_agent(self, tmp_dir):
+        for env in ({"NEEDS_MODEL": "true"}, {}):
+            result, _, claude_log = self._run(
+                self.JOB, tmp_dir, self._stubs(tmp_dir, queue="101"), env
+            )
+            assert result.returncode == 0, result.stderr
+            assert len(claude_log) >= 1, env
 
     def test_a_queued_request_opens_the_gate_and_names_its_prs(self, tmp_dir):
         result, gh_log, _ = self._run(self.GATE, tmp_dir, self._stubs(tmp_dir))

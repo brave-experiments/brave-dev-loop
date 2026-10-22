@@ -534,28 +534,167 @@ class TestProcessPr:
         assert result["unchanged"] is True
         assert result["headRefOid"] == "abc123"
 
-    def test_a_re_request_with_no_changed_file_goes_to_the_validator(
-        self, prep, stubbed, tmp_dir, monkeypatch
-    ):
-        """#1678, #1676 and #1668 were re-requested after a rebase. Returning
-        `unchanged` posted nothing, so the request stood and the poll spent three
-        sessions on each before giving up. The open threads now reach a
-        validator and the PR gets a verdict."""
-        thread = {"thread_id": "T1", "path": "browser/a.cc", "line": 1, "body": "x"}
-        monkeypatch.setattr(prep, "fetch_open_bot_threads", lambda *a: [thread])
+    THREAD = {"thread_id": "T1", "path": "browser/a.cc", "line": 1, "body": "x"}
+
+    def _requested(self, prep, tmp_dir, prior, monkeypatch, threads=()):
+        monkeypatch.setattr(prep, "fetch_open_bot_threads", lambda *a: list(threads))
         work = os.path.join(tmp_dir, "work")
         os.makedirs(work, exist_ok=True)
         pr = dict(PR, reviewRequested=True)
-        result, error = prep.process_pr(
-            pr, "bot", set(), work, True, self._hashes(prep)
+        return prep.process_pr(pr, "bot", set(), work, True, prior)
+
+    def test_a_re_request_with_an_unchanged_patch_writes_no_prompt(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        """A requested reviewer used to send an unchanged PR to the detectors
+        every time it was asked. With every file's hash equal there is nothing
+        to read: no detect prompt, no summary prompt, and the entry says no
+        model is needed."""
+        monkeypatch.setattr(prep, "REVIEW_SUMMARY", True)
+        for name in (
+            "fetch_prior_comments",
+            "extract_images",
+            "fetch_and_create_worktree",
+        ):
+            monkeypatch.setattr(
+                prep, name, lambda *a, **k: pytest.fail("an unchanged patch was read")
+            )
+        result, error = self._requested(
+            prep, tmp_dir, self._hashes(prep), monkeypatch, [self.THREAD]
         )
         assert error is None
-        assert "unchanged" not in result
-        assert result["reviewRequested"] is True
-        assert result["subagent_prompts"] == []
+        assert result["patch_unchanged"] is True and result["reviewRequested"] is True
+        assert result["subagent_prompts"] == [] and result["summary_prompt"] is None
         assert result["files_reviewed"] == 0
+        assert not prep.pr_needs_model(result)
         with open(result["open_threads_file"]) as f:
-            assert json.load(f) == [thread]
+            assert json.load(f) == [self.THREAD]
+        assert not [
+            f
+            for f in os.listdir(os.path.dirname(result["file_hashes_file"]))
+            if f.endswith("_prompt.txt")
+        ]
+
+    def test_a_re_request_with_a_changed_patch_is_reviewed(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        prior = self._hashes(prep)
+        stubbed["text"] = diff_of(self.CC, section("ui/b.ts", ["let y = 2"]), self.LOCK)
+        result, _ = self._requested(prep, tmp_dir, prior, monkeypatch)
+        assert "patch_unchanged" not in result
+        assert result["subagent_prompts"] and prep.pr_needs_model(result)
+
+    def test_a_re_request_with_no_stored_hash_is_reviewed_whole(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        """A cache entry written before hashes were kept has none to compare."""
+        for prior in (None, {}):
+            result, _ = self._requested(prep, tmp_dir, prior, monkeypatch)
+            assert "patch_unchanged" not in result
+            assert (result["files_reviewed"], result["files_total"]) == (3, 3)
+            assert result["subagent_prompts"]
+
+    def test_a_re_request_after_a_rebase_reads_only_the_file_it_touched(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        """A conflict-resolving rebase changes the patch in the files it touched.
+        The others compare equal and are not read again."""
+        prior = self._hashes(prep)
+        stubbed["text"] = diff_of(
+            self.CC, section("ui/b.ts", ["let y = 1", "let z = 3"]), self.LOCK
+        )
+        result, _ = self._requested(prep, tmp_dir, prior, monkeypatch)
+        assert (result["files_reviewed"], result["files_total"]) == (1, 3)
+        prompts = [p["chunk_id"] for p in result["subagent_prompts"]]
+        assert prompts == ["frontend.md_0", "correctness"]
+        for entry in result["subagent_prompts"]:
+            with open(entry["prompt_file"]) as f:
+                text = f.read()
+            assert "+let z = 3" in text and "+int x;" not in text
+
+    def test_a_rebase_that_only_moves_hunks_is_unchanged(
+        self, prep, stubbed, tmp_dir, monkeypatch
+    ):
+        """Blob ids and hunk offsets move with a rebase and are not the patch."""
+        prior = self._hashes(prep)
+        moved = section(
+            "browser/a.cc",
+            ["int x;"],
+            index="index 3333333..4444444 100644",
+            hunk="@@ -40,2 +40,3 @@",
+        )
+        stubbed["text"] = diff_of(moved, self.TS, self.LOCK)
+        result, _ = self._requested(prep, tmp_dir, prior, monkeypatch)
+        assert result["patch_unchanged"] is True
+
+    def test_a_removed_file_is_not_an_unchanged_patch(self, prep):
+        assert prep.patch_unchanged({"a": "1", "b": "2"}, {"a": "1", "b": "2"})
+        assert not prep.patch_unchanged({"a": "1", "b": "2"}, {"a": "1"})
+        assert not prep.patch_unchanged({"a": "1"}, {"a": "1", "b": "2"})
+        assert not prep.patch_unchanged(None, {"a": "1"})
+        assert not prep.patch_unchanged({}, {})
+
+    def test_an_unchanged_patch_is_answered_by_the_scripts_alone(
+        self, prep, post, sel, collect, stubbed, tmp_dir, monkeypatch, capsys
+    ):
+        """prepare -> select-candidates -> collect -> post-review, with no
+        detector or validator between them. With no open comment the request
+        is answered with an approval; with one open it is answered
+        "Not fixed." on its line. Both are posted by the scripts."""
+        for threads, expect in (([], "approve"), ([self.THREAD], "answer")):
+            work = os.path.join(tmp_dir, f"run-{expect}")
+            os.makedirs(work)
+            monkeypatch.setattr(
+                prep, "fetch_open_bot_threads", lambda *a, t=threads: list(t)
+            )
+            result, _ = prep.process_pr(
+                dict(PR, reviewRequested=True),
+                "bot",
+                set(),
+                work,
+                True,
+                self._hashes(prep),
+            )
+            manifest = os.path.join(work, "manifest.json")
+            with open(manifest, "w") as f:
+                json.dump({"pr_repo": "o/r", "bot_username": "bot", "prs": [result]}, f)
+            monkeypatch.setattr(
+                sys, "argv", ["select-candidates.py", "--work-dir", work]
+            )
+            sel.main()
+            assert json.loads(capsys.readouterr().out)["validators"] == []
+            with open(manifest) as f:
+                entry = json.load(f)["prs"][0]
+            (pr_result,) = collect.build_post_review_input({"prs": [entry]})[
+                "pr_results"
+            ]
+
+            sent = {}
+            monkeypatch.setattr(post, "update_cache", lambda *a, **k: None)
+            monkeypatch.setattr(post, "fetch_existing_comments", lambda r, n: [])
+            monkeypatch.setattr(post, "resolve_review_thread", lambda t: True)
+            monkeypatch.setattr(
+                post, "check_can_approve", lambda n, b, reapprove=False, **k: reapprove
+            )
+            monkeypatch.setattr(
+                post, "submit_approval", lambda r, n: sent.update(approve=n) or "u"
+            )
+            monkeypatch.setattr(
+                post,
+                "post_batch_review",
+                lambda r, n, vs, sha, event="COMMENT": (
+                    sent.update(batch=[v["draft_comment"] for v in vs]) or ("u", 1)
+                ),
+            )
+            out = post.process_pr(pr_result, "o/r", "bot", True)
+            if expect == "approve":
+                assert sent == {"approve": 42} and out["status"] == "approved"
+            else:
+                assert out["status"] == "posted" and "approve" not in sent
+                assert sent["batch"] == [
+                    "**Not fixed.** The pull request's changes are the same as "
+                    "when this was raised."
+                ]
 
     def test_a_re_review_reads_only_the_changed_files(self, prep, stubbed, tmp_dir):
         prior = self._hashes(prep)
@@ -1903,11 +2042,14 @@ class TestValidatorKeepsByDefault:
         assert "same pattern appearing elsewhere is not a justification" in text
 
 
-class TestRequestedReviewReadsTheWholePr:
-    def test_a_requested_pr_is_compared_against_nothing(self, prep):
+class TestRequestedReviewIsComparedLikeASweptOne:
+    def test_a_requested_pr_keeps_the_per_file_comparison(self, prep):
         prior = {"7": {"a.cc": "h1"}}
+        assert prep.prior_hashes_for({"number": 7, "reviewRequested": True}, prior) == {
+            "a.cc": "h1"
+        }
         assert (
-            prep.prior_hashes_for({"number": 7, "reviewRequested": True}, prior) is None
+            prep.prior_hashes_for({"number": 8, "reviewRequested": True}, prior) is None
         )
 
     def test_a_swept_pr_keeps_the_per_file_shortcut(self, prep):
