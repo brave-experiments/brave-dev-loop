@@ -60,12 +60,8 @@ schedule_review() {
   echo "# every time a poll happened to be holding it. The minute is :30, off"
   echo "# every minute the poll uses and off brave-core's."
   echo "# Times are the machine's local clock, which cron reads; it is on Eastern time."
-  echo "# Daytime: 8x/day between 06:30 and 22:30, two or three hours apart"
-  bot_cron_job "30 6,8,10,13,15,17,20,22 * * *" "./scripts/check-new-prs.sh" \
-    "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "$(bot_cron_review review-prs '1d open --auto --reviewer-priority' 3 "$BOT_REVIEW_MODEL")")" \
-    "review-prs-cron.log"
-  echo "# Overnight: 1x, 02:30, halfway between the last daytime sweep and the first"
-  bot_cron_job "30 2 * * *" "./scripts/check-new-prs.sh" \
+  echo "# 4x/day, five hours apart from 07:30 to 22:30"
+  bot_cron_job "30 7,12,17,22 * * *" "./scripts/check-new-prs.sh" \
     "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "$(bot_cron_review review-prs '1d open --auto --reviewer-priority' 3 "$BOT_REVIEW_MODEL")")" \
     "review-prs-cron.log"
 

@@ -5572,9 +5572,9 @@ class TestProjectSchedules:
         it. That is a sweep starved by the poll."""
         jobs = self._jobs(self._render(tmp_dir, profile))
         reviewing = [j for j in jobs if "review-prs" in j]
-        # brave-core: weekday sweep, weekend sweep, the poll; bravebot: a
-        # daytime sweep, an overnight one, the poll
-        assert len(reviewing) == {"brave-core": 3, "bravebot": 3}[profile]
+        # brave-core: weekday sweep, weekend sweep, the poll; bravebot: one
+        # sweep job and the poll
+        assert len(reviewing) == {"brave-core": 3, "bravebot": 2}[profile]
         counts = {
             re.search(r"with-lock\.sh review-prs --slots (\d+)", j).group(1)
             for j in reviewing
@@ -5615,38 +5615,19 @@ class TestProjectSchedules:
             assert "claude -p" not in job, job
             assert "review-session.sh" in job or "review-requested.sh" in job, job
 
-    def test_bravebot_sweeps_eight_times_a_day_and_answers_requests(self, tmp_dir):
-        """The daytime sweeps fall inside 06:00-23:00, and an explicit request
-        does not wait on them: the poll is a job of its own."""
+    def test_bravebot_sweeps_four_times_a_day_and_answers_requests(self, tmp_dir):
+        """One sweep job runs at 07:30, 12:30, 17:30 and 22:30, and an explicit
+        request does not wait on it: the poll is a job of its own."""
         block = self._render(tmp_dir, "bravebot")
         assert "review-requested.sh" in block
         sweeps = [j for j in self._jobs(block) if "review-session.sh" in j]
-        (daytime,) = [j for j in sweeps if not j.startswith("30 2 ")]
-        minute, hours = daytime.split()[:2]
-        assert minute == "30"
-        hours = [int(h) for h in hours.split(",")]
-        assert len(hours) == 8
-        assert 6 <= min(hours) and max(hours) < 23
-        assert daytime.split()[2:5] == ["*", "*", "*"]
+        (sweep,) = sweeps
+        assert sweep.split()[:5] == ["30", "7,12,17,22", "*", "*", "*"]
 
-    def test_bravebot_sweeps_once_overnight_in_the_middle_of_the_gap(self, tmp_dir):
-        """One sweep covers the hours the daytime ones skip, halfway between the
-        last of them and the first."""
-        sweeps = [
-            j
-            for j in self._jobs(self._render(tmp_dir, "bravebot"))
-            if "review-session.sh" in j
-        ]
-        (overnight,) = [j for j in sweeps if j.split()[1] == "2"]
-        assert overnight.split()[:5] == ["30", "2", "*", "*", "*"]
-        (daytime,) = [j for j in sweeps if j is not overnight]
-        hours = [int(h) for h in daytime.split()[1].split(",")]
-        last, first = max(hours) + 0.5, min(hours) + 0.5
-        assert (last + ((first + 24 - last) / 2)) % 24 == 2.5
-
-    def test_the_sweeps_are_spread_no_more_than_three_hours_apart(self, tmp_dir):
-        """Eight sweeps bunched into one stretch of the day would leave the rest
-        of it unreviewed."""
+    def test_the_bravebot_sweeps_are_five_hours_apart_by_day(self, tmp_dir):
+        """Four sweeps, so the daytime gaps are five hours and the overnight gap
+        is the only longer one. A sweep bunched into one stretch of the day would
+        leave the rest of it unreviewed."""
         sweeps = [
             j
             for j in self._jobs(self._render(tmp_dir, "bravebot"))
@@ -5654,9 +5635,9 @@ class TestProjectSchedules:
         ]
         hours = sorted(int(h) for j in sweeps for h in j.split()[1].split(","))
         gaps = [b - a for a, b in zip(hours, hours[1:])] + [hours[0] + 24 - hours[-1]]
-        assert len(hours) == 9
-        assert max(gaps) <= 4
-        assert all(g >= 2 for g in gaps[:-1])
+        assert len(hours) == 4
+        assert gaps[:-1] == [5, 5, 5]
+        assert gaps[-1] == 9
 
     def test_bravebot_sweep_minute_is_off_the_poll_minutes(self, tmp_dir):
         poll = self._review_request_job(tmp_dir, "bravebot").split()[0].split(",")
