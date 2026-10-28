@@ -225,6 +225,22 @@ def label_severity(violation):
         violation["draft_comment"] = f"**Severity: {label}**\n\n{draft}"
 
 
+def embed_proof_in_comment(violation):
+    """Append the validator's proof to the comment in a collapsed block.
+
+    Idempotent. A `</details>` inside the proof would close the block early, so
+    it is defused.
+    """
+    proof = (violation.get("proof") or "").strip()
+    draft = violation.get("draft_comment", "")
+    if not proof or not draft or "<details>" in draft:
+        return
+    proof = re.sub(r"</?details>|</?summary>", "", proof, flags=re.I)
+    violation["draft_comment"] = (
+        f"{draft}\n\n<details>\n<summary>Proof</summary>\n\n{proof}\n\n</details>"
+    )
+
+
 def validate_rule_link(violation):
     """Validate a violation's rule_link. Returns True if valid or no link.
 
@@ -845,6 +861,8 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
         # 7. Deduplicate against existing comments
         existing_comments = fetch_existing_comments(repo, number)
         violations = deduplicate_violations(violations, existing_comments, bot_username)
+        for v in violations:
+            embed_proof_in_comment(v)
 
         # The comments the bot left earlier: resolve what the code now
         # answers, and keep the rest in the verdict. The approval gate below

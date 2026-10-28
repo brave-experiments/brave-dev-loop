@@ -87,6 +87,30 @@ def settle_rule_links(violations, bp_dir):
     return violations
 
 
+MIN_PROOF_CHARS = 200
+
+
+def require_proof(violations):
+    """Keep only findings that carry the validator's proof.
+
+    A finding is posted with its proof in a details block so the author can check
+    the claim. One with no real proof was not investigated, and is not posted.
+    """
+    kept = []
+    for v in violations:
+        proof = v.get("proof")
+        if isinstance(proof, str) and len(proof.strip()) >= MIN_PROOF_CHARS:
+            v["proof"] = proof.strip()
+            kept.append(v)
+        else:
+            v.pop("proof", None)
+            log(
+                f"NO_PROOF: {v.get('file')}:{v.get('line')} dropped; "
+                "the validator gave no proof of the claim"
+            )
+    return kept
+
+
 def collect_violations(pr, bp_dir=None):
     """(violations, validation_log, skip_reason); skip_reason is set only for an unfinished review."""
     if pr.get("review_incomplete"):
@@ -104,7 +128,7 @@ def collect_violations(pr, bp_dir=None):
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         return [], [], f"the validator wrote no results ({e})"
-    violations = settle_rule_links(data.get("violations", []), bp_dir)
+    violations = require_proof(settle_rule_links(data.get("violations", []), bp_dir))
     return violations, data.get("validation_log", []), None
 
 
