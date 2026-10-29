@@ -119,9 +119,7 @@ def select(pr, violations, existing_comments, bp_dir, bot_username=None):
     violations = _post.deduplicate_violations(
         violations, existing_comments, bot_username
     )
-    kept, _ = _post.prioritize_violations(
-        violations, pr.get("hasApproval", False), limit=CANDIDATE_LIMIT
-    )
+    kept, _ = _post.prioritize_violations(violations, limit=CANDIDATE_LIMIT)
     return kept
 
 

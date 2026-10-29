@@ -1143,36 +1143,35 @@ class TestPrioritize:
     def test_limit_widens_the_cap(self, post):
         n = 2 * post.MAX_COMMENTS_PER_PR + 2
         vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(n)]
-        kept, _ = post.prioritize_violations(list(vs), False)
+        kept, _ = post.prioritize_violations(list(vs))
         assert len(kept) == post.MAX_COMMENTS_PER_PR
         wider = post.MAX_COMMENTS_PER_PR * 2
-        kept, _ = post.prioritize_violations(list(vs), False, limit=wider)
+        kept, _ = post.prioritize_violations(list(vs), limit=wider)
         assert len(kept) == wider
 
-    def test_an_approved_pr_gets_high_and_medium_but_no_nits(self, post):
-        """Someone already said yes, so nits are noise; a substantive violation
-        is still worth saying before it merges."""
-        vs = [
-            {"file": "a", "line": 1, "severity": "low"},
-            {"file": "b", "line": 1, "severity": "medium"},
-            {"file": "c", "line": 1, "severity": "high"},
-        ]
-        kept, dropped = post.prioritize_violations(list(vs), True)
-        assert [v["severity"] for v in kept] == ["high", "medium"]
-        assert dropped == 1
-
-    def test_an_approved_pr_still_has_the_cap(self, post):
-        n = post.MAX_COMMENTS_PER_PR + 3
-        vs = [{"file": f"f{i}", "line": 1, "severity": "medium"} for i in range(n)]
-        kept, dropped = post.prioritize_violations(list(vs), True)
-        assert len(kept) == post.MAX_COMMENTS_PER_PR
-        assert dropped == 3
-
-    def test_the_detect_prompt_asks_an_approved_pr_for_medium_too(self, prep):
+    def test_the_prompt_does_not_tell_an_approved_pr_to_drop_nits(self, prep):
         header = "\n".join(
             prep._prompt_header({"number": 1, "title": "t", "has_approval": True})
         )
-        assert "high- and medium-severity" in header and "no low-severity" in header
+        assert "already approved" not in header
+
+    def test_a_persons_comment_on_the_line_does_not_hide_a_rule_finding(self, post):
+        v = {
+            "file": "a.cc",
+            "line": 3,
+            "rule_link": "https://x/doc.md#CS-001",
+            "issue": "uses raw pointer ownership here",
+            "draft_comment": "Use unique_ptr for ownership instead of raw new.",
+        }
+        theirs = [
+            {"path": "a.cc", "line": 3, "user": "alice", "body": "lgtm, typo in name"}
+        ]
+        assert post.deduplicate_violations([v], theirs, "bot") == [v]
+
+    def test_a_rule_finding_the_bot_already_posted_on_the_line_is_dropped(self, post):
+        v = {"file": "a.cc", "line": 3, "rule_link": "https://x/doc.md#CS-001"}
+        mine = [{"path": "a.cc", "line": 3, "user": "bot", "body": "x"}]
+        assert post.deduplicate_violations([v], mine, "bot") == []
 
 
 BP_DOC = """# C++
@@ -1232,7 +1231,11 @@ class TestSelectCandidates:
         ]
         existing = [{"path": "b.cc", "line": 9, "body": "x", "user": "someone"}]
         kept = sel.select({"hasApproval": False}, vs, existing, bp_dir)
-        assert [(v["file"], v["line"]) for v in kept] == [("a.cc", 4), ("a.cc", 1)]
+        assert [(v["file"], v["line"]) for v in kept] == [
+            ("a.cc", 4),
+            ("a.cc", 1),
+            ("b.cc", 9),
+        ]
 
     def test_select_caps_at_twice_the_posting_cap(self, sel, bp_dir):
         vs = [
@@ -2141,10 +2144,10 @@ class TestDedupKeepsDistinctFindings:
         }
         assert post.deduplicate_violations([bug], [other], "bot") == [bug]
 
-    def test_rule_violation_keeps_the_exact_line_rule(self, post):
+    def test_rule_violation_is_not_hidden_by_a_persons_unrelated_comment(self, post):
         rule = self.v(rule="r", rule_link=self.RULE)
         other = {"path": "a.cc", "line": 10, "body": "anything", "user": "alice"}
-        assert post.deduplicate_violations([rule], [other], "bot") == []
+        assert post.deduplicate_violations([rule], [other], "bot") == [rule]
 
 
 class TestBugPassReadsTheSource:
