@@ -304,9 +304,23 @@ def validated(violations, proposals=None):
     return data
 
 
+PROOF = "**Claim:** x\n- Evidence: " + "`a.rs:3` quoted code. " * 12
+
+
 class TestCollect:
     def violation(self, **kw):
-        return dict(CANDIDATE, **kw)
+        return dict(CANDIDATE, **{"proof": PROOF, **kw})
+
+    def test_a_finding_without_real_proof_is_dropped(self, collect):
+        kept = collect.require_proof(
+            [
+                self.violation(line=1),
+                self.violation(line=2, proof=""),
+                self.violation(line=3, proof="looks wrong"),
+                dict(CANDIDATE, line=4),
+            ]
+        )
+        assert [v["line"] for v in kept] == [1]
 
     def test_a_cited_link_that_names_a_rule_is_kept_with_the_docs_heading(
         self, collect, bp_dir

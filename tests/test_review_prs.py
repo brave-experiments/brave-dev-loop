@@ -2176,14 +2176,25 @@ class TestBugPassReadsTheSource:
         assert {"Read", "Grep", "Glob", "Write"} <= {t.strip() for t in tools}
 
 
-class TestValidatorKeepsByDefault:
-    def test_the_rules_keep_what_cannot_be_disproved(self, prep):
+class TestValidatorProvesBeforeKeeping:
+    def test_the_rules_demand_investigation_not_a_missing_counterexample(self, prep):
         text = prep._VALIDATE_INSTRUCTIONS
-        assert "Default to keeping a candidate" in text
-        assert "Not being able to read a file is never a reason to drop" in text
+        assert "Do not keep a candidate until you have proved it" in text
+        assert "Work out what is right" in text
+        assert "Absence of a counterexample proves nothing" in text
+        assert "Find other instances" in text
+        assert "quoting the line" in text
+        assert '"I could not confirm it" is a reason to drop' in text
+        assert "Default to keeping" not in text
         assert "nearest added line" in text
-        assert "keep it" in text and "an added line causes" in text
+        assert "an added line causes" in text
         assert "same pattern appearing elsewhere is not a justification" in text
+
+    def test_the_output_asks_for_a_proof_on_every_kept_candidate(self, prep):
+        text = prep._VALIDATE_INSTRUCTIONS
+        assert '"proof":' in text
+        for part in ("Claim", "Evidence", "How it works", "Other instances"):
+            assert f"**{part}:**" in text
 
 
 class TestRequestedReviewIsComparedLikeASweptOne:
@@ -2275,3 +2286,38 @@ class TestUpliftSkip:
         ]
         to_review = fetch.filter_prs(prs, "days", 5, {}, set())[0]
         assert [p["number"] for p in to_review] == [2]
+
+
+class TestProofInTheComment:
+    def violation(self, **kw):
+        return dict(
+            {"file": "a.cc", "line": 3, "draft_comment": "Wrong."},
+            proof="**Claim:** x\n- `a.cc:3` `foo()`",
+            **kw,
+        )
+
+    def test_the_proof_follows_the_comment_in_a_details_block(self, post):
+        v = self.violation()
+        post.embed_proof_in_comment(v)
+        assert v["draft_comment"].startswith("Wrong.\n\n<details>")
+        assert "<summary>Proof</summary>" in v["draft_comment"]
+        assert "`a.cc:3` `foo()`" in v["draft_comment"]
+        assert v["draft_comment"].endswith("</details>")
+
+    def test_embedding_twice_changes_nothing(self, post):
+        v = self.violation()
+        post.embed_proof_in_comment(v)
+        once = v["draft_comment"]
+        post.embed_proof_in_comment(v)
+        assert v["draft_comment"] == once
+
+    def test_a_details_tag_in_the_proof_cannot_close_the_block_early(self, post):
+        v = self.violation()
+        v["proof"] = "a </details> b <summary>s</summary>"
+        post.embed_proof_in_comment(v)
+        assert v["draft_comment"].count("</details>") == 1
+
+    def test_a_comment_without_proof_is_left_alone(self, post):
+        v = {"draft_comment": "Wrong."}
+        post.embed_proof_in_comment(v)
+        assert v["draft_comment"] == "Wrong."

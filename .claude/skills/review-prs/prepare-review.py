@@ -1567,17 +1567,31 @@ File paths are relative to it. Read it with the Read, Grep and Glob tools, or
 with shell commands that spell out absolute paths under it. A scheduled run
 refuses a command that `cd`s into it or holds the path in a shell variable.{base_note}
 
-Reviewers who read only the diff proposed the candidates above. For each one:
-- Read the source file around the flagged line with the Read tool, and the context the claim rests on: the enclosing function and class, the includes, the namespace, the BUILD.gn deps list when the candidate is about dependencies.
-- Verify the claim. If it says "use X instead of Y", confirm X exists and fits. If it says something is missing, confirm it is missing from the whole file, not just the diff. A deprecation claim needs the header read.
+Reviewers who read only the diff proposed the candidates above. Their claims come from a diff and a rule summary, so any of them may be wrong. A comment posted on a wrong claim costs the author time and the bot its credibility; a dropped candidate costs nothing. Do not keep a candidate until you have proved it from the code.
+
+For each candidate, investigate in depth with the tools before you decide. Do not answer from what the candidate says, from the diff alone, or from memory. Do all of this:
+1. State the claim as a sentence that can be false: what must be true of the code, the build or the runtime for this to be a defect.
+2. Read the mechanism, not only the flagged line. Open the file around the line, the enclosing function and class, the callers, the includes, the BUILD.gn deps, the generator or tool that produces or consumes the file, and the docs that describe it. Grep and Glob the tree for the symbol, the pattern and the file type. When a claim says two things conflict, read how each is produced and applied.
+3. Work out what is right. Derive the correct behavior or convention from the code: how the system actually works, and what the change should look like if it is correct. Absence of a counterexample proves nothing. A claim stands only when the code shows the defect, and you can say what the fix is.
+4. Find other instances. Search the tree for the same construct (the same file type, API, pattern or pairing). Count how many follow the claimed rule and how many break it. If the code base does the flagged thing routinely, work out why it is fine there before keeping the claim; if it never does, say so. A defect claim that most of the tree contradicts is wrong until you can show what makes this case different.
+5. Check where each fact comes from. A claim about what the PR adds, removes or leaves alone is checked against the diff above, quoting the line. Do not say something is "from the base branch" or "already present" unless you saw it outside the diff.
+6. Check the surrounding code for a justification: a comment or TODO that explains why it is done this way. The same pattern appearing elsewhere is not a justification for a defect, but it is evidence about whether the claim is a convention or a bug (step 4).
+
+Then decide:
 - Drop it if the PR did not introduce it: the flagged code is on a context line and no added line causes the problem, or the dependency or pattern already existed before this PR. A bug that an added line causes in code the diff does not show (a caller the change breaks, a guard it removes) was introduced by the PR: keep it.
 - Drop a rule candidate the cited rule text does not support, a naming suggestion for a symbol defined outside the PR's changed files, and a "while you're here" suggestion on code a move or rename carried over unchanged.
-- A claim about what upstream Chromium code does is best checked in the upstream file. If you cannot read it, use what you know of Chromium: keep the candidate when you believe the claim is right, and say in `issue` what to check, and drop it only when you believe it is wrong. Not being able to read a file is never a reason to drop.
-- A candidate with no rule_link is a bug report: keep it when the code you read shows the defect and the change introduces or exposes it. Drop it only when the source shows it is wrong, and say what you read.{guidance_note}{link_note}
-- Default to keeping a candidate. Drop one only when you can point to what in the source or the rule text disproves it; "I could not confirm it" and "it is minor" are reasons to keep it, with a note in `issue`.
-- Check the surrounding code for a justification: a comment or TODO that explains why it is done this way. The same pattern appearing elsewhere is not a justification for a defect.
+- Drop it when what you read contradicts the claim, or when your investigation does not show the defect. "I could not confirm it" is a reason to drop, not to keep. Say in the log what you read.
+- A claim about what upstream Chromium code does is checked in the upstream file when it is in the tree, and otherwise in the vendored headers, the callers and the tests you can read. Keep it only when what you read supports it and your `proof` says so. If nothing you can read bears on it, drop it.
+- A candidate with no rule_link is a bug report: keep it only when the code you read shows the defect and the change introduces or exposes it.{guidance_note}{link_note}
 - Sanitize @mentions: keep only logins of actual PR participants.
-- Keep what survives, tightening draft_comment where the source gives better context. Do not add findings of your own. Keep file, line, severity, rule and rule_link unless the source shows they are wrong. `line` must be within the valid line ranges: when the real location is outside them, move `line` to the nearest added line in that file, name the real location in draft_comment, and keep the candidate.
+- Keep what survives, tightening draft_comment where the source gives better context. The comment must state the fix you derived in step 3, not only the problem. Do not add findings of your own. Keep file, line, severity, rule and rule_link unless the source shows they are wrong. `line` must be within the valid line ranges: when the real location is outside them, move `line` to the nearest added line in that file, name the real location in draft_comment, and keep the candidate.
+
+Every kept candidate carries a `proof`, which is posted in the comment inside a collapsed details block for the PR author. Write it for them, in markdown, in this order, with no preamble:
+- **Claim:** the one sentence from step 1.
+- **Evidence:** what you read and found, as bullets: `path:line` with a short quote, and each search you ran with what it found (the pattern, and the matching files or the count). Paths are relative to the repository root. Quote the code; do not summarize it.
+- **How it works:** the mechanism you derived in steps 2 and 3, and why it makes the code wrong and the fix right.
+- **Other instances:** what the search in step 4 found, with the count and two or three example paths.
+A `proof` that only restates the claim, cites no file, or names no search you ran is the same as no proof. A candidate you cannot write one for is dropped. Never mention the validator, a subagent, a prompt, or a path outside the repository in it.
 - Log each candidate:
   - VALIDATED: <file>:<line> — confirmed, <note>
   - VALIDATED_ENHANCED: <file>:<line> — improved with <context>
@@ -1586,7 +1600,7 @@ Reviewers who read only the diff proposed the candidates above. For each one:
 {threads_note}{proposals_note}Write the results with the Write tool to: {results_file}
 {{
   "violations": [
-    {{"file": "path/to/file.cc", "line": 42, "severity": "high", "rule": "Rule heading", "rule_link": "https://...", "issue": "brief description", "draft_comment": "1-3 sentence comment to post"}}
+    {{"file": "path/to/file.cc", "line": 42, "severity": "high", "rule": "Rule heading", "rule_link": "https://...", "issue": "brief description", "draft_comment": "1-3 sentence comment to post", "proof": "markdown: Claim, Evidence, How it works, Other instances"}}
   ],
   "validation_log": ["VALIDATED: file.cc:42 — confirmed", "VALIDATED_DROP: bar.cc:10 — false positive"]{threads_output}{proposals_output}
 }}
