@@ -168,7 +168,7 @@ def update_cache(pr_number, head_ref_oid, approve=False, file_hashes_file=None):
     return rc == 0
 
 
-def prioritize_violations(violations, has_approval, limit=MAX_COMMENTS_PER_PR):
+def prioritize_violations(violations, limit=MAX_COMMENTS_PER_PR):
     """Sort and cap violations per the rules.
 
     Returns (kept, dropped_count).
@@ -178,16 +178,6 @@ def prioritize_violations(violations, has_approval, limit=MAX_COMMENTS_PER_PR):
 
     # Sort by severity
     violations.sort(key=lambda v: SEVERITY_ORDER.get(v.get("severity", "low"), 2))
-
-    if has_approval:
-        # Approved PRs: high and medium, never nits. Someone already said yes,
-        # so a style preference is noise, but a substantive violation is still
-        # worth a comment before it merges.
-        kept = [v for v in violations if v.get("severity") in ("high", "medium")]
-        dropped = len(violations) - len(kept[:limit])
-        if dropped:
-            log(f"CAPPED: dropped {dropped} violations (PR has approval: no nits)")
-        return kept[:limit], dropped
 
     high = [v for v in violations if v.get("severity") == "high"]
     medium = [v for v in violations if v.get("severity") == "medium"]
@@ -482,12 +472,10 @@ def _repeats(violation, comment):
 def deduplicate_violations(violations, existing_comments, bot_username=None):
     """Remove violations the PR already has a comment for.
 
-    A rule violation is dropped when any comment exists on the same file+line.
-    A finding without a rule link (a bug, or a project-guidance finding) names
-    no rule to match on, so it is dropped when the bot already commented on that
-    line, or when a comment on the same file repeats what it says, wherever the
-    comment now sits. A person's comment on the same line about something else
-    does not hide it.
+    A finding is dropped when the bot already commented on that line, or when a
+    comment on the same file repeats what it says, wherever the comment now
+    sits. A person's comment on the same line about something else does not
+    hide it, and neither does an approval: the bot reviews on its own.
 
     Returns filtered list.
     """
@@ -507,14 +495,11 @@ def deduplicate_violations(violations, existing_comments, bot_username=None):
         file_path = v.get("file", "")
         key = (file_path, v.get("line"))
         user = comment_authors.get(key)
-        if v.get("rule_link"):
-            skip = key in existing
-        else:
-            skip = (
-                user is not None and bot_username is not None and user == bot_username
-            ) or any(
-                c.get("path") == file_path and _repeats(v, c) for c in existing_comments
-            )
+        skip = (
+            user is not None and bot_username is not None and user == bot_username
+        ) or any(
+            c.get("path") == file_path and _repeats(v, c) for c in existing_comments
+        )
         if skip:
             log(
                 f"DEDUP: skipped {v.get('file')}:{v.get('line')} — already commented"
@@ -824,7 +809,6 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
     number = pr_data["number"]
     title = pr_data.get("title", "")
     head_sha = pr_data.get("headRefOid", "")
-    has_approval = pr_data.get("hasApproval", False)
     violations = list(pr_data.get("violations", []))
     link = pr_link(repo, number, title)
 
@@ -846,7 +830,7 @@ def process_pr(pr_data, repo, bot_username, auto_mode):
         violations = deduplicate_batch_violations(violations)
 
         # 4. Prioritize and cap
-        violations, dropped = prioritize_violations(violations, has_approval)
+        violations, dropped = prioritize_violations(violations)
 
         # 5. Validate rule links
         for v in violations:

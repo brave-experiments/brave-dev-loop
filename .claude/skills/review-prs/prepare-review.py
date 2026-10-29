@@ -1263,7 +1263,7 @@ _DETECT_RULES = """\
 Review Rules:
 - You work from the diff. A validator reads the source tree afterwards and drops what the source disproves, so report what the diff shows. When a finding depends on code the diff does not show (a deps list, an include elsewhere in the file, a caller, an upstream class), say what to check in `issue`.
 - Only flag violations in ADDED lines (+ lines), not existing code.
-- Only flag violations of the rules below. A bug that breaks none of them is another reviewer's job.
+- Only flag violations of the rules below. A bug that breaks none of them is the bug pass's job, which runs on every PR.
 - Only comment on things the PR author introduced. If a dependency, pattern, or architectural issue already existed before this PR, do not flag it — even if it violates a best practice. Do NOT claim a PR "adds a dependency" or "introduces a pattern" unless the + lines show it.
 - Do not suggest renaming imported symbols defined outside the PR. When a + line imports or calls a function/class/variable whose definition is NOT in a file changed by the PR, do not comment on its name. Only flag naming issues on symbols defined or renamed within the PR's changed files.
 - Respect the intent of the PR. If a PR is moving, renaming, or refactoring files, do not suggest restructuring dependencies, changing public_deps vs deps, or reorganizing code that was simply carried over from the old location. Only flag issues that are actual bugs introduced by the move (e.g., broken paths, missing deps that cause build failures), not "while you're here, you should also fix X" improvements.
@@ -1308,9 +1308,9 @@ _PRIOR_COMMENTS_RULES = """\
 Prior comments re-review rules:
 - Do NOT re-raise issues that the author or a reviewer has already explained or justified. If a prior comment thread shows the author explaining why a design choice was made (e.g., "only two subclasses will ever use this, both pass constants"), accept that explanation and do not flag the same issue again.
 - Do NOT repeat your own previous comments. If a comment from the bot already raised the same point, skip it — even if the code hasn't changed. The author has already seen it.
-- Do NOT flag new issues on re-review that were missed the first time. If an issue existed in the code during the first review and was not caught, do not raise it on a subsequent review — unless it is a serious correctness or security concern. Only flag issues on re-review if they were introduced in commits since the last reviewed commit.
-- DO re-raise an issue only if: (a) the author's explanation is factually incorrect or introduces a real risk, OR (b) new code in the latest diff introduces a new instance of the same problem that wasn't previously discussed.
-- When in doubt about whether an issue was addressed, err on the side of NOT re-raising it. Repeating resolved feedback is more disruptive than missing a marginal issue."""
+- Review the whole diff as if for the first time. A defect that was already in the code at the last review and was missed then is still a defect: raise it now, whoever else has or has not commented, and whether or not the PR is already approved.
+- DO re-raise an issue if (a) the author's explanation is factually incorrect or introduces a real risk, OR (b) new code in the latest diff introduces a new instance of the same problem that wasn't previously discussed.
+- When an earlier comment of anyone's, bot or person, already makes the same point, do not post it again. A comment on the same line about something else does not cover your finding."""
 
 _SYSTEMATIC_AUDIT_REQUIREMENT = """\
 Systematic Audit Requirement:
@@ -1371,11 +1371,6 @@ def _prompt_header(ctx, base_note=True):
             f"This PR targets `{base_ref}`, not `{DEFAULT_BRANCH}`. Code that "
             f"`{base_ref}` added is in neither this diff nor the source tree, so "
             "never claim a symbol, file, include or dependency is missing."
-        )
-    if ctx.get("has_approval"):
-        parts.append(
-            "The PR is already approved: report only high- and medium-severity "
-            "findings, no low-severity nits."
         )
     if ctx.get("rereview_note"):
         parts.append(ctx["rereview_note"])
