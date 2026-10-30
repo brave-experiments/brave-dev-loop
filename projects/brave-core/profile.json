@@ -30,6 +30,9 @@
     "requestChanges": true
   },
   "prDraft": true,
+  "prFeedback": {
+    "ci": false
+  },
   "labels": {
     "pr": [
       "ai-generated"

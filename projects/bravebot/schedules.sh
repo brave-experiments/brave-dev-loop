@@ -77,4 +77,16 @@ schedule_review() {
   bot_cron_job "3,8,13,18,23,28,33,38,43,48,53,58 * * * *" "./scripts/check-review-requests.sh" \
     "./scripts/sync-target-repo.sh && $(bot_cron_as_reviewer "./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh")" \
     "review-requested-cron.log"
+
+  echo ""
+  echo "# PR feedback — wake an agent only for a request for changes or red CI"
+  echo "# The gate (pr-feedback.py gate) is plain gh reads plus the cache in"
+  echo "# ~/.brave-dev-loop/pr-feedback: no tokens when there is nothing to do, and a"
+  echo "# PR that keeps failing is capped by per-component, daily, weekly and"
+  echo "# back-off limits. The job makes a worktree, runs one agent iteration,"
+  echo "# re-requests review from the rejecting reviewer and removes the worktree."
+  echo "# Runs as the bot (it pushes). One at a time. Minutes are off every other job's."
+  bot_cron_job "2,7,12,17,22,27,32,37,42,47,52,57 * * * *" "python3 ./scripts/pr-feedback.py gate" \
+    "./scripts/with-lock.sh pr-feedback --timeout 5400 -- ./scripts/pr-feedback.sh" \
+    "pr-feedback-cron.log"
 }

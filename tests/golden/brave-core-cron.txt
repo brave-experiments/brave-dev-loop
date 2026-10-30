@@ -47,6 +47,16 @@ PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap
 # inside the job so two runs never review the same one.
 4,9,14,19,24,29,34,39,44,49,54,59 * * * * cd {BOT} && source .envrc && ./scripts/check-review-requests.sh 2>> {BOT}/logs/review-requested-cron.log && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/as-reviewer.sh -- ./scripts/with-lock.sh review-prs --slots 3 --timeout 14400 -- ./scripts/review-requested.sh ; } >> {BOT}/logs/review-requested-cron.log 2>&1
 
+# PR feedback — wake an agent only for a request for changes
+# brave-core's profile sets prFeedback.ci to false: failing CI never wakes it.
+# The gate (pr-feedback.py gate) is plain gh reads plus the cache in
+# ~/.brave-dev-loop/pr-feedback: no tokens when there is nothing to do, and a
+# PR that keeps being rejected is capped by per-component, daily, weekly and
+# back-off limits. The job makes a worktree, runs one agent iteration,
+# re-requests review from the rejecting reviewer and removes the worktree.
+# Runs as the bot (it pushes). One at a time.
+0,5,10,15,20,25,30,35,40,45,50,55 * * * * cd {BOT} && source .envrc && python3 ./scripts/pr-feedback.py gate 2>> {BOT}/logs/pr-feedback-cron.log && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/with-lock.sh pr-feedback --timeout 5400 -- ./scripts/pr-feedback.sh ; } >> {BOT}/logs/pr-feedback-cron.log 2>&1
+
 # === end brave-dev-loop (brave-core:review) ===
 
 # === brave-dev-loop (brave-core:maintenance) scheduled jobs ===
