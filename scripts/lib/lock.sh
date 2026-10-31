@@ -158,6 +158,15 @@ bot_acquire_lock() {
     return 1
   fi
 
+  # Close the fd before opening it. On the bash 3.2 macOS ships, `exec 200>>file`
+  # leaves an fd numbered 10 or higher untouched when it is already open: it
+  # keeps pointing at the old file and the redirection still reports success.
+  # A process that inherited a held lock (a subshell, or with-lock.sh started by
+  # a run) would then flock the holder's own open file description, be granted
+  # it, and report a lock it never contended for. Closing first costs nothing
+  # elsewhere: opening onto an open fd closes the old one anyway.
+  eval "exec $BOT_LOCK_FD>&-" 2>/dev/null || true
+
   # Append, never truncate: `exec 200>file` empties the file at open time,
   # which would wipe the ownership record of the run that actually holds it.
   eval "exec $BOT_LOCK_FD>>\"\$lockfile\"" || {
