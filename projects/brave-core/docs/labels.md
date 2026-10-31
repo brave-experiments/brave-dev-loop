@@ -34,3 +34,42 @@ gh issue edit <issue-number> --add-label "OS/Desktop" --repo $ISSUE_REPO
 
 `disabled-brave-test` (the profile's `labels.disabledTest`) marks an issue as a
 disabled test. See `docs/testing.md` in this profile.
+
+## Pull request labels
+
+`/review-prs` labels each pull request once, the first time it reads it, as
+[pr-labels.md](../../../docs/pr-labels.md) describes. The labels are `review.labelPrs` in this
+profile, in `brave/brave-core`. Every one starts with `pr/`, and none reuses a label the repository
+already had.
+
+| Label | Decided by | Applies when |
+| --- | --- | --- |
+| `pr/tests-only` | paths | every changed file is a test or test data |
+| `pr/docs-only` | paths | every changed file is a `.md` file, other than the ones listed below |
+| `pr/chromium-overrides` | paths | some changed file is under `chromium_src/` |
+| `pr/risk/dependencies` | paths | some changed file is a dependency manifest or lockfile, `DEPS`, or under `third_party/` |
+| `pr/risk/funds` | model | the change can move, lose, expose or miscount a user's money or keys |
+| `pr/risk/security` | model | the change touches a security boundary |
+| `pr/risk/privacy-promises-affected` | model | the change can alter something Brave tells users it does for their privacy |
+| `pr/risk/network-calls` | model | the change adds or alters a network request |
+
+`pr/docs-only` does not apply to a PR that changes `AGENTS.md`, `SECURITY.md`, a file under
+`.claude/` or `agents/`, `docs/best_practices.md`, a file under `docs/best-practices/`, or a file
+under `third_party/` or `tools/crates/vendor/`. The first four steer an agent or the reviewer or
+state the security policy, and the last two are the documentation of vendored code.
+
+brave-core already has `dependencies`, `tests`, `security`, `needs-security-review` and
+`PR/Pending Review`. They are left as they are. `dependencies` marks an update bot's PR, and
+`pr/risk/dependencies` marks any PR that changes what the build pulls in.
+
+```bash
+R=brave/brave-core
+gh label create pr/tests-only --repo $R --color 0E8A16 --description "Every changed file is a test or test data"
+gh label create pr/docs-only --repo $R --color 0E8A16 --description "Every changed file is documentation, outside the agent, review and security docs"
+gh label create pr/chromium-overrides --repo $R --color 5319E7 --description "Changes a chromium_src override of upstream Chromium code"
+gh label create pr/risk/dependencies --repo $R --color D93F0B --description "Changes a dependency manifest, lockfile, DEPS or third_party"
+gh label create pr/risk/funds --repo $R --color D93F0B --description "Can move, lose, expose or miscount a user's money or keys"
+gh label create pr/risk/security --repo $R --color D93F0B --description "Touches a security boundary: IPC, sandbox, permission checks, parsing, crypto, credentials"
+gh label create pr/risk/privacy-promises-affected --repo $R --color D93F0B --description "Can change something Brave tells users it does for their privacy"
+gh label create pr/risk/network-calls --repo $R --color D93F0B --description "Adds or alters a network request, endpoint or the data sent"
+```

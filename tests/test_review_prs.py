@@ -895,6 +895,52 @@ class TestProcessPr:
         assert "- Check the spec." in guided
         assert "applies the project review guidance" in guided
 
+    LABELS = {
+        "rules": [
+            {
+                "label": "pr/risk/dependencies",
+                "any": ["package-lock.json"],
+                "only": [],
+                "exclude": [],
+            }
+        ],
+        "judged": {"pr/risk/network-calls": "adds a request"},
+    }
+
+    def _labelled_run(self, prep, tmp_dir, prior=None, label_cfg=LABELS):
+        work = os.path.join(tmp_dir, "work")
+        os.makedirs(work, exist_ok=True)
+        return prep.process_pr(
+            PR, "bot", set(), work, True, prior, None, label_cfg=label_cfg
+        )
+
+    def test_a_pr_not_yet_labelled_gets_its_decided_labels_and_a_label_prompt(
+        self, prep, stubbed, tmp_dir
+    ):
+        result, error = self._labelled_run(prep, tmp_dir)
+        assert error is None
+        assert result["labels"] == {
+            "decided": ["pr/risk/dependencies"],
+            "judged": ["pr/risk/network-calls"],
+        }
+        assert os.path.isfile(result["label_prompt"]["prompt_file"])
+        assert prep.pr_needs_model({"label_prompt": result["label_prompt"]})
+
+    def test_a_pr_already_labelled_gets_no_label_plan(self, prep, stubbed, tmp_dir):
+        result, _ = self._labelled_run(prep, tmp_dir, label_cfg=None)
+        assert result["labels"] is None and result["label_prompt"] is None
+
+    def test_the_label_prompt_covers_the_whole_pr_not_the_files_changed_since_a_review(
+        self, prep, stubbed, tmp_dir
+    ):
+        prior = self._hashes(prep)
+        prior["browser/a.cc"] = "stale"
+        result, _ = self._labelled_run(prep, tmp_dir, prior)
+        assert result["files_reviewed"] == 1
+        text = open(result["label_prompt"]["prompt_file"]).read()
+        assert "Files changed (3)" in text
+        assert "- ui/b.ts" in text
+
 
 class TestProfileReview:
     def test_guidance_is_a_string_or_a_list_of_text(self, prep):

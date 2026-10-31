@@ -22,6 +22,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
 
 sys.path.insert(0, os.path.join(BOT_DIR, "scripts"))
+from lib import pr_labels
 from lib.load_config import (
     get_config,
     load_config,
@@ -411,6 +412,18 @@ def file_best_practice_proposals(pr_results, pr_repo, issue_repo, bp_dir, dry_ru
         log(f"WARNING: best-practice proposals not filed: {e}")
 
 
+def apply_labels(manifest, pr_repo, dry_run):
+    """Label each PR whose manifest entry carries a label plan, once.
+
+    Independent of the review: a PR whose review was left for the next run is
+    labelled all the same, and one whose labels cannot be applied stays
+    unrecorded and is planned again.
+    """
+    cache_path = os.path.join(BOT_DIR, ".ignore", "review-prs-cache.json")
+    for pr in manifest.get("prs", []):
+        pr_labels.label_pr(pr_repo, pr, cache_path, dry_run, log)
+
+
 def cleanup_worktrees(manifest):
     """Remove git worktrees created by prepare-review.py for each PR."""
     target_repo_path = manifest.get("target_repo_path", "")
@@ -573,6 +586,8 @@ def main():
             bp_dir,
             dry_run=not auto_mode,
         )
+
+    apply_labels(manifest, pr_repo, dry_run=not auto_mode)
 
     cleanup_worktrees(manifest)
 

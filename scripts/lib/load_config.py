@@ -306,6 +306,73 @@ def review_propose_practices(profile):
     return isinstance(review, dict) and review.get("proposeBestPractices") is True
 
 
+def _label_patterns(value):
+    if not isinstance(value, list):
+        return []
+    return [p.strip() for p in value if isinstance(p, str) and p.strip()]
+
+
+def review_label_prs(profile):
+    """The labels `/review-prs` puts on a pull request the first time it reads it.
+
+    `review.labelPrs` in profile.json, with two parts:
+
+    - `rules`: labels decided from the changed paths alone. Each is
+      `{"label", "any" | "only", "exclude"?}`: `any` applies it
+      when some changed file matches a pattern, `only` when every changed file
+      does, and `exclude` withholds it when some changed file matches one.
+    - `judged`: label -> plain-language definition, for labels a model decides
+      by reading the diff. Only labels that raise scrutiny belong here.
+
+    An entry that does not parse is dropped, so a malformed key means fewer
+    labels rather than a broken review. Returns None when nothing is left.
+    """
+    review = profile.get("review")
+    section = review.get("labelPrs") if isinstance(review, dict) else None
+    if not isinstance(section, dict):
+        return None
+
+    rules = []
+    raw_rules = section.get("rules")
+    for rule in raw_rules if isinstance(raw_rules, list) else []:
+        if not isinstance(rule, dict):
+            continue
+        label = rule.get("label")
+        any_of = _label_patterns(rule.get("any"))
+        only = _label_patterns(rule.get("only"))
+        if not isinstance(label, str) or not label.strip():
+            continue
+        if bool(any_of) == bool(only):
+            continue
+        rules.append(
+            {
+                "label": label.strip(),
+                "any": any_of,
+                "only": only,
+                "exclude": _label_patterns(rule.get("exclude")),
+            }
+        )
+
+    decided = {rule["label"] for rule in rules}
+    judged = {}
+    raw_judged = section.get("judged")
+    for label, definition in (
+        raw_judged if isinstance(raw_judged, dict) else {}
+    ).items():
+        if (
+            isinstance(label, str)
+            and label.strip()
+            and label.strip() not in decided
+            and isinstance(definition, str)
+            and definition.strip()
+        ):
+            judged[label.strip()] = definition.strip()
+
+    if not rules and not judged:
+        return None
+    return {"rules": rules, "judged": judged}
+
+
 def build_research(profile, config, base_dir=None):
     """Render a profile's pre-implementation reading steps.
 

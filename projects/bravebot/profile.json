@@ -6,6 +6,53 @@
     "verdict": true,
     "linkRules": true,
     "proposeBestPractices": true,
+    "labelPrs": {
+      "rules": [
+        {
+          "label": "pr/tests-only",
+          "only": [
+            "*_tests.rs",
+            "*/testutil.rs",
+            "*/tests/*",
+            "tests/*",
+            "*.test.ts",
+            "*.test.tsx",
+            "*.spec.ts"
+          ]
+        },
+        {
+          "label": "pr/docs-only",
+          "only": [
+            "*.md"
+          ],
+          "exclude": [
+            "docs/specs/*",
+            "AGENTS.md",
+            "agents/*",
+            ".claude/*",
+            "docs/best_*.md",
+            "docs/development/reviewing-for-the-rule.md"
+          ]
+        },
+        {
+          "label": "pr/risk/dependencies",
+          "any": [
+            "package.json",
+            "*-lock.json",
+            "*-lock.yaml",
+            "yarn.lock",
+            "Cargo.toml",
+            "Cargo.lock",
+            ".config/deny.toml",
+            "socket.yml"
+          ]
+        }
+      ],
+      "judged": {
+        "pr/risk/guarantee": "The change can let untrusted content (text from the web, files or tools) decide something, give a value a better trust label than its inputs had, or reach the driver or the planner; or it changes what the trust map, permissions, routing, confinement or egress allow.",
+        "pr/risk/network-calls": "The change adds or alters a network request or destination: a new URL, host or fetcher, a change to what is sent, or a change to which server receives it."
+      }
+    },
     "checks": [
       "Whether the change agrees with the project's specs, and whether a change to behaviour a spec describes also updates that spec and its tests.",
       "Whether untrusted content (text from the web, files or tools) can influence a decision, or be given a better trust label than it came with, anywhere other than the places built for that.",

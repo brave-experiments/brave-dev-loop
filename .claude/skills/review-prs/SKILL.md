@@ -35,6 +35,8 @@ The review pipeline minimizes LLM token usage by pushing all heavy data through 
 
 **Proposed best practices.** With `review.proposeBestPractices`, the validator may add one entry to `proposals` for a rule the review showed the project lacks and no check could decide. After posting, `collect-results.py --auto` files it as an issue in `project.issueRepository`, titled `Best practice: <rule>`, through `file-proposals.py`: at most one per PR and three per run, nothing filed when it matches an existing rule heading or an issue that already proposes it (or came from the same PR), every field cleaned of mentions and foreign links, and a failure reported and never raised. Without `--auto` the proposals are only printed. Only a PR that has a validator can draw one: a PR with no candidates and no open threads is clean and gets none.
 
+**Labels.** With `review.labelPrs`, the first review that reads a PR also labels it with the review it needs (`pr/risk/network-calls`, `pr/tests-only`, and so on), and no later review labels it again: see [docs/pr-labels.md](../../../docs/pr-labels.md). Paths decide some labels in `prepare-review.py`, with no model. When the profile lists labels a path cannot decide, `prepare-review.py` writes one more prompt for the PR, `label_prompt`, which one detect subagent answers by choosing from the profile's list. `collect-results.py` adds the labels after posting, and records the PR in `_labelled` in the cache. Nothing is applied until every label the profile names exists in the PR repository, and until then no label prompt is written.
+
 The main LLM session only orchestrates: run scripts, read a small manifest, launch subagents with tiny prompts, run the collector. It never sees diffs, rule text, or violation details.
 
 ---
@@ -83,6 +85,7 @@ Read the manifest file at `{work_dir}/manifest.json`. It contains:
   - `files_reviewed` of `files_total`: how many of the PR's files this run reviews
   - `subagent_prompts`: array of entries with `prompt_file` and `results_file` paths (NOT prompt text)
   - `summary_prompt`: `null`, or one more entry with `prompt_file` and `results_file` for the subagent that describes the PR. Present only for a project whose profile sets `review.verdict`
+  - `labels`: `null`, or `decided` (labels the changed paths gave) and `judged` (labels the label subagent may choose from). `label_prompt`: `null`, or one more entry with `prompt_file` and `results_file` for that subagent. Both are `null` for a PR already labelled, and for a project with no `review.labelPrs`
 - **`cached_prs`**: PRs not reviewed this run — already reviewed at this commit, or no file changed since the last review (handled by the prepare script — just log results)
 - **`errors`**: per-PR errors encountered during preparation
 
@@ -111,6 +114,8 @@ If the `review-prs-detect` agent type is not available, use `subagent_type: "gen
 Every prompt file fits in one Read call. When a check's diff does not fit alongside its rules, `prepare-review.py` writes the diff into page files that each fit one read, lists them in the prompt (and in the entry's `read_files`), and gives each subagent at most four pages, splitting a larger diff into entries with `part` and `total_parts`. Each part is a separate entry, launched like any other. The subagent reads the pages itself; do not read them for it.
 
 A PR's `summary_prompt`, when it is not `null`, gets a subagent in the same way, with the same `subagent_type`. It is not one of the detect prompts: `select-candidates.py` never reads it, and a PR whose summary subagent failed is still reviewed, with no description section.
+
+A PR's `label_prompt`, when it is not `null`, gets a subagent in the same way too. `select-candidates.py` never reads it either. A PR whose label subagent wrote nothing usable is reviewed as usual and gets no labels, and the next review of it asks again.
 
 **Launch ALL detect subagents across ALL PRs in a single message** so they run concurrently.
 
@@ -154,6 +159,8 @@ The script handles everything. Reviews are inline comments only, and never carry
 
 For **interactive mode** (no `--auto`): before running collect-results.py, read each validator's results from `{work_dir}/pr_{number}/validated.json`, present each violation to the user for approval, write only approved violations back to that file, then run collect-results.py.
 
+With `--auto` the collector then adds each PR's labels and records it as labelled. Without `--auto` it only prints the labels it would add, and records nothing.
+
 Read the script's stderr — it contains the summary. Print it for cron logs.
 
 ### Summary of what consumes LLM tokens
@@ -166,6 +173,8 @@ Read the script's stderr — it contains the summary. Print it for cron logs.
 | Read manifest, launch subagents | **~50 tokens per subagent** | Main LLM session (Sonnet on the schedules) |
 | Rule-checking the diff | **Subagent tokens** | Detect subagents (Sonnet), one per rule chunk plus one for bugs |
 | Checking candidates against the source | **Subagent tokens** | Validate subagents (Opus), one per PR with candidates |
+| Decide labels from paths, add labels | **Zero** | `prepare-review.py`, `collect-results.py` |
+| Choose the labels a path cannot decide | **Subagent tokens, once per PR** | Label subagent (Sonnet), one per PR not yet labelled |
 | Collect results, post, approve | **Zero** | `collect-results.py` + `post-review.py` |
 
 ---
