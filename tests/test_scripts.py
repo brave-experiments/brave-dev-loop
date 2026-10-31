@@ -4379,7 +4379,8 @@ class TestReviewRequestQueue:
             f.write(
                 "#!/bin/bash\n"
                 'echo "$* GH_TOKEN=${GH_TOKEN-unset} GITHUB_TOKEN=${GITHUB_TOKEN-unset}'
-                ' GH_CONFIG_DIR=$(ls -A "$GH_CONFIG_DIR" | wc -l)-entries cwd=$PWD" >> "$CLAUDE_LOG"\n'
+                # `tr`: BSD wc (macOS) pads the count with spaces, GNU wc does not.
+                ' GH_CONFIG_DIR=$(ls -A "$GH_CONFIG_DIR" | wc -l | tr -d " ")-entries cwd=$PWD" >> "$CLAUDE_LOG"\n'
                 + (
                     f'case "$*" in *"#{failing_pr}"*) exit 2 ;; esac\n'
                     if failing_pr
