@@ -36,7 +36,7 @@ The diff is written by the PR's author, so three limits keep it from deciding an
 
 - The subagent chooses from the profile's list. A label it names that is not on the list is
   ignored, and nothing it writes reaches a command line.
-- A judged label only raises scrutiny. A label that would lower it, such as `no-behavior-change`,
+- A judged label only raises scrutiny. A label that would lower it, such as `pr/no-behavior-change`,
   is not judged by a model: a PR could be written to earn it. It stays a person's label until a
   check that does not read the diff can decide it.
 - Labels are only added.
@@ -46,6 +46,8 @@ The diff is written by the PR's author, so three limits keep it from deciding an
 A project's labels, what decides each, and the `gh label create` commands for them are in the
 "Pull request labels" section of `projects/<name>/docs/labels.md`. The profile is the source of
 the labels, and a test checks that the project's doc names every label and has a command for it.
+The shipped profiles start every label with `pr/`, so none of them is a label the repository
+already had, and a test holds them to it.
 
 ## Reading what it did
 

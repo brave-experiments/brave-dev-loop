@@ -9,7 +9,7 @@
     "labelPrs": {
       "rules": [
         {
-          "label": "tests-only",
+          "label": "pr/tests-only",
           "only": [
             "*_tests.rs",
             "*/testutil.rs",
@@ -21,7 +21,7 @@
           ]
         },
         {
-          "label": "docs-only",
+          "label": "pr/docs-only",
           "only": [
             "*.md"
           ],
@@ -29,11 +29,13 @@
             "docs/specs/*",
             "AGENTS.md",
             "agents/*",
-            ".claude/*"
+            ".claude/*",
+            "docs/best_*.md",
+            "docs/development/reviewing-for-the-rule.md"
           ]
         },
         {
-          "label": "risk/dependencies",
+          "label": "pr/risk/dependencies",
           "any": [
             "package.json",
             "*-lock.json",
@@ -47,8 +49,8 @@
         }
       ],
       "judged": {
-        "risk/guarantee": "The change can let untrusted content (text from the web, files or tools) decide something, give a value a better trust label than its inputs had, or reach the driver or the planner; or it changes what the trust map, permissions, routing, confinement or egress allow.",
-        "risk/network-calls": "The change adds or alters a network request or destination: a new URL, host or fetcher, a change to what is sent, or a change to which server receives it."
+        "pr/risk/guarantee": "The change can let untrusted content (text from the web, files or tools) decide something, give a value a better trust label than its inputs had, or reach the driver or the planner; or it changes what the trust map, permissions, routing, confinement or egress allow.",
+        "pr/risk/network-calls": "The change adds or alters a network request or destination: a new URL, host or fetcher, a change to what is sent, or a change to which server receives it."
       }
     },
     "checks": [

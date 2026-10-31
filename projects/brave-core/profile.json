@@ -31,7 +31,7 @@
     "labelPrs": {
       "rules": [
         {
-          "label": "tests-only",
+          "label": "pr/tests-only",
           "only": [
             "*_unittest.cc",
             "*_unittest.mm",
@@ -55,13 +55,29 @@
           ]
         },
         {
-          "label": "chromium-overrides",
+          "label": "pr/docs-only",
+          "only": [
+            "*.md"
+          ],
+          "exclude": [
+            "AGENTS.md",
+            "SECURITY.md",
+            ".claude/*",
+            "agents/*",
+            "docs/best_practices.md",
+            "docs/best-practices/*",
+            "third_party/*",
+            "tools/crates/vendor/*"
+          ]
+        },
+        {
+          "label": "pr/chromium-overrides",
           "any": [
             "chromium_src/*"
           ]
         },
         {
-          "label": "risk/dependencies",
+          "label": "pr/risk/dependencies",
           "any": [
             "package.json",
             "package-lock.json",
@@ -83,10 +99,10 @@
         }
       ],
       "judged": {
-        "risk/funds": "The change can move, lose, expose or miscount a user's money or keys: the crypto wallet, key and seed handling, swaps, bridges, transaction signing, Rewards payouts, or payments and subscriptions.",
-        "risk/security": "The change touches a security boundary: IPC and Mojo interfaces between processes, the sandbox, permission and origin checks, URL or input validation and parsing, cryptography, authentication, or the handling of credentials and secrets.",
-        "risk/privacy-promises-affected": "The change can alter something Brave tells users it does for their privacy: Shields blocking, fingerprinting protections, storage and cookie partitioning, telemetry and P3A, what data is sent and to whom, or how long data is kept.",
-        "risk/network-calls": "The change adds or alters a network request: a new URL, endpoint or fetcher, a change to the headers, cookies or body sent, or a change to which server receives them."
+        "pr/risk/funds": "The change can move, lose, expose or miscount a user's money or keys: the crypto wallet, key and seed handling, swaps, bridges, transaction signing, Rewards payouts, or payments and subscriptions.",
+        "pr/risk/security": "The change touches a security boundary: IPC and Mojo interfaces between processes, the sandbox, permission and origin checks, URL or input validation and parsing, cryptography, authentication, or the handling of credentials and secrets.",
+        "pr/risk/privacy-promises-affected": "The change can alter something Brave tells users it does for their privacy: Shields blocking, fingerprinting protections, storage and cookie partitioning, telemetry and P3A, what data is sent and to whom, or how long data is kept.",
+        "pr/risk/network-calls": "The change adds or alters a network request: a new URL, endpoint or fetcher, a change to the headers, cookies or body sent, or a change to which server receives them."
       }
     }
   },

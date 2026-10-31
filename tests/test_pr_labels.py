@@ -51,10 +51,14 @@ class TestProfileKey:
 
     def test_a_judged_label_a_rule_already_decides_is_dropped(self):
         config = cfg(
-            [{"label": "tests-only", "only": ["*_test.cc"]}],
-            {"tests-only": "decided twice", "risk/x": "a definition", "risk/y": ""},
+            [{"label": "pr/tests-only", "only": ["*_test.cc"]}],
+            {
+                "pr/tests-only": "decided twice",
+                "pr/risk/x": "a definition",
+                "pr/risk/y": "",
+            },
         )
-        assert config["judged"] == {"risk/x": "a definition"}
+        assert config["judged"] == {"pr/risk/x": "a definition"}
 
     def test_the_shipped_profiles_parse(self):
         for project in ("brave-core", "bravebot"):
@@ -62,10 +66,16 @@ class TestProfileKey:
             assert config["rules"] and config["judged"], project
             assert not set(config["judged"]) & {r["label"] for r in config["rules"]}
 
+    def test_every_shipped_label_starts_with_pr_so_it_cannot_be_an_existing_one(self):
+        for project in ("brave-core", "bravebot"):
+            config = shipped(project)
+            for label in pr_labels.configured_labels(config):
+                assert label.startswith("pr/"), (project, label)
+
     def test_no_shipped_profile_judges_a_label_that_lowers_scrutiny(self):
         for project in ("brave-core", "bravebot"):
             judged = shipped(project)["judged"]
-            assert all(label.startswith("risk/") for label in judged), project
+            assert all(label.startswith("pr/risk/") for label in judged), project
 
 
 class TestPathRules:
@@ -131,16 +141,16 @@ def collect():
 class TestShippedBraveCore:
     def test_a_unit_test_alone_is_tests_only(self, brave_core):
         assert labels_for(brave_core, "components/brave_wallet/foo_unittest.cc") == [
-            "tests-only"
+            "pr/tests-only"
         ]
 
     def test_a_test_beside_production_code_is_not_tests_only(self, brave_core):
-        assert "tests-only" not in labels_for(
+        assert "pr/tests-only" not in labels_for(
             brave_core, "components/x/foo_unittest.cc", "components/x/foo.cc"
         )
 
     def test_a_build_file_outside_a_test_directory_is_not_tests_only(self, brave_core):
-        assert "tests-only" not in labels_for(
+        assert "pr/tests-only" not in labels_for(
             brave_core, "components/x/foo_unittest.cc", "components/x/BUILD.gn"
         )
 
@@ -150,38 +160,72 @@ class TestShippedBraveCore:
         got = labels_for(
             brave_core, "chromium_src/chrome/browser/x.cc", "chrome/x_unittest.cc"
         )
-        assert "chromium-overrides" in got and "tests-only" not in got
+        assert "pr/chromium-overrides" in got and "pr/tests-only" not in got
+
+    def test_markdown_alone_is_docs_only(self, brave_core):
+        assert labels_for(brave_core, "README.md", "docs/gni_sources.md") == [
+            "pr/docs-only"
+        ]
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "AGENTS.md",
+            "components/x/AGENTS.md",
+            "SECURITY.md",
+            ".claude/skills/review/SKILL.md",
+            "agents/skills/x/SKILL.md",
+            "docs/best_practices.md",
+            "docs/best-practices/architecture.md",
+            "third_party/rust/chromium_crates_io/vendor/bitvec-v1/doc/x.md",
+            "tools/crates/vendor/clap/README.md",
+        ],
+    )
+    def test_markdown_that_steers_review_or_is_vendored_is_not_docs_only(
+        self, brave_core, path
+    ):
+        assert "pr/docs-only" not in labels_for(brave_core, "README.md", path)
+
+    def test_markdown_beside_code_is_not_docs_only(self, brave_core):
+        assert "pr/docs-only" not in labels_for(brave_core, "README.md", "a/b.cc")
 
     def test_deps_and_third_party_are_dependency_risk(self, brave_core):
-        assert labels_for(brave_core, "DEPS") == ["risk/dependencies"]
+        assert labels_for(brave_core, "DEPS") == ["pr/risk/dependencies"]
         assert labels_for(brave_core, "third_party/foo/BUILD.gn") == [
-            "risk/dependencies"
+            "pr/risk/dependencies"
         ]
 
 
 class TestShippedBravebot:
     def test_a_doc_alone_is_docs_only(self, bravebot):
         assert labels_for(bravebot, "README.md", "docs/development/commits.md") == [
-            "docs-only"
+            "pr/docs-only"
         ]
 
     def test_a_spec_is_behaviour_and_not_docs_only(self, bravebot):
         assert labels_for(bravebot, "docs/specs/labels.md") == []
 
+    def test_what_a_pull_request_is_reviewed_against_is_not_docs_only(self, bravebot):
+        for path in (
+            "docs/best_practices.md",
+            "docs/development/reviewing-for-the-rule.md",
+        ):
+            assert "pr/docs-only" not in labels_for(bravebot, "README.md", path), path
+
     def test_an_agent_instruction_file_is_not_docs_only(self, bravebot):
         for path in ("AGENTS.md", ".claude/CLAUDE.md", "agents/skills/x/SKILL.md"):
-            assert "docs-only" not in labels_for(bravebot, path), path
+            assert "pr/docs-only" not in labels_for(bravebot, path), path
 
     def test_an_integration_test_alone_is_tests_only(self, bravebot):
-        assert labels_for(bravebot, "crates/net/tests/proxy.rs") == ["tests-only"]
+        assert labels_for(bravebot, "crates/net/tests/proxy.rs") == ["pr/tests-only"]
 
     def test_the_ui_and_npm_lockfiles_are_dependency_risk(self, bravebot):
         for path in ("ui/pnpm-lock.yaml", "ui/package.json", "package-lock.json"):
-            assert labels_for(bravebot, path) == ["risk/dependencies"], path
+            assert labels_for(bravebot, path) == ["pr/risk/dependencies"], path
 
     def test_cargo_changes_are_dependency_risk(self, bravebot):
         assert labels_for(bravebot, "crates/net/Cargo.toml", "Cargo.lock") == [
-            "risk/dependencies"
+            "pr/risk/dependencies"
         ]
 
 
@@ -198,7 +242,7 @@ def test_the_project_doc_names_every_label_and_has_a_command_to_create_it(projec
 class TestPlanPr:
     CFG = cfg(
         [{"label": "deps", "any": ["DEPS"]}],
-        {"risk/net": "adds a network request", "risk/funds": "moves money"},
+        {"pr/risk/net": "adds a network request", "pr/risk/funds": "moves money"},
     )
 
     def plan(self, tmp_path, paths=("a.cc", "DEPS"), config=None):
@@ -214,7 +258,10 @@ class TestPlanPr:
 
     def test_decided_labels_and_the_labels_the_subagent_may_choose_from(self, tmp_path):
         labels, prompt = self.plan(tmp_path)
-        assert labels == {"decided": ["deps"], "judged": ["risk/net", "risk/funds"]}
+        assert labels == {
+            "decided": ["deps"],
+            "judged": ["pr/risk/net", "pr/risk/funds"],
+        }
         assert os.path.isfile(prompt["prompt_file"])
 
     def test_the_prompt_holds_the_whole_diff_path_the_definitions_and_the_output(
@@ -222,7 +269,7 @@ class TestPlanPr:
     ):
         _, prompt = self.plan(tmp_path)
         text = open(prompt["prompt_file"]).read()
-        assert "risk/net" in text and "adds a network request" in text
+        assert "pr/risk/net" in text and "adds a network request" in text
         assert "- a.cc" in text and "- DEPS" in text
         assert "Title: Add a thing" in text
         assert prompt["results_file"] in text
@@ -258,7 +305,7 @@ class TestPlanPr:
 
 
 class TestReadJudged:
-    ALLOWED = ["risk/net", "risk/funds"]
+    ALLOWED = ["pr/risk/net", "pr/risk/funds"]
 
     def write(self, tmp_path, data):
         path = tmp_path / "labels.json"
@@ -266,14 +313,16 @@ class TestReadJudged:
         return str(path)
 
     def test_a_label_not_on_the_list_is_ignored(self, tmp_path):
-        path = self.write(tmp_path, {"labels": ["risk/net", "approve", "../x"]})
-        assert pr_labels.read_judged(path, self.ALLOWED)[0] == ["risk/net"]
+        path = self.write(tmp_path, {"labels": ["pr/risk/net", "approve", "../x"]})
+        assert pr_labels.read_judged(path, self.ALLOWED)[0] == ["pr/risk/net"]
 
     def test_labels_come_back_in_the_profile_order_without_repeats(self, tmp_path):
-        path = self.write(tmp_path, {"labels": ["risk/funds", "risk/net", "risk/net"]})
+        path = self.write(
+            tmp_path, {"labels": ["pr/risk/funds", "pr/risk/net", "pr/risk/net"]}
+        )
         assert pr_labels.read_judged(path, self.ALLOWED)[0] == [
-            "risk/net",
-            "risk/funds",
+            "pr/risk/net",
+            "pr/risk/funds",
         ]
 
     def test_an_empty_list_is_a_result(self, tmp_path):
@@ -281,7 +330,7 @@ class TestReadJudged:
         assert pr_labels.read_judged(path, self.ALLOWED) == ([], {})
 
     @pytest.mark.parametrize(
-        "data", ["not json", "[]", '{"labels": "risk/net"}', '{"reasons": {}}']
+        "data", ["not json", "[]", '{"labels": "pr/risk/net"}', '{"reasons": {}}']
     )
     def test_no_usable_result_is_none(self, tmp_path, data):
         assert pr_labels.read_judged(self.write(tmp_path, data), self.ALLOWED) is None
@@ -293,18 +342,21 @@ class TestReadJudged:
         path = self.write(
             tmp_path,
             {
-                "labels": ["risk/net"],
-                "reasons": {"risk/net": "a\nb " + "x" * 500, "risk/funds": "unused"},
+                "labels": ["pr/risk/net"],
+                "reasons": {
+                    "pr/risk/net": "a\nb " + "x" * 500,
+                    "pr/risk/funds": "unused",
+                },
             },
         )
         labels, reasons = pr_labels.read_judged(path, self.ALLOWED)
-        assert list(reasons) == ["risk/net"]
-        assert "\n" not in reasons["risk/net"]
-        assert len(reasons["risk/net"]) == pr_labels.MAX_REASON_CHARS
+        assert list(reasons) == ["pr/risk/net"]
+        assert "\n" not in reasons["pr/risk/net"]
+        assert len(reasons["pr/risk/net"]) == pr_labels.MAX_REASON_CHARS
 
 
 class TestUsableConfig:
-    CFG = cfg([{"label": "tests-only", "only": ["*_test.cc"]}], {"risk/net": "x"})
+    CFG = cfg([{"label": "pr/tests-only", "only": ["*_test.cc"]}], {"pr/risk/net": "x"})
 
     def run(self, monkeypatch, names=None, error=None):
         logs = []
@@ -318,18 +370,18 @@ class TestUsableConfig:
         return pr_labels.usable_config(self.CFG, "o/r", logs.append), logs
 
     def test_every_label_present_means_labelling_is_on(self, monkeypatch):
-        got, logs = self.run(monkeypatch, ["tests-only", "risk/net", "other"])
+        got, logs = self.run(monkeypatch, ["pr/tests-only", "pr/risk/net", "other"])
         assert got is self.CFG and not logs
 
     def test_names_compare_without_case(self, monkeypatch):
-        got, _ = self.run(monkeypatch, ["Tests-Only", "RISK/NET"])
+        got, _ = self.run(monkeypatch, ["PR/Tests-Only", "Pr/RISK/NET"])
         assert got is self.CFG
 
     def test_one_missing_label_turns_it_off_and_names_the_label(self, monkeypatch):
-        got, logs = self.run(monkeypatch, ["tests-only"])
+        got, logs = self.run(monkeypatch, ["pr/tests-only"])
         assert got is None
-        assert "risk/net" in logs[0]
-        assert "tests-only" not in logs[0]
+        assert "pr/risk/net" in logs[0]
+        assert "pr/tests-only" not in logs[0]
 
     def test_a_failed_listing_turns_it_off(self, monkeypatch):
         got, logs = self.run(monkeypatch, error=RuntimeError("HTTP 502"))
@@ -337,9 +389,9 @@ class TestUsableConfig:
 
 
 class TestConfigsForRun:
-    CFG = cfg([{"label": "tests-only", "only": ["*_test.cc"]}], {"risk/net": "x"})
+    CFG = cfg([{"label": "pr/tests-only", "only": ["*_test.cc"]}], {"pr/risk/net": "x"})
 
-    def run(self, monkeypatch, numbers, cache, names=("tests-only", "risk/net")):
+    def run(self, monkeypatch, numbers, cache, names=("pr/tests-only", "pr/risk/net")):
         listings = []
         logs = []
 
@@ -357,7 +409,7 @@ class TestConfigsForRun:
         assert listings == ["o/r"]
 
     def test_a_pr_already_labelled_is_never_planned_again(self, monkeypatch):
-        cache = {CACHE_KEY: {"1": ["risk/net"]}}
+        cache = {CACHE_KEY: {"1": ["pr/risk/net"]}}
         got, _, _ = self.run(monkeypatch, [1, 2], cache)
         assert got == {2: self.CFG}
 
@@ -370,8 +422,8 @@ class TestConfigsForRun:
         assert listings == []
 
     def test_a_missing_label_plans_nothing_and_records_nothing(self, monkeypatch):
-        got, _, logs = self.run(monkeypatch, [1], {}, names=("tests-only",))
-        assert got == {} and "risk/net" in logs[0]
+        got, _, logs = self.run(monkeypatch, [1], {}, names=("pr/tests-only",))
+        assert got == {} and "pr/risk/net" in logs[0]
 
     def test_a_profile_with_no_labels_plans_nothing_and_asks_nothing(self, monkeypatch):
         monkeypatch.setattr(
@@ -384,9 +436,9 @@ class TestRecordLabelled:
     def test_a_pr_is_recorded_beside_the_rest_of_the_cache(self, tmp_path):
         cache = tmp_path / "cache.json"
         cache.write_text(json.dumps({"41": "abc", "_files": {"41": {}}}))
-        pr_labels.record_labelled(str(cache), 42, ["risk/net"])
+        pr_labels.record_labelled(str(cache), 42, ["pr/risk/net"])
         data = json.loads(cache.read_text())
-        assert data[CACHE_KEY] == {"42": ["risk/net"]}
+        assert data[CACHE_KEY] == {"42": ["pr/risk/net"]}
         assert data["41"] == "abc" and data["_files"] == {"41": {}}
 
     def test_a_pr_labelled_with_nothing_is_still_recorded(self, tmp_path):
@@ -418,7 +470,10 @@ class TestLabelPr:
     def pr(self, tmp_path, chosen=None, decided=("deps",)):
         entry = {
             "number": 9,
-            "labels": {"decided": list(decided), "judged": ["risk/net", "risk/funds"]},
+            "labels": {
+                "decided": list(decided),
+                "judged": ["pr/risk/net", "pr/risk/funds"],
+            },
             "label_prompt": None,
         }
         if chosen is not None:
@@ -438,18 +493,20 @@ class TestLabelPr:
     def test_decided_and_chosen_labels_are_added_and_the_pr_recorded(
         self, tmp_path, calls
     ):
-        pr = self.pr(tmp_path, {"labels": ["risk/net"], "reasons": {"risk/net": "why"}})
+        pr = self.pr(
+            tmp_path, {"labels": ["pr/risk/net"], "reasons": {"pr/risk/net": "why"}}
+        )
         got, recorded = self.run(pr, tmp_path, calls)
-        assert got == ["deps", "risk/net"]
-        assert calls["add"] == [["deps", "risk/net"]]
-        assert recorded == {"9": ["deps", "risk/net"]}
-        assert any("risk/net: why" in line for line in calls["logs"])
+        assert got == ["deps", "pr/risk/net"]
+        assert calls["add"] == [["deps", "pr/risk/net"]]
+        assert recorded == {"9": ["deps", "pr/risk/net"]}
+        assert any("pr/risk/net: why" in line for line in calls["logs"])
 
     def test_a_dry_run_adds_nothing_and_records_nothing(self, tmp_path, calls):
-        pr = self.pr(tmp_path, {"labels": ["risk/net"]})
+        pr = self.pr(tmp_path, {"labels": ["pr/risk/net"]})
         got, recorded = self.run(pr, tmp_path, calls, dry_run=True)
         assert got is None and calls["add"] == [] and recorded == {}
-        assert any("would add deps, risk/net" in line for line in calls["logs"])
+        assert any("would add deps, pr/risk/net" in line for line in calls["logs"])
 
     def test_a_subagent_with_no_usable_result_leaves_the_pr_for_the_next_review(
         self, tmp_path, calls
@@ -480,9 +537,9 @@ class TestLabelPr:
         assert got is None and calls["add"] == [] and recorded == {}
 
     def test_a_label_the_subagent_invents_is_never_added(self, tmp_path, calls):
-        pr = self.pr(tmp_path, {"labels": ["risk/net", "no-behavior-change"]})
+        pr = self.pr(tmp_path, {"labels": ["pr/risk/net", "no-behavior-change"]})
         self.run(pr, tmp_path, calls)
-        assert calls["add"] == [["deps", "risk/net"]]
+        assert calls["add"] == [["deps", "pr/risk/net"]]
 
 
 class TestAddLabels:
@@ -498,7 +555,7 @@ class TestAddLabels:
             return Done()
 
         monkeypatch.setattr(pr_labels.subprocess, "run", run)
-        pr_labels.add_labels("o/r", 5, ["risk/net", "tests-only"])
+        pr_labels.add_labels("o/r", 5, ["pr/risk/net", "pr/tests-only"])
         assert seen["argv"] == [
             "gh",
             "api",
@@ -506,9 +563,9 @@ class TestAddLabels:
             "POST",
             "repos/o/r/issues/5/labels",
             "-f",
-            "labels[]=risk/net",
+            "labels[]=pr/risk/net",
             "-f",
-            "labels[]=tests-only",
+            "labels[]=pr/tests-only",
         ]
 
     def test_a_refusal_raises_with_the_reason(self, monkeypatch):

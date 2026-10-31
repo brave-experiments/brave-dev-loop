@@ -898,13 +898,13 @@ class TestProcessPr:
     LABELS = {
         "rules": [
             {
-                "label": "risk/dependencies",
+                "label": "pr/risk/dependencies",
                 "any": ["package-lock.json"],
                 "only": [],
                 "exclude": [],
             }
         ],
-        "judged": {"risk/network-calls": "adds a request"},
+        "judged": {"pr/risk/network-calls": "adds a request"},
     }
 
     def _labelled_run(self, prep, tmp_dir, prior=None, label_cfg=LABELS):
@@ -920,8 +920,8 @@ class TestProcessPr:
         result, error = self._labelled_run(prep, tmp_dir)
         assert error is None
         assert result["labels"] == {
-            "decided": ["risk/dependencies"],
-            "judged": ["risk/network-calls"],
+            "decided": ["pr/risk/dependencies"],
+            "judged": ["pr/risk/network-calls"],
         }
         assert os.path.isfile(result["label_prompt"]["prompt_file"])
         assert prep.pr_needs_model({"label_prompt": result["label_prompt"]})
