@@ -38,6 +38,7 @@ sys.path.insert(0, _SCRIPT_DIR)
 
 import importlib.util
 
+from lib import pr_labels
 from lib.load_config import (
     load_config,
     load_profile,
@@ -45,6 +46,7 @@ from lib.load_config import (
     resolve_docs_dir,
     resolve_target_repo,
     review_guidance,
+    review_label_prs,
     review_link_rules,
     review_propose_practices,
     review_verdict,
@@ -94,6 +96,7 @@ UPDATE_CACHE = os.path.join(_SCRIPT_DIR, "update-cache.py")
 REVIEW_GUIDANCE = review_guidance(load_profile(_config, _BOT_DIR))
 REVIEW_SUMMARY = review_verdict(load_profile(_config, _BOT_DIR))
 REVIEW_LINK_RULES = review_link_rules(load_profile(_config, _BOT_DIR))
+REVIEW_LABEL_PRS = review_label_prs(load_profile(_config, _BOT_DIR))
 REVIEW_PROPOSE_PRACTICES = review_propose_practices(load_profile(_config, _BOT_DIR))
 
 
@@ -1946,8 +1949,13 @@ def process_pr(
     auto_mode=False,
     prior_hashes=None,
     approved_hashes=None,
+    label_cfg=None,
 ):
-    """Write the detect prompts for one PR. Returns (manifest entry, error)."""
+    """Write the detect prompts for one PR. Returns (manifest entry, error).
+
+    `label_cfg` is the label configuration when this PR has not been labelled
+    yet, and None otherwise.
+    """
     pr_number = pr["number"]
     pr_title = pr["title"]
     head_sha = pr["headRefOid"]
@@ -2294,6 +2302,20 @@ def process_pr(
             "body_file": body_file,
         }
 
+    labels = label_prompt = None
+    if label_cfg:
+        # The whole PR, not the files changed since the last review: the labels
+        # describe the PR and are decided once.
+        labels, label_prompt = pr_labels.plan_pr(
+            label_cfg,
+            pr_number,
+            pr_title,
+            list(sections),
+            join_sections(sections.values()),
+            pr_work_dir,
+            worktree_path or TARGET_REPO_PATH,
+        )
+
     pr_result = {
         "number": pr_number,
         "title": pr_title,
@@ -2308,6 +2330,8 @@ def process_pr(
         "thread_resolution": thread_resolution,
         "subagent_prompts": subagent_prompts,
         "summary_prompt": summary_prompt,
+        "labels": labels,
+        "label_prompt": label_prompt,
         "worktree_path": worktree_path,
         "source_path": worktree_path or TARGET_REPO_PATH,
         "file_hashes_file": hashes_file,
@@ -2337,10 +2361,14 @@ def process_pr(
 def pr_needs_model(entry):
     """Whether a manifest entry has anything for a detector or the validator.
 
-    An entry with a detect prompt or a summary prompt does. One with open bot
-    threads does too, because the validator rules on them.
+    An entry with a detect prompt, a summary prompt or a label prompt does. One
+    with open bot threads does too, because the validator rules on them.
     """
-    if entry.get("subagent_prompts") or entry.get("summary_prompt"):
+    if (
+        entry.get("subagent_prompts")
+        or entry.get("summary_prompt")
+        or entry.get("label_prompt")
+    ):
         return True
     return bool(entry.get("open_threads_file"))
 
@@ -2555,6 +2583,10 @@ def main():
 
     log("\n".join(progress_lines))
 
+    label_cfgs = pr_labels.configs_for_run(
+        REVIEW_LABEL_PRS, [p["number"] for p in prs_to_process], cache, PR_REPO, log
+    )
+
     prune_stale_work_dirs()
 
     # Create work directory for prompt/result files
@@ -2579,6 +2611,7 @@ def main():
                     auto_mode,
                     prior_hashes_for(pr, prior_files),
                     approved_files.get(str(pr["number"])),
+                    label_cfg=label_cfgs.get(pr["number"]),
                 ): pr
                 for pr in prs_to_process
             }

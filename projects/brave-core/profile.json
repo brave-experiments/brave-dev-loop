@@ -27,7 +27,68 @@
     }
   },
   "review": {
-    "requestChanges": true
+    "requestChanges": true,
+    "labelPrs": {
+      "rules": [
+        {
+          "label": "tests-only",
+          "only": [
+            "*_unittest.cc",
+            "*_unittest.mm",
+            "*_browsertest.cc",
+            "*_browsertest.mm",
+            "*_test.cc",
+            "*_test.mm",
+            "*_test.py",
+            "*_test.ts",
+            "*_test.tsx",
+            "*.test.ts",
+            "*.test.tsx",
+            "*Test.java",
+            "*Test.kt",
+            "*Tests.swift",
+            "test/*",
+            "*/test/*",
+            "*/tests/*",
+            "*/javatests/*",
+            "*.filter"
+          ]
+        },
+        {
+          "label": "chromium-overrides",
+          "any": [
+            "chromium_src/*"
+          ]
+        },
+        {
+          "label": "risk/dependencies",
+          "any": [
+            "package.json",
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            "DEPS",
+            "Cargo.toml",
+            "Cargo.lock",
+            "go.mod",
+            "go.sum",
+            "Gemfile.lock",
+            "poetry.lock",
+            "Pipfile.lock",
+            "composer.lock",
+            "third_party/*"
+          ]
+        }
+      ],
+      "judged": {
+        "risk/funds": "The change can move, lose, expose or miscount a user's money or keys: the crypto wallet, key and seed handling, swaps, bridges, transaction signing, Rewards payouts, or payments and subscriptions.",
+        "risk/security": "The change touches a security boundary: IPC and Mojo interfaces between processes, the sandbox, permission and origin checks, URL or input validation and parsing, cryptography, authentication, or the handling of credentials and secrets.",
+        "risk/privacy-promises-affected": "The change can alter something Brave tells users it does for their privacy: Shields blocking, fingerprinting protections, storage and cookie partitioning, telemetry and P3A, what data is sent and to whom, or how long data is kept.",
+        "risk/network-calls": "The change adds or alters a network request: a new URL, endpoint or fetcher, a change to the headers, cookies or body sent, or a change to which server receives them."
+      }
+    }
   },
   "prDraft": true,
   "prFeedback": {

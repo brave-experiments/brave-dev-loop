@@ -34,3 +34,34 @@ gh issue edit <issue-number> --add-label "OS/Desktop" --repo $ISSUE_REPO
 
 `disabled-brave-test` (the profile's `labels.disabledTest`) marks an issue as a
 disabled test. See `docs/testing.md` in this profile.
+
+## Pull request labels
+
+`/review-prs` labels each pull request once, the first time it reads it, as
+[pr-labels.md](../../../docs/pr-labels.md) describes. The labels are `review.labelPrs` in this
+profile, in `brave/brave-core`.
+
+| Label | Decided by | Applies when |
+| --- | --- | --- |
+| `tests-only` | paths | every changed file is a test or test data |
+| `chromium-overrides` | paths | some changed file is under `chromium_src/` |
+| `risk/dependencies` | paths | some changed file is a dependency manifest or lockfile, `DEPS`, or under `third_party/` |
+| `risk/funds` | model | the change can move, lose, expose or miscount a user's money or keys |
+| `risk/security` | model | the change touches a security boundary |
+| `risk/privacy-promises-affected` | model | the change can alter something Brave tells users it does for their privacy |
+| `risk/network-calls` | model | the change adds or alters a network request |
+
+brave-core already has `dependencies` (renovate and dependabot), `tests`, `security` and
+`needs-security-review`. They are not reused: `dependencies` marks an update bot's PR, and
+`risk/dependencies` marks any PR that changes what the build pulls in.
+
+```bash
+R=brave/brave-core
+gh label create tests-only --repo $R --color 0E8A16 --description "Every changed file is a test or test data"
+gh label create chromium-overrides --repo $R --color 5319E7 --description "Changes a chromium_src override of upstream Chromium code"
+gh label create risk/dependencies --repo $R --color D93F0B --description "Changes a dependency manifest, lockfile, DEPS or third_party"
+gh label create risk/funds --repo $R --color D93F0B --description "Can move, lose, expose or miscount a user's money or keys"
+gh label create risk/security --repo $R --color D93F0B --description "Touches a security boundary: IPC, sandbox, permission checks, parsing, crypto, credentials"
+gh label create risk/privacy-promises-affected --repo $R --color D93F0B --description "Can change something Brave tells users it does for their privacy"
+gh label create risk/network-calls --repo $R --color D93F0B --description "Adds or alters a network request, endpoint or the data sent"
+```
