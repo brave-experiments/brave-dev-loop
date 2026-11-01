@@ -967,16 +967,21 @@ Additional context: $EXTRA_PROMPT"
     if [ -n "$BOT_BRAVEBOT_MODEL" ]; then
       BRAVEBOT_MODEL_FLAG="--model $BOT_BRAVEBOT_MODEL"
     fi
+    # --dangerously-bypass-approvals-and-sandbox is --dangerously-skip-permissions
+    # with --sandbox off, as codex's flag of the same name above. The session starts
+    # here but its work is in the target repo and its worktrees, which the default
+    # sandbox would confine its programs away from.
+    #
     # A bare prompt is a one-shot run, so TUI mode needs -i to open the interactive
     # session with the prompt as its first turn. bravebot reads -i only as the first
-    # argument and --model only after the prompt; --dangerously-skip-permissions is
-    # taken out wherever it sits. -i needs a terminal on stdin and stdout.
+    # argument and --model only after the prompt; the bypass flag is taken out
+    # wherever it sits. -i needs a terminal on stdin and stdout.
     if [ "$USE_TUI" = true ]; then
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN --dangerously-skip-permissions -i "$AGENT_PROMPT" $BRAVEBOT_MODEL_FLAG || true
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN --dangerously-bypass-approvals-and-sandbox -i "$AGENT_PROMPT" $BRAVEBOT_MODEL_FLAG || true
     else
       # bravebot keeps stdout to the final reply alone and puts progress on stderr;
       # both go to the log.
-      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-skip-permissions "$AGENT_PROMPT" </dev/null 2>>"$ITERATION_LOG" \
+      "$SCRIPT_DIR/scripts/exec-clean.sh" --cd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/timeout-tree.sh" "$ITERATION_SECONDS" $BOT_BRAVEBOT_BIN $BRAVEBOT_MODEL_FLAG --dangerously-bypass-approvals-and-sandbox "$AGENT_PROMPT" </dev/null 2>>"$ITERATION_LOG" \
         | "$SCRIPT_DIR/scripts/exec-clean.sh" tee -a "$ITERATION_LOG" > /dev/null || true
     fi
   elif [ "$BOT_AGENT" = "cursor" ]; then
