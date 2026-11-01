@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import claims as claims_lib
-from lib import issue_lock, slots, triage
+from lib import cluster, issue_lock, slots, triage
 from lib.issue_lock import issue_number
 from lib.load_config import build_research, load_config, load_profile
 from lib.named_target import describe_target, explicit_target
@@ -114,6 +114,42 @@ def research_steps(bot_dir):
     """
     config = load_config()
     return build_research(load_profile(config, bot_dir), config, bot_dir)
+
+
+def clustering_offer(bot_dir, lead, candidates, blocked_issues, now):
+    """What the iteration may add to its lead story, or None for "work it alone".
+
+    Only fresh pending work clusters: a story that already has a branch or a PR
+    is maintenance on that PR, and one PR per story is how it is tracked. The
+    pool is offered, never claimed here; the agent reads the issues, decides
+    which are related, and claims those with scripts/claim-companions.py, which
+    re-checks the ceiling under the PRD lock.
+    """
+    if lead.get("status", "pending") != "pending" or lead.get("prNumber"):
+        return None
+    if pending_attempts(lead) >= MAX_PENDING_ATTEMPTS:
+        return None
+    config = load_config()
+    profile = load_profile(config, bot_dir)
+    limit = cluster.ceiling(profile, lead)
+    if limit <= 1:
+        return None
+    ordered = sorted(
+        (
+            c
+            for c in candidates
+            if c.get("id") != lead.get("id") and assign_tier(c, now) == TIER_NORMAL
+        ),
+        key=lambda c: sort_key(c, now),
+    )
+    pool = cluster.companion_pool(lead, ordered, limit, blocked_issues)
+    if not pool:
+        return None
+    return {
+        "limit": limit,
+        "leadSize": cluster.lead_size(lead),
+        "candidates": [cluster.pool_entry(s) for s in pool],
+    }
 
 
 def assign_tier(story, now=None):
@@ -663,6 +699,12 @@ def _select_locked(args, prd_path, run_state_path, bot_dir, in_progress=None):
         "requeuedFrom": requeued,
         "candidateCount": len(candidates),
         "slot": args.slot,
+        # Absent unless the profile clusters and the lead is fresh pending work.
+        # A story named outright clusters too: naming one issue does not say the
+        # related ones should wait for a separate iteration.
+        "clustering": clustering_offer(
+            bot_dir, selected, candidates, blocked_issues, now
+        ),
         "storyDetails": selected,
         "research": research_steps(bot_dir),
     }

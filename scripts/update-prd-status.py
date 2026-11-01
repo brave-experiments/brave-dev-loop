@@ -77,6 +77,12 @@ def atomic_write_json(path, data):
         raise
 
 
+# Subcommands whose result a clustered iteration's companions share: they ride
+# the lead's branch and PR, so each moves to the same status with the same
+# branch and PR number. Everything else (activity, pings) is the lead's alone.
+CLUSTER_FOLLOWS = {"committed", "pushed"}
+
+
 def find_story(prd, story_id):
     """Find and return story dict by ID, or None."""
     for story in prd.get("stories", []):
@@ -259,6 +265,34 @@ HANDLER_MAP = {
 }
 
 
+def apply_to_companions(prd, lead, subcommand, args):
+    """Move the lead's cluster companions along with it.
+
+    Returns {companion id: changes}. A companion that is not in the status the
+    transition needs is left alone and not an error: the lead's own update has
+    already been validated, and a companion someone moved by hand is theirs.
+
+    When the lead is skipped or invalid its companions are handed back to the
+    queue: they never had work done for them, so they are pending again.
+    """
+    moved = {}
+    for sid in lead.get("clusterCompanions") or []:
+        companion = find_story(prd, sid)
+        if companion is None:
+            continue
+        if subcommand in CLUSTER_FOLLOWS:
+            if validate_transition(subcommand, companion):
+                continue
+            moved[sid] = HANDLER_MAP[subcommand](companion, args)
+        elif subcommand in ("skipped", "invalid"):
+            if companion.get("status", "pending") == "pending":
+                companion.pop("clusterLead", None)
+                moved[sid] = {"clusterLead": None}
+    if subcommand in ("skipped", "invalid") and moved:
+        lead.pop("clusterCompanions", None)
+    return moved
+
+
 def main():
     # A comparison run repeats a story's work only so it can be compared with
     # the base run's. Moving the story on would make the base run's own status
@@ -370,6 +404,7 @@ def main():
             # Apply changes
             handler = HANDLER_MAP[args.subcommand]
             changes = handler(story, args)
+            companion_changes = apply_to_companions(prd, story, args.subcommand, args)
 
             # Write prd.json atomically
             atomic_write_json(prd_path, prd)
@@ -397,6 +432,10 @@ def main():
     print(f"Updated {args.story_id}:")
     for key, value in changes.items():
         print(f"  {key}: {json.dumps(value)}")
+    for sid, moved in companion_changes.items():
+        print(f"Updated {sid} (clustered with {args.story_id}):")
+        for key, value in moved.items():
+            print(f"  {key}: {json.dumps(value)}")
     return 0
 
 
