@@ -68,6 +68,15 @@
       "Report nothing that `make check` already decides: formatting, lints, clause numbering, lockfiles."
     ]
   },
+  "clustering": {
+    "sizeLimits": {
+      "1": 10,
+      "2": 6,
+      "3": 4,
+      "4": 1,
+      "5": 1
+    }
+  },
   "uiPaths": [
     "crates/tui/"
   ],

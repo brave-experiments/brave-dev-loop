@@ -416,8 +416,12 @@ release_claim() {
   [ -n "$CURRENT_STORY_ID" ] || return 0
   # stderr stays visible: a failed label release is otherwise a label that
   # blocks the issue on every machine with no trace of why.
+  # Release by slot, not by story: a clustered iteration holds companions beside
+  # its lead (scripts/claim-companions.py), and a claim left behind would keep
+  # them out of the queue for as long as this run lives. A slot holds nothing
+  # between iterations, so everything it holds is this iteration's.
   "$SCRIPT_DIR/scripts/claims.py" release \
-    --story "$CURRENT_STORY_ID" --slot "$BOT_RUN_SLOT" >/dev/null || true
+    --slot "$BOT_RUN_SLOT" >/dev/null || true
   CURRENT_STORY_ID=""
 }
 
@@ -849,6 +853,24 @@ $STORY_DETAILS
 
 Bot config (from config.json — do NOT read this file):
 $BOT_CONFIG"
+
+  # Only said when the profile clusters and the lead can take companions
+  # (select-task.py's "clustering" block). The ceiling is a maximum: the doc
+  # tells the agent to take only issues that are really related, and
+  # claim-companions.py enforces the ceiling whatever the agent asks for.
+  CLUSTER_LIMIT=$(echo "$TASK_JSON" | jq -r '.clustering.limit // empty')
+  if [ -n "$CLUSTER_LIMIT" ]; then
+    CLUSTER_POOL=$(echo "$TASK_JSON" | jq -r '.clustering.candidates | map("- \(.storyId): issue #\(.issueNumber), \"\(.title)\"" + (if (.triage | length) > 0 then " (" + (.triage | to_entries | map("\(.key) \(.value)") | join(", ")) + ")" else "" end)) | join("\n")')
+    CLUSTER_SIZE=$(echo "$TASK_JSON" | jq -r '.clustering.leadSize')
+    AGENT_PROMPT="$AGENT_PROMPT
+
+Clustering: $STORY_ID is size $CLUSTER_SIZE, so this iteration may fix up to $CLUSTER_LIMIT related issues in
+one pull request, $STORY_ID included. That is a ceiling, not a target: take an issue only if it shares a root
+cause, a file or function, or a spec clause with $STORY_ID, and take none if none is. Read
+./$BOT_DIRNAME/projects/$BOT_PROFILE/docs/clustering.md before deciding, and follow it for the claim, the
+worktree, the commits and the PR body. Candidates (each no larger than $STORY_ID):
+$CLUSTER_POOL"
+  fi
 
   # Without this the session reads requeuedFrom's reason as a live blocker and
   # skips the story again, which is the judgment the operator just overruled.
