@@ -35,6 +35,7 @@ from lib.load_config import (
     require_config,
     resolve_docs_dir,
     review_request_changes,
+    review_upstream_rules,
     review_verdict,
 )
 from lib.pr_diff import fetch_pr_diff
@@ -46,6 +47,8 @@ _BP_BASE = os.path.dirname(resolve_docs_dir(_config, BOT_DIR))
 MANAGE_BP_IDS = os.path.join(_BP_BASE, "script", "manage-bp-ids.py")
 VERDICT = review_verdict(load_profile(_config, BOT_DIR))
 REQUEST_CHANGES = review_request_changes(load_profile(_config, BOT_DIR))
+_UPSTREAM = review_upstream_rules(load_profile(_config, BOT_DIR)) or {}
+UPSTREAM_LINK_BASE = _UPSTREAM.get("linkBase", "").rstrip("/")
 CHECK_CAN_APPROVE = os.path.join(BOT_DIR, "scripts", "check-can-approve.py")
 UPDATE_CACHE = os.path.join(SCRIPT_DIR, "update-cache.py")
 SIGNAL_NOTIFY = os.path.join(BOT_DIR, "scripts", "signal-notify.sh")
@@ -239,6 +242,9 @@ def validate_rule_link(violation):
     rule_link = violation.get("rule_link")
     if not rule_link:
         return True  # No link to validate
+
+    if UPSTREAM_LINK_BASE and rule_link.startswith(UPSTREAM_LINK_BASE + "/"):
+        return True  # Not one of our docs; collect-results.py checked it against the synced rules
 
     if not os.path.isfile(MANAGE_BP_IDS):
         return True  # Can't validate, skip

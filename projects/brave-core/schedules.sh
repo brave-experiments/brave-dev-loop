@@ -93,6 +93,13 @@ schedule_maintenance() {
     "$(bot_cron_agent check-signal '/check-signal')" "check-signal-cron.log"
 
   echo ""
+  echo "# Refresh Chromium's review rules for /review-prs (monthly, 1st of each month)"
+  echo "# A download and a parse: no agent session, no tokens. A download that fails or"
+  echo "# does not parse leaves the rules already synced where they are."
+  bot_cron_job "5 4 1 * *" "" \
+    "python3 ./scripts/sync-upstream-rules.py" "sync-upstream-rules-cron.log"
+
+  echo ""
   echo "# Update best practices from upstream Chromium docs (monthly, 1st of each month)"
   bot_cron_job "15 4 1 * *" "" \
     "./scripts/sync-target-repo.sh && $(bot_cron_agent update-best-practices '/update-best-practices')" \

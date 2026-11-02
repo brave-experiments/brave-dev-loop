@@ -26,6 +26,36 @@ projects/<name>/
 | `localization` | Where this project keeps the words a person reads, so `check-untranslated.py --diff-base` can name the sentences a branch wrote into the source instead. `paths` and `exempt` read like `uiPaths`; `catalog` is the reference catalog and `how` the instruction quoted back to the author. The rest is the language's own spelling, and there are no built-in defaults worth relying on: `quotes` (default `"`), `comments` (default `//`), `developer` — calls whose strings are for whoever is debugging, where a trailing `*` is a prefix and a trailing `!` or `(` is matched as written — and `testsBegin`, a regex for the line below which a file is test code. Omit the key and nothing is checked; the check says so rather than passing quietly. |
 | `review` | How `/review-prs` reviews this project's pull requests, beyond the best-practices rules. `guidance` is a string or a list of strings of review text; when present, one extra detect subagent applies it to each PR, reading the files it names from the PR's source tree, and the validator judges its findings against it. Its findings are severity `high` with no rule link, so a PR that trips one is not approved. `requestChanges: true` submits a review that has a finding above nit severity, or an earlier comment still open, as GitHub's `REQUEST_CHANGES` (a `COMMENT` review on a PR the bot opened itself), and approves a clean one, with none of what `verdict` adds: the review is the inline comments and the event, with no recommendation header, summary or description check. `verdict: true` makes a posted review open with its recommendation, "Recommendation: approve" on the approval and "Recommendation: request changes" on a review with a high or medium finding or an earlier comment still open, and "Recommendation: comments only" on one with only nits. The first is submitted as GitHub's `REQUEST_CHANGES` (a `COMMENT` review on a PR the bot opened itself), the others as `COMMENT`. Under the recommendation the review says what the pull request does, gives numbered steps for trying it by hand when its description has none, and lists the parts of the description shape in [docs/pr-descriptions.md](../docs/pr-descriptions.md) it lacks (the `User impact:` line, the problem, reproduction, fix and test plan sections). Below those it carries a collapsed "How this review reached its recommendation" section that says, in plain sentences, how many files and rules were read, which passes ran, and how many flagged problems the second reader kept. `checks` is a list of plain-language sentences, one per thing `guidance` looks for, that the section prints under "This project's own criteria"; without it the section names that pass but lists nothing. `linkRules: true` has the validator name the rule a finding from the bug or project-guidance pass breaks, as a link appended to the comment (the link is checked against the docs, and it does not change how findings are deduplicated). `proposeBestPractices: true` lets the validator describe one rule the project lacks, which an automatic run files as an issue titled `Best practice: ...` in the issue repository (one per PR, three per run, skipped when a rule or an earlier issue already says it); it never edits the docs. `labelPrs` labels each pull request once, the first time a review reads it, with the review it needs: `rules` are labels the changed paths decide (`any` or `only` a list of globs, and `exclude`), `judged` maps a label a path cannot decide to the definition one subagent applies; nothing is applied until every label named exists in the PR repository. See [pr-labels.md](../docs/pr-labels.md). Omit the key and the review runs the rules and the bug pass only, with an empty review body. |
 
+**`review.upstreamRules`** adds Chromium's own review rules
+(`agents/knowledge_base/rules/`) as a second rule source next to the project's
+best-practices docs. Nothing is merged into those docs and no model reads the rules
+to prepare them: `scripts/sync-upstream-rules.py` downloads the tree, and
+`prepare-review.py` picks the rules a diff meets from Chromium's own metadata.
+
+| Key | Purpose |
+| --- | --- |
+| `dir` | Where the synced rules live, relative to the bot directory. Under `.ignore/`, so the hard reset the cron jobs do leaves it alone. |
+| `source` | The tarball `sync-upstream-rules.py` downloads (https only). A Gitiles `+archive` URL serves any directory of `chromium/src`. |
+| `linkBase` | The URL a finding's rule link hangs from. A finding must carry the link of a rule that was synced; a link that names none is dropped, and a finding left with no link is dropped with it unless it is `high`. |
+| `minSeverity` | The lowest Chromium severity to check: `blocking`, `should_fix` (default), `nit` or `optional`. |
+| `severityMap` | Chromium severity → the `high`/`medium`/`low` a finding is reported at. Default `blocking` → `medium`, everything else `low`: a Chromium rule has not been vetted against this project, so none of them stops a pull request being approved until you say so. |
+| `triggeredOnly` | `true` checks only the capability groups that carry `content_patterns` the change meets (a rule about `Unretained` on a diff that adds `Unretained`). `false` also checks the groups a file path alone meets, which for the `general/` rules is every C++ file. On the 60 most recent brave-core commits (October 2026) that was a median of 86 rules and about five more detect subagents per change, against about half of one with `true`. |
+| `stripPrefixes` | Path prefixes that name an override of the file after them: `chromium_src/base/x.cc` is `base/x.cc` to a rule that applies to `base/`. |
+
+Chromium's `path_expression` regexes are written against Chromium's tree, and the
+paths of a pull request against this repository start at `src/brave`. Only the
+prefixes in `stripPrefixes` are translated, so `browser/` is not `chrome/browser/`
+and the Chrome-specific rules under `chrome/` do not fire on this project's code. The
+`general/` rules are not tied to a directory and apply wherever the file type does.
+
+A profile without the key, or one whose rules have not been synced, reviews exactly as
+before (the sweep logs a warning in the second case). Sync once by hand when turning it
+on; the profile's monthly maintenance job keeps it fresh after that:
+
+```sh
+python3 scripts/sync-upstream-rules.py
+```
+
 **`schedules.sh`** holds this project's cron jobs — see [Schedules](#schedules).
 
 **`docs/`** holds the prose. The shared workflow docs keep a one-line pointer

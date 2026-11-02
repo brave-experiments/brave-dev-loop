@@ -81,6 +81,9 @@ _RULES_BY_DOC = {}
 
 def rule_text(rule_link, bp_dir):
     """The text of the rule a link's anchor names, or None if it names none."""
+    upstream = _prep.upstream_rules()
+    if upstream is not None and upstream.owns(rule_link):
+        return upstream.text_for_link(rule_link)
     m = re.search(r"/([^/]+\.md)#([A-Za-z0-9_-]+)$", rule_link or "")
     if not m:
         return None
@@ -165,7 +168,15 @@ def rule_index(pr, bp_dir):
         for p in pr.get("subagent_prompts", [])
         if p.get("kind") == "rules" and p.get("doc")
     ]
-    return rule_index_lib.index_for(bp_dir, docs, _prep.BP_LINK_BASE)
+    index = rule_index_lib.index_for(bp_dir, docs, _prep.BP_LINK_BASE)
+    upstream = _prep.upstream_rules()
+    if upstream is not None:
+        index += upstream.index_for(
+            rule_id
+            for p in pr.get("subagent_prompts", [])
+            for rule_id in p.get("upstream", ())
+        )
+    return index
 
 
 def docs_dir_in_repo(bp_dir):

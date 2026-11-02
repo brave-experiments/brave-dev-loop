@@ -30,9 +30,11 @@ from lib.load_config import (
     resolve_docs_dir,
     review_checks,
     review_propose_practices,
+    review_upstream_rules,
 )
 from lib.reviewer_account import ensure_reviewer
 from lib.rule_index import heading_of, names_no_rule
+from lib.upstream_rules import UpstreamRules
 
 
 def log(msg):
@@ -47,7 +49,7 @@ def load_manifest(work_dir):
         return json.load(f)
 
 
-def settle_rule_links(violations, bp_dir):
+def settle_rule_links(violations, bp_dir, upstream=None):
     """Keep only rule links that name a rule in the project's docs.
 
     A validator writes these, and nothing else has checked them: select-candidates.py
@@ -60,7 +62,11 @@ def settle_rule_links(violations, bp_dir):
     """
     for v in violations:
         link = v.get("rule_link")
-        if link and bp_dir and names_no_rule(link, bp_dir):
+        if (
+            link
+            and (bp_dir or upstream)
+            and names_no_rule(link, bp_dir or "", upstream)
+        ):
             log(
                 f"INVALID_LINK: {v.get('file')}:{v.get('line')} cites {link}, "
                 "which names no rule; link dropped"
@@ -77,7 +83,7 @@ def settle_rule_links(violations, bp_dir):
         v.pop("cited_rule", None)
         if not cited or v.get("rule_link"):
             continue
-        heading = heading_of(cited, bp_dir) if bp_dir else None
+        heading = heading_of(cited, bp_dir, upstream) if (bp_dir or upstream) else None
         if heading:
             v["cited_rule_link"], v["cited_rule"] = cited, heading
         else:
@@ -112,7 +118,7 @@ def require_proof(violations):
     return kept
 
 
-def collect_violations(pr, bp_dir=None):
+def collect_violations(pr, bp_dir=None, upstream=None):
     """(violations, validation_log, skip_reason); skip_reason is set only for an unfinished review."""
     if pr.get("review_incomplete"):
         return [], [], "no detect subagent wrote results"
@@ -129,7 +135,9 @@ def collect_violations(pr, bp_dir=None):
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         return [], [], f"the validator wrote no results ({e})"
-    violations = require_proof(settle_rule_links(data.get("violations", []), bp_dir))
+    violations = require_proof(
+        settle_rule_links(data.get("violations", []), bp_dir, upstream)
+    )
     return violations, data.get("validation_log", []), None
 
 
@@ -359,12 +367,14 @@ def describe_checks(pr, violations, project_checks=()):
     )
 
 
-def build_post_review_input(manifest, project_checks=(), bp_dir=None):
+def build_post_review_input(manifest, project_checks=(), bp_dir=None, upstream=None):
     """Build the input JSON structure for post-review.py."""
     pr_results = []
 
     for pr in manifest.get("prs", []):
-        violations, validation_log, skip_reason = collect_violations(pr, bp_dir)
+        violations, validation_log, skip_reason = collect_violations(
+            pr, bp_dir, upstream
+        )
         if skip_reason:
             log(
                 f"NOT REVIEWED: PR #{pr['number']} — {skip_reason}; nothing "
@@ -507,7 +517,10 @@ def main():
     config = load_config()
     profile = load_profile(config, BOT_DIR)
     bp_dir = os.path.join(resolve_docs_dir(config, BOT_DIR), "best-practices")
-    post_review_data = build_post_review_input(manifest, review_checks(profile), bp_dir)
+    upstream = UpstreamRules.from_settings(review_upstream_rules(profile), BOT_DIR)
+    post_review_data = build_post_review_input(
+        manifest, review_checks(profile), bp_dir, upstream
+    )
 
     # Collection stats
     prs = manifest.get("prs", [])
