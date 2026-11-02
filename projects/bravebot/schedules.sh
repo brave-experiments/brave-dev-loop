@@ -66,7 +66,7 @@ schedule_review() {
     "review-prs-cron.log"
 
   echo ""
-  echo "# Review requested from the bot — skip unless someone asked"
+  echo "# Review requested from the bot, or an org member pinging it — skip unless someone asked"
   echo "# Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)"
   echo "# A human clicking Request review on a bravebot PR gets an answer within"
   echo "# five minutes, without waiting for the next sweep above."

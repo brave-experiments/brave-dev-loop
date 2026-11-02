@@ -27,6 +27,14 @@ GitHub, and `scripts/review-requested.sh` gives each one its own session, up to
 `REVIEW_REQUESTED_MAX_PRS` (5) a run. An empty queue costs one API call: the
 gate stops before any agent starts.
 
+The same poll also answers **pings**: a comment on an issue or PR where an org
+member @-mentions the reviewer account (`scripts/lib/pings.py`,
+`scripts/reply-to-pings.sh`). It is the one way to reach the account other than
+a review request, and it is polled on the same schedule: the gate looks for a
+ping only when no review is waiting, and the job answers pings before reviews,
+because a reply is a short session and a review can take hours. See
+[ping-replies.md](ping-replies.md).
+
 Both go through `scripts/review-session.sh`, which splits a run three ways.
 It runs `prepare-review.py` and `collect-results.py` itself, as the reviewer,
 and starts the claude session between them for the steps that read the PR: the

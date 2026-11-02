@@ -32,3 +32,32 @@ bot_review_requested_prs() {
     --jq '.[] | "\(.number) \(.author.login)"' |
     python3 "$BOT_DIR/scripts/lib/org_gate.py" filter-queue
 }
+
+# The ping queue: threads (issues or PRs, in the PR repo and the issue repo) where
+# an org member @-mentioned the reviewer account and nothing of ours has been
+# posted since. One line per ping, "<repo> <number> <kind> <comment id> <pinger>"
+# separated by tabs, longest-waiting first. Same contract as the review queue: the
+# exit code tells an empty queue (0, no output) from a failed query, and the
+# members' filter lives in lib/pings.py, so neither the gate nor the job ever sees
+# a ping from someone outside the org. See lib/pings.py for the rest.
+
+# The arguments every lib/pings.py command takes, in BOT_PING_ARGS. Both of our
+# accounts count as "us": a comment from either answers a ping.
+bot_ping_args() {
+  BOT_PING_ARGS=(--login "$BOT_REVIEW_USERNAME")
+  local own
+  for own in "$BOT_USERNAME" "${BOT_REVIEWER_USERNAME:-}"; do
+    [ -n "$own" ] && BOT_PING_ARGS+=(--self "$own")
+  done
+  return 0
+}
+
+# The queue searches the PR repo and the issue repo: a ping can be on either, and
+# for some projects they are not the same repository.
+#
+#   bot_ping_queue [limit]
+bot_ping_queue() {
+  bot_ping_args
+  python3 "$BOT_DIR/scripts/lib/pings.py" queue "${BOT_PING_ARGS[@]}" \
+    --repo "$BOT_PR_REPO" --repo "$BOT_ISSUE_REPO" --limit "${1:-20}"
+}

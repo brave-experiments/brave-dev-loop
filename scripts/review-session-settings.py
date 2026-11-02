@@ -55,21 +55,23 @@ def rule_path(path):
     return "/" + os.path.abspath(path)
 
 
-def settings(work_dir, deny_read, home, bot_dir=BOT_DIR):
+def settings(work_dir, deny_read, home, bot_dir=BOT_DIR, reply=False):
+    """`reply` is the ping-reply session (lib/pings.py): it reads a thread and
+    writes one file, so it gets no subagents and no script to run."""
     secrets = [os.path.join(home, p) for p in HOME_SECRETS]
     secrets += [os.path.join(bot_dir, ".envrc"), "/proc/**"]
     secrets += [p.rstrip("/") + "/**" if os.path.isdir(p) else p for p in deny_read]
+    allow = ["Glob", "Grep", f"Edit({rule_path(work_dir)}/**)"]
+    if not reply:
+        allow += [
+            "Agent",
+            "Task",
+            f"Bash(python3 {SELECT} *)",
+            f"Bash(python3 {os.path.join(bot_dir, SELECT)} *)",
+        ]
     return {
         "permissions": {
-            "allow": [
-                "Glob",
-                "Grep",
-                "Agent",
-                "Task",
-                f"Edit({rule_path(work_dir)}/**)",
-                f"Bash(python3 {SELECT} *)",
-                f"Bash(python3 {os.path.join(bot_dir, SELECT)} *)",
-            ],
+            "allow": allow,
             "deny": ["WebFetch", "WebSearch"]
             + [f"Read({rule_path(p)})" for p in secrets],
         }
@@ -85,13 +87,22 @@ def main():
         default=[],
         help="another file or directory the session must not read",
     )
+    parser.add_argument(
+        "--reply",
+        action="store_true",
+        help="the settings for a ping-reply session, which needs no subagents or scripts",
+    )
     args = parser.parse_args()
     deny = list(args.deny_read)
     key = get_config(load_config(), "bot.sshKeyPath")
     if key:
         deny.append(os.path.expanduser(key))
     home = os.path.expanduser("~")
-    print(json.dumps(settings(args.work_dir, [p for p in deny if p], home)))
+    print(
+        json.dumps(
+            settings(args.work_dir, [p for p in deny if p], home, reply=args.reply)
+        )
+    )
 
 
 if __name__ == "__main__":
