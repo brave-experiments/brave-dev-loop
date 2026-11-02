@@ -1,6 +1,7 @@
 #!/bin/bash
-# Answer the review requests a human made of the bot: one /review-prs session per
-# PR in the queue.
+# Answer what a human asked of the bot: one /review-prs session per PR in the
+# review-request queue, and, first, one short session per thread where an org
+# member @-mentioned the account (reply-to-pings.sh).
 #
 #   ./scripts/review-requested.sh              # the queue, up to the cap
 #   REVIEW_REQUESTED_MAX_PRS=1 ./scripts/review-requested.sh
@@ -103,6 +104,13 @@ still_waiting() {
   done
 }
 
+# Pings first. An org member's @-mention of the account is answered by a short
+# session and one comment, and a review can take hours: behind one, a question
+# would wait out the whole review. A failed ping query or reply does not stop the
+# reviews below; it fails this run at the end.
+PING_RC=0
+"$SCRIPT_DIR/reply-to-pings.sh" || PING_RC=$?
+
 if ! PRS=$(bot_review_requested_prs); then
   echo "Could not query review requests for $BOT_REVIEW_USERNAME." >&2
   exit 1
@@ -112,7 +120,7 @@ if [ -z "$PRS" ]; then
   # The gate already asked, but the queue is GitHub's and it moves: another
   # machine may have answered every one of these in between.
   echo "No review requests for $BOT_REVIEW_USERNAME in $BOT_PR_REPO — nothing to do."
-  exit 0
+  exit "$PING_RC"
 fi
 
 REVIEWED=0
@@ -182,4 +190,4 @@ if [ -n "$DEFERRED" ]; then
   echo "Capped at $MAX_PRS per run; leaving$DEFERRED for the next poll."
 fi
 
-[ "$FAILED" -eq 0 ]
+[ "$FAILED" -eq 0 ] && [ "$PING_RC" -eq 0 ]

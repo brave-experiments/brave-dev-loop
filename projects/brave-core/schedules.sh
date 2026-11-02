@@ -54,7 +54,7 @@ schedule_review() {
     "review-prs-cron.log"
 
   echo ""
-  echo "# Review requested from the bot — skip unless someone asked"
+  echo "# Review requested from the bot, or an org member pinging it — skip unless someone asked"
   echo "# Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)"
   echo "# Every 5 min, on minutes no other job here uses. A review runs for far"
   echo "# longer than the gap between polls, so runs overlap rather than waiting:"

@@ -44,7 +44,7 @@ The login lives in its own gh config directory, `~/.config/gh-<reviewer>` by def
 
 | Runs as | Jobs |
 | --- | --- |
-| Reviewer | the `/review-prs` sweeps and the review-request poll (`check-review-requests.sh`, `review-requested.sh`) |
+| Reviewer | the `/review-prs` sweeps and the review-request poll (`check-review-requests.sh`, `review-requested.sh`), including the replies to pings it makes (`reply-to-pings.sh`) |
 | Bot | `run.sh`, the PRD sync, maintenance jobs, and the git fetches that precede a review |
 
 The cron lines for the first row go through `scripts/as-reviewer.sh`, which reads `config.json` when the job fires. Once the jobs have been installed with the wrapper (`make schedules-review`), adding, changing or removing the reviewer needs no further re-sync. The wrapper sets `GH_TOKEN` to the reviewer's token as well as `GH_CONFIG_DIR`, because `.envrc` exports the bot's `GH_TOKEN` into every cron job and a token outranks a config directory.

@@ -4360,6 +4360,9 @@ class TestReviewRequestQueue:
                 'echo "$*" >> "$GH_LOG"\n'
                 f"[ {gh_rc} -eq 0 ] || {{ echo 'gh: bad credentials' >&2; exit {gh_rc}; }}\n"
                 'case "$*" in\n'
+                # The ping queue's search: nobody has pinged. tests/test_pings.py
+                # covers a queue with something in it.
+                "  *search/issues*) exit 0 ;;\n"
                 f"  *'pr view'*headRefOid*) echo '{head}'; exit 0 ;;\n"
                 "  *'pr view'*reviewRequests*)\n"
                 + (

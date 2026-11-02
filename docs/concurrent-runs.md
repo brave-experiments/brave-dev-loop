@@ -231,6 +231,11 @@ review of the same PR. A PR skipped that way does not count against the run's
 `REVIEW_REQUESTED_MAX_PRS` cap, or an overlapping run would shrink the one
 behind it.
 
+`reply-to-pings.sh`, which `review-requested.sh` runs first, does the same for
+pings with a lock per thread (`.ignore/.ping-<repo>-<n>.lock`) and shares the
+same three `review-prs` slots. Its attempts are counted per ping comment, not per
+head commit, in `.ignore/.ping-<repo>-<n>-<comment id>.attempts`.
+
 The review cache (`.ignore/review-prs-cache.json`) is read, changed and
 written under one lock and replaced atomically, by
 `lib/file_lock.locked_json_update`. Two runs finishing moments apart would
