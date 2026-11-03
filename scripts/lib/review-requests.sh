@@ -9,8 +9,14 @@
 #
 # Requires: lib/load-config.sh already sourced (BOT_PR_REPO, BOT_REVIEW_USERNAME).
 
-# Print one PR number per line, newest first. Returns the query's exit code, so a
-# caller can tell an empty queue (0, no output) from a failed query.
+# Print one PR number per line, newest first, at most `limit` of them. Returns
+# the query's exit code, so a caller can tell an empty queue (0, no output) from a
+# failed query.
+#
+# The limit applies to the members' PRs. GitHub is asked for a wider window
+# (BOT_REVIEW_QUEUE_WINDOW) and the org filter runs before the limit, because
+# PRs from non-members fill the newest slots and, with the limit on the query
+# itself, pushed a member's older PR out of the queue for good.
 #
 #   bot_review_requested_prs [limit]
 bot_review_requested_prs() {
@@ -27,10 +33,11 @@ bot_review_requested_prs() {
     --repo "$BOT_PR_REPO" \
     --search "review-requested:$BOT_REVIEW_USERNAME" \
     --state open \
-    --limit "${1:-20}" \
+    --limit "${BOT_REVIEW_QUEUE_WINDOW:-200}" \
     --json number,author \
     --jq '.[] | "\(.number) \(.author.login)"' |
-    python3 "$BOT_DIR/scripts/lib/org_gate.py" filter-queue
+    python3 "$BOT_DIR/scripts/lib/org_gate.py" filter-queue |
+    awk -v limit="${1:-50}" 'NR <= limit'
 }
 
 # The ping queue: threads (issues or PRs, in the PR repo and the issue repo) where
