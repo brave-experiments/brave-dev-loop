@@ -4308,6 +4308,59 @@ class TestReviewSessionSettings:
             assert f"Read(/{path})" in deny, path
 
 
+class TestReviewQueueWindow:
+    """The queue is the members' PRs, capped after the org filter. With the cap
+    on the GitHub query, 20 newer PRs from non-members left a member's older
+    review request out of the queue (#40827 was never reviewed)."""
+
+    def _queue(self, tmp_dir, prs, limit=None):
+        bindir = os.path.join(tmp_dir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        # A gh that honours --limit, newest first, as `gh pr list` does.
+        with open(os.path.join(bindir, "gh"), "w") as f:
+            f.write(
+                "#!/bin/bash\n"
+                'while [ $# -gt 0 ]; do [ "$1" = --limit ] && lim=$2; shift; done\n'
+                f"printf '%s\\n' {' '.join(shlex.quote(p) for p in prs)} | head -n \"$lim\"\n"
+            )
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        members = os.path.join(tmp_dir, "org-members.txt")
+        with open(members, "w") as f:
+            f.write("alice\n")
+        script = (
+            f"BOT_DIR={shlex.quote(os.path.abspath(REPO_ROOT))} BOT_PR_REPO=o/r "
+            "BOT_REVIEW_USERNAME=rev; "
+            f"source {shlex.quote(os.path.abspath(REPO_ROOT))}/scripts/lib/review-requests.sh; "
+            f"bot_review_requested_prs {limit or ''}"
+        )
+        result = subprocess.run(
+            ["bash", "-c", "set -euo pipefail; " + script],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "BOT_ORG_MEMBERS_FILE": members,
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.split()
+
+    def test_a_members_pr_behind_many_outsiders_is_still_queued(self, tmp_dir):
+        outsiders = [f"{n} mallory" for n in range(300, 270, -1)]
+        queue = self._queue(tmp_dir, outsiders + ["50 alice"])
+        assert queue == ["50"]
+
+    def test_the_limit_counts_members_only(self, tmp_dir):
+        prs = []
+        for n in range(200, 100, -1):
+            prs += [f"{n} alice", f"{n}0 mallory"]
+        assert len(self._queue(tmp_dir, prs)) == 50
+        assert self._queue(tmp_dir, prs, limit=7) == [
+            str(n) for n in range(200, 193, -1)
+        ]
+
+
 class TestReviewRequestQueue:
     """The queue is GitHub's own: a PR where the bot is a requested reviewer.
     Nothing local records what has been answered, which is what makes the answer
@@ -4741,11 +4794,11 @@ class TestReviewRequestQueue:
         bindir = self._stubs(
             tmp_dir, queue="901", head="abc123", requested=self._configured_bot()
         )
-        for _ in range(3):
+        for _ in range(5):
             result, _, _ = self._run(self.JOB, tmp_dir, bindir)
             assert "still waiting on a review" in result.stderr
         result, _, claude_log = self._run(self.JOB, tmp_dir, bindir)
-        assert len(claude_log) == 3, "the fourth poll started another session"
+        assert len(claude_log) == 5, "the sixth poll started another session"
         assert result.returncode == 0, "giving up is not a failed review"
         assert "Gave up" in result.stdout and "#901" in result.stdout
 
