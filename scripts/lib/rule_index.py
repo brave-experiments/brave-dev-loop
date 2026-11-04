@@ -86,8 +86,10 @@ def all_headings(bp_dir):
     return [r["heading"] for n in names for r in rules_in(os.path.join(bp_dir, n))]
 
 
-def heading_of(rule_link, bp_dir):
-    """The heading of the rule a link names in `bp_dir`, or None when it names none."""
+def heading_of(rule_link, bp_dir, upstream=None):
+    """The heading of the rule a link names in `bp_dir` or `upstream`, or None when it names none."""
+    if upstream is not None and upstream.owns(rule_link):
+        return upstream.heading_for_link(rule_link)
     m = _LINK.search(rule_link or "")
     if not m:
         return None
@@ -98,12 +100,16 @@ def heading_of(rule_link, bp_dir):
     return None
 
 
-def names_no_rule(rule_link, bp_dir):
+def names_no_rule(rule_link, bp_dir, upstream=None):
     """True when the link points into a doc that exists but has no such anchor.
 
     A link that cannot be read (no doc, or not a link to a rule doc) is not
     judged: only a doc the project keeps, and an anchor it lacks, show a made-up id.
+    A link under `upstream`'s base is judged whole: every rule it keeps is a file
+    we hold, so a link that names none of them is a made-up one.
     """
+    if upstream is not None and upstream.owns(rule_link):
+        return upstream.rule_for_link(rule_link) is None
     m = _LINK.search(rule_link or "")
     if not m:
         return False

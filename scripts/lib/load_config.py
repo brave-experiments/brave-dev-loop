@@ -306,6 +306,46 @@ def review_propose_practices(profile):
     return isinstance(review, dict) and review.get("proposeBestPractices") is True
 
 
+def review_upstream_rules(profile):
+    """Where `/review-prs` finds Chromium's review rules, from `review.upstreamRules`.
+
+    A dict of `dir` (the synced rules, relative to the bot directory), `linkBase`
+    (the URL the rules' links hang from) and `source` (the archive
+    scripts/sync-upstream-rules.py downloads), all strings, plus optional
+    `minSeverity` (string), `severityMap` (severity -> high/medium/low),
+    `triggeredOnly` (bool: only groups with `content_patterns` that the diff
+    meets) and `stripPrefixes` (list of strings). Returns None when a required
+    key is missing or of the wrong type, and drops an optional one that is, so a
+    malformed key means the review runs without these rules, not that it breaks.
+    """
+    review = profile.get("review")
+    value = review.get("upstreamRules") if isinstance(review, dict) else None
+    if not isinstance(value, dict):
+        return None
+    settings = {}
+    for key in ("dir", "linkBase", "source"):
+        text = value.get(key)
+        if isinstance(text, str) and text.strip():
+            settings[key] = text.strip()
+    if "dir" not in settings or "linkBase" not in settings:
+        return None
+    if isinstance(value.get("minSeverity"), str):
+        settings["minSeverity"] = value["minSeverity"]
+    if isinstance(value.get("triggeredOnly"), bool):
+        settings["triggeredOnly"] = value["triggeredOnly"]
+    mapping = value.get("severityMap")
+    if isinstance(mapping, dict):
+        settings["severityMap"] = {
+            k: v
+            for k, v in mapping.items()
+            if isinstance(k, str) and v in ("high", "medium", "low")
+        }
+    prefixes = value.get("stripPrefixes")
+    if isinstance(prefixes, list):
+        settings["stripPrefixes"] = [p for p in prefixes if isinstance(p, str) and p]
+    return settings
+
+
 def _label_patterns(value):
     if not isinstance(value, list):
         return []

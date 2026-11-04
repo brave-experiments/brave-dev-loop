@@ -73,6 +73,11 @@ PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap
 # Gate check runs before git sync to avoid wasted fetches (288 runs/day, most exit early)
 1,6,11,16,21,26,31,36,41,46,51,56 * * * * cd {BOT} && source .envrc && ./scripts/check-signal-messages.sh 2>> {BOT}/logs/check-signal-cron.log && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/with-lock.sh check-signal -- /usr/bin/claude -p '/check-signal' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' --strict-mcp-config ; } >> {BOT}/logs/check-signal-cron.log 2>&1
 
+# Refresh Chromium's review rules for /review-prs (monthly, 1st of each month)
+# A download and a parse: no agent session, no tokens. A download that fails or
+# does not parse leaves the rules already synced where they are.
+5 4 1 * * cd {BOT} && source .envrc && { git fetch origin && git checkout master && git reset --hard origin/master && python3 ./scripts/sync-upstream-rules.py ; } >> {BOT}/logs/sync-upstream-rules-cron.log 2>&1
+
 # Update best practices from upstream Chromium docs (monthly, 1st of each month)
 15 4 1 * * cd {BOT} && source .envrc && { git fetch origin && git checkout master && git reset --hard origin/master && ./scripts/sync-target-repo.sh && ./scripts/with-lock.sh update-best-practices -- /usr/bin/claude -p '/update-best-practices' --allowedTools 'Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch' --strict-mcp-config ; } >> {BOT}/logs/update-best-practices-cron.log 2>&1
 

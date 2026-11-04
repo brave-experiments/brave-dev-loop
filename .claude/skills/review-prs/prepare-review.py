@@ -49,12 +49,14 @@ from lib.load_config import (
     review_label_prs,
     review_link_rules,
     review_propose_practices,
+    review_upstream_rules,
     review_verdict,
 )
 from lib.org_gate import OrgGateError, split_prs
 from lib.pr_diff import NO_PATCH, fetch_pr_diff
 from lib.repo_lock import repo_lock
 from lib.reviewer_account import ensure_reviewer
+from lib.upstream_rules import UpstreamRules, added_text
 
 # Import fetch-prs functions (the module uses if __name__ guard)
 _fp_spec = importlib.util.spec_from_file_location(
@@ -98,6 +100,25 @@ REVIEW_SUMMARY = review_verdict(load_profile(_config, _BOT_DIR))
 REVIEW_LINK_RULES = review_link_rules(load_profile(_config, _BOT_DIR))
 REVIEW_LABEL_PRS = review_label_prs(load_profile(_config, _BOT_DIR))
 REVIEW_PROPOSE_PRACTICES = review_propose_practices(load_profile(_config, _BOT_DIR))
+REVIEW_UPSTREAM_RULES = review_upstream_rules(load_profile(_config, _BOT_DIR))
+
+_UPSTREAM = []
+
+
+def upstream_rules():
+    """Chromium's review rules for this project, or None when it uses none or has not synced them.
+
+    Read on first use: parsing the rules takes a moment, and most scripts that
+    import this module never review anything.
+    """
+    if not _UPSTREAM:
+        _UPSTREAM.append(UpstreamRules.from_settings(REVIEW_UPSTREAM_RULES, _BOT_DIR))
+        if REVIEW_UPSTREAM_RULES and not _UPSTREAM[0]:
+            log(
+                "WARNING: this project lists Chromium's review rules but none are "
+                "synced, so no PR is checked against them: run scripts/sync-upstream-rules.py"
+            )
+    return _UPSTREAM[0]
 
 
 def log(msg):
@@ -1307,6 +1328,13 @@ For example, if the heading has <a id="CS-042"></a> above it, the link is ...cod
 
 CRITICAL: The rule_link fragment MUST be an exact <a id="..."> value from the rules below, copied verbatim. Do NOT invent IDs, guess ID numbers, or construct anchors from heading text. A finding you cannot link to a rule below is not a finding for this review: leave it out."""
 
+_UPSTREAM_LINK_REQUIREMENT = """\
+Rule link requirement: these are Chromium's own review rules, not this project's. Each rule has an anchor (e.g., <a id="avoid-foo"></a>) on the line before its heading and a `rule_link` line under it. Every violation MUST carry that rule's `rule_link`, copied verbatim. Do NOT invent or edit a link. A finding you cannot link to a rule below is not a finding for this review: leave it out.
+
+Each rule says which severity to report it as (`report as ...`). Use that severity, whatever the severity guide below says; it already allows for these rules being written for Chromium, not for this project.
+
+Chromium's examples use Chromium paths and APIs; judge whether this project's code does what the rule forbids, not whether it looks like the example."""
+
 _PRIOR_COMMENTS_RULES = """\
 Prior comments re-review rules:
 - Do NOT re-raise issues that the author or a reviewer has already explained or justified. If a prior comment thread shows the author explaining why a design choice was made (e.g., "only two subclasses will ever use this, both pass constants"), accept that explanation and do not flag the same issue again.
@@ -1454,7 +1482,9 @@ def build_detect_prompt(
         "",
         _DETECT_RULES,
         "",
-        _BEST_PRACTICE_LINK_REQUIREMENT.format(bp_link_base=BP_LINK_BASE),
+        _UPSTREAM_LINK_REQUIREMENT
+        if chunk.get("upstream")
+        else _BEST_PRACTICE_LINK_REQUIREMENT.format(bp_link_base=BP_LINK_BASE),
         "",
     ]
     if ctx.get("prior_comments"):
@@ -1771,6 +1801,8 @@ def _prompt_entry(kind, chunk_id, prompt_file, results_file, prompt, chunk=None)
                 "headings": chunk["headings"],
             }
         )
+        if chunk.get("upstream"):
+            entry["upstream"] = chunk["upstream"]
     return entry
 
 
@@ -2220,6 +2252,26 @@ def process_pr(
                 ),
                 chunk,
             )
+
+    upstream = upstream_rules()
+    if upstream:
+        met = {p: added_text(sections[p]) for p in changed if not omitted.get(p)}
+        for number, pool in enumerate(upstream.pools(met), 1):
+            parts = _cb_mod.chunk_rules(pool["rules"], _cb_mod.DEFAULT_CHUNK_SIZE)
+            for index, rules in enumerate(parts):
+                chunk = upstream.chunk(
+                    rules, index, len(parts), f"chromium-rules-{number}"
+                )
+                write_parts(
+                    "rules",
+                    f"{chunk['doc']}_{index}",
+                    pool["files"],
+                    omitted,
+                    lambda c, d, st, r, rf, cid, chunk=chunk: build_detect_prompt(
+                        c, chunk, d, st, r, rf, cid
+                    ),
+                    chunk,
+                )
 
     code_paths = [p for p in changed if not omitted.get(p)]
     if code_paths:

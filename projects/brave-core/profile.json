@@ -28,6 +28,16 @@
   },
   "review": {
     "requestChanges": true,
+    "upstreamRules": {
+      "dir": ".ignore/upstream-rules/chromium",
+      "source": "https://chromium.googlesource.com/chromium/src/+archive/main/agents/knowledge_base/rules.tar.gz",
+      "linkBase": "https://chromium.googlesource.com/chromium/src/+/main/agents/knowledge_base/rules",
+      "minSeverity": "should_fix",
+      "triggeredOnly": true,
+      "stripPrefixes": [
+        "chromium_src/"
+      ]
+    },
     "labelPrs": {
       "rules": [
         {
