@@ -67,7 +67,12 @@ bot_list_ssh_keys() {
   # Private keys first: the .pub pass needs their fingerprints.
   for f in "$HOME"/.ssh/*; do
     [ -f "$f" ] || continue
-    [ -f "$f.pub" ] && continue
+    # A pair is offered as its .pub only when the private half needs ssh-agent:
+    # ssh cannot sign with a .pub alone, so under cron (no agent) it fails with
+    # "error in libcrypto". An unencrypted pair is offered as the private key.
+    if [ -f "$f.pub" ] && bot_identity_needs_agent "$f"; then
+      continue
+    fi
     case "$f" in
       *.pub | */config | */known_hosts*) continue ;;
     esac

@@ -197,6 +197,19 @@ if [ "$WRITE_CONFIG" = true ]; then
     echo "  0) Use this machine's default key (no pinning)"
     echo ""
 
+    # With no earlier choice, default to the first key GitHub says is the bot's
+    # rather than to 0: Enter at the prompt used to leave sshKeyPath null, which
+    # cron cannot push with (no ssh-agent, no ~/.ssh/config).
+    if [ "$DEFAULT_CHOICE" = "0" ]; then
+      for i in "${!SSH_KEYS[@]}"; do
+        if [ "$(bot_ssh_login "${SSH_KEYS[$i]}")" = "$CFG_BOT_USER" ]; then
+          DEFAULT_CHOICE=$((i + 1))
+          echo "  ${SSH_KEYS[$i]} authenticates as $CFG_BOT_USER — offered as the default."
+          break
+        fi
+      done
+    fi
+
     while true; do
       read -p "Select the key the bot pushes with [$DEFAULT_CHOICE]: " KEY_CHOICE
       KEY_CHOICE="${KEY_CHOICE:-$DEFAULT_CHOICE}"
