@@ -1504,9 +1504,9 @@ class TestBotListSshKeys:
             == 1
         )
 
-    def test_real_name_matched_pair_still_prefers_the_pub(self, tmp_path):
-        # Same assertion as above one level up, but with a real key: the
-        # fingerprint pass must not undo the name rule for id_rsa / id_rsa.pub.
+    def test_unencrypted_pair_is_offered_as_the_private_key(self, tmp_path):
+        # A .pub only authenticates through ssh-agent; cron has none, so an
+        # unencrypted pair must be offered as the private key.
         ssh = tmp_path / ".ssh"
         ssh.mkdir()
         subprocess.run(
@@ -1514,7 +1514,7 @@ class TestBotListSshKeys:
             check=True,
         )
         out = run_identity_snippet("bot_list_ssh_keys", home=tmp_path).stdout
-        assert [os.path.basename(line) for line in out.split()] == ["id_x.pub"]
+        assert [os.path.basename(line) for line in out.split()] == ["id_x"]
 
     def test_excludes_non_keys(self, tmp_path):
         home = self._fake_home(
