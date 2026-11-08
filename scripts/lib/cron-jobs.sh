@@ -14,6 +14,20 @@
 #   LOG_DIR           where job output is appended
 #   CLAUDE_BIN        the agent binary an agent job invokes
 #   CLAUDE_TOOLS      --allowedTools value for an agent job
+#   BOT_RUN_AGENT_ARGS  what bot_cron_run_agent_args prints (set by sync-schedules.sh)
+
+# The agent flags a run.sh job carries, from bot.agent in config.json at the time the
+# schedules are installed: nothing for claude, so the lines are what they always were,
+# and `--agent <name> --agent-bin <absolute path>` for any other. The path is resolved
+# now because cron's PATH is not the operator's: a bravebot installed under nvm is
+# invisible to it. sync-schedules.sh also puts that binary's directory on the block's
+# PATH, so its `#!/usr/bin/env node` shebang finds node. The leading space is part of
+# the value, so a caller appends it straight after the iteration count.
+#
+#   "./run.sh 30$(bot_cron_run_agent_args)"
+bot_cron_run_agent_args() {
+  printf '%s' "${BOT_RUN_AGENT_ARGS:-}"
+}
 
 # One crontab line.
 #

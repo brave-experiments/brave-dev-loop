@@ -52,6 +52,9 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_PROFILE=$(_prev '.project.profile')
     PREV_REVIEWER_USER=$(_prev '.reviewer.username')
     PREV_REVIEWER_DIR=$(_prev '.reviewer.ghConfigDir')
+    PREV_AGENT=$(_prev '.bot.agent')
+    PREV_REVIEW_AGENT=$(_prev '.reviewer.agent')
+    PREV_BRAVEBOT_BIN=$(_prev '.bot.bravebotBin')
   fi
 
   prompt_required() {
@@ -279,6 +282,52 @@ if [ "$WRITE_CONFIG" = true ]; then
     echo "  gh login for $CFG_REVIEWER_USER: $CFG_REVIEWER_DIR"
   fi
 
+  echo ""
+  echo "─── Agents ───"
+  echo "Which agent runs where. They are independent: ./run.sh can drive one while the"
+  echo "scheduled reviews run another. 'make schedules' builds its cron lines from these."
+  echo "  run     ./run.sh and the run.sh schedules: claude | codex | cursor | bravebot"
+  echo "  review  scheduled /review-prs sweeps, review requests and ping replies:"
+  echo "          claude | bravebot. See docs/review-agents.md for how each is confined."
+  echo "A flag on the command line (./run.sh --agent ...) or BOT_AGENT in the environment"
+  echo "still overrides the run agent for one run."
+  echo ""
+  # Re-asks until the answer is one of the words given. Blank takes the default.
+  prompt_choice() {
+    local var_name="$1" prompt_text="$2" default="$3" allowed=" $4 " value=""
+    while true; do
+      read -p "$prompt_text [$default]: " value
+      value="$(tr '[:upper:]' '[:lower:]' <<< "${value:-$default}")"
+      case "$allowed" in
+        *" $value "*) break ;;
+      esac
+      echo "  ⚠️  Choose one of:${allowed}"
+    done
+    eval "$var_name=\$value"
+  }
+  prompt_choice CFG_AGENT "Agent for ./run.sh" "${PREV_AGENT:-claude}" "claude codex cursor bravebot"
+  prompt_choice CFG_REVIEW_AGENT "Agent for scheduled reviews" "${PREV_REVIEW_AGENT:-claude}" "claude bravebot"
+
+  # bravebot is a node script that lives under nvm for most people, and cron's PATH
+  # has no nvm directory. Its absolute path is stored so no job has to find it.
+  CFG_BRAVEBOT_BIN="${PREV_BRAVEBOT_BIN:-}"
+  if [ "$CFG_AGENT" = "bravebot" ] || [ "$CFG_REVIEW_AGENT" = "bravebot" ]; then
+    DEFAULT_BRAVEBOT_BIN="${PREV_BRAVEBOT_BIN:-$(command -v bravebot 2>/dev/null || true)}"
+    while true; do
+      if [ -n "$DEFAULT_BRAVEBOT_BIN" ]; then
+        read -p "Path to the bravebot binary [$DEFAULT_BRAVEBOT_BIN]: " CFG_BRAVEBOT_BIN
+        CFG_BRAVEBOT_BIN="${CFG_BRAVEBOT_BIN:-$DEFAULT_BRAVEBOT_BIN}"
+      else
+        read -p "Path to the bravebot binary (not on PATH): " CFG_BRAVEBOT_BIN
+      fi
+      if [ -n "$CFG_BRAVEBOT_BIN" ] && [ -x "$CFG_BRAVEBOT_BIN" ] && [[ "$CFG_BRAVEBOT_BIN" = /* ]]; then
+        break
+      fi
+      echo "  ⚠️  Give the absolute path of an executable file."
+      DEFAULT_BRAVEBOT_BIN=""
+    done
+  fi
+
   # Values go through the environment, not argv or string interpolation, so no
   # user input can be read as JSON or as shell.
   CFG_PROJECT_NAME="$CFG_PROJECT_NAME" \
@@ -297,6 +346,9 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_GH_ACCOUNT="${PREV_GH_ACCOUNT:-}" \
   CFG_REVIEWER_USER="$CFG_REVIEWER_USER" \
   CFG_REVIEWER_DIR="$CFG_REVIEWER_DIR" \
+  CFG_AGENT="$CFG_AGENT" \
+  CFG_REVIEW_AGENT="$CFG_REVIEW_AGENT" \
+  CFG_BRAVEBOT_BIN="$CFG_BRAVEBOT_BIN" \
   CONFIG_FILE="$CONFIG_FILE" \
   BOT_ROOT="$PROJECT_ROOT" \
   python3 -c "
@@ -362,17 +414,22 @@ config = {
             'codexBin': None,
             'cursorModel': None,
             'cursorBin': None,
+            'bravebotModel': None,
+            'bravebotBin': None,
         },
         **existing_bot,
         'username': os.environ['CFG_BOT_USER'],
         'email': os.environ['CFG_BOT_EMAIL'],
         'sshKeyPath': val('CFG_SSH_KEY'),
         'ghAccount': val('CFG_GH_ACCOUNT'),
+        'agent': os.environ['CFG_AGENT'],
+        'bravebotBin': val('CFG_BRAVEBOT_BIN'),
     },
     'reviewer': {
         **existing_reviewer,
         'username': val('CFG_REVIEWER_USER'),
         'ghConfigDir': val('CFG_REVIEWER_DIR'),
+        'agent': os.environ['CFG_REVIEW_AGENT'],
     },
     # Labels belong to the project profile (projects/<name>/profile.json), which
     # is where anything actually reads them from. This block is carried forward
@@ -1009,6 +1066,64 @@ if [[ "$(uname)" == "Linux" ]]; then
   fi
 fi
 
+# ─── Step 8: Schedules ───────────────────────────────────────────────────────
+#
+# The crontab lines are built from config.json when they are installed -- which
+# agent run.sh is started with, and the PATH that agent's binary needs -- so an
+# installed block goes stale when the agents above change. Offering the install
+# here, after the config is written, is what keeps the two together. Nothing is
+# installed without an answer, and the default is whatever is installed now.
+
+SCHEDULES_INSTALLED=false
+source "$SCRIPT_DIR/lib/cron-blocks.sh"
+CRON_NOW=$(crontab -l 2>/dev/null || true)
+has_block() {
+  local name
+  for name in "${BOT_CRON_MARKER_NAMES[@]}"; do
+    grep -qxF "# === $name ($BOT_PROJECT_NAME:$1) scheduled jobs ===" <<< "$CRON_NOW" && return 0
+  done
+  return 1
+}
+DEFAULT_SCHEDULES=none
+if has_block run && has_block review; then
+  DEFAULT_SCHEDULES=all
+elif has_block run; then
+  DEFAULT_SCHEDULES=run
+elif has_block review; then
+  DEFAULT_SCHEDULES=review
+fi
+
+echo "─── Schedules ───"
+if ! command -v crontab >/dev/null 2>&1; then
+  echo "ℹ️  crontab is not available on this machine — skipping schedules."
+elif [ ! -t 0 ]; then
+  echo "ℹ️  No terminal — skipping. Run 'make schedules' to install them."
+else
+  echo "Cron jobs for profile '$BOT_PROFILE', built from the agents chosen above:"
+  echo "  all     run + review + maintenance   (make schedules)"
+  echo "  run     run.sh and the PRD sync       (make schedules-run)"
+  echo "  review  review sweeps and polls       (make schedules-review)"
+  echo "  none    leave the crontab alone"
+  [ "$DEFAULT_SCHEDULES" = none ] || echo "Currently installed for $BOT_PROJECT_NAME: $DEFAULT_SCHEDULES — reinstalling picks up changed agents."
+  SCHEDULE_CHOICE=""
+  while true; do
+    read -p "Install schedules? (all/run/review/none) [$DEFAULT_SCHEDULES]: " SCHEDULE_CHOICE
+    SCHEDULE_CHOICE="$(tr '[:upper:]' '[:lower:]' <<< "${SCHEDULE_CHOICE:-$DEFAULT_SCHEDULES}")"
+    case "$SCHEDULE_CHOICE" in
+      all|run|review|none) break ;;
+    esac
+    echo "  ⚠️  Enter all, run, review or none."
+  done
+  case "$SCHEDULE_CHOICE" in
+    none) echo "  Left the crontab alone." ;;
+    all)
+      if "$SCRIPT_DIR/sync-schedules.sh"; then SCHEDULES_INSTALLED=true; else echo "⚠️  Installing the schedules failed (see above). Fix it, then run 'make schedules'."; fi ;;
+    *)
+      if "$SCRIPT_DIR/sync-schedules.sh" --group "$SCHEDULE_CHOICE"; then SCHEDULES_INSTALLED=true; else echo "⚠️  Installing the schedules failed (see above). Fix it, then run 'make schedules-$SCHEDULE_CHOICE'."; fi ;;
+  esac
+fi
+echo ""
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -1042,7 +1157,13 @@ if [ -n "$BOT_REVIEWER_USERNAME" ]; then
   if [ "$REVIEWER_LOGGED_IN" != true ]; then
     NEXT+=("Log in the reviewer: GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth login --hostname github.com --web --skip-ssh-key")
   fi
-  NEXT+=("Run 'make schedules-review' once so the review jobs go through scripts/as-reviewer.sh (the reviewer itself is read when a job fires)")
+  if [ "$SCHEDULES_INSTALLED" != true ]; then
+    NEXT+=("Run 'make schedules-review' once so the review jobs go through scripts/as-reviewer.sh (the reviewer itself is read when a job fires)")
+  fi
+fi
+
+if [ "$SCHEDULES_INSTALLED" != true ]; then
+  NEXT+=("Run 'make schedules' to install the cron jobs for the agents you chose (or re-run 'make setup'); a changed agent needs it again")
 fi
 
 if [ ${#NEXT[@]} -gt 0 ]; then

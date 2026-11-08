@@ -13,6 +13,7 @@
 #   BOT_REVIEWER_USERNAME, BOT_REVIEWER_GH_CONFIG_DIR, BOT_REVIEW_USERNAME,
 #   BOT_REVIEW_MAX_ROUNDS, BOT_REVIEW_WAIT_MINUTES,
 #   BOT_AGENT, BOT_CLAUDE_MODEL, BOT_CLAUDE_BIN,
+#   BOT_REVIEW_AGENT (reviewer.agent: claude | bravebot; the agent scheduled reviews run),
 #   BOT_CODEX_MODEL, BOT_CODEX_BIN,
 #   BOT_CURSOR_MODEL, BOT_CURSOR_BIN,
 #   BOT_BRAVEBOT_MODEL, BOT_BRAVEBOT_BIN, BOT_BP_DOCS_DIR,
@@ -217,6 +218,17 @@ BOT_AGENT_TOOLS="Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch"
 # needs no Opus; on a large sweep its own context is re-read on every turn.
 BOT_REVIEW_MODEL="${BOT_REVIEW_MODEL:-sonnet}"
 
+# Agent for a scheduled /review-prs session or ping reply, independent of the one
+# ./run.sh drives (bot.agent). BOT_REVIEW_AGENT in the environment wins over
+# reviewer.agent, as BOT_AGENT does over bot.agent. See scripts/lib/review-agent.sh.
+_BOT_REVIEW_AGENT_ENV="${BOT_REVIEW_AGENT:-}"
+BOT_REVIEW_AGENT=$(bot_config '.reviewer.agent')
+if [ -n "$_BOT_REVIEW_AGENT_ENV" ]; then
+  BOT_REVIEW_AGENT="$_BOT_REVIEW_AGENT_ENV"
+fi
+unset _BOT_REVIEW_AGENT_ENV
+BOT_REVIEW_AGENT="${BOT_REVIEW_AGENT:-claude}"
+
 BOT_BP_DOCS_DIR=$(bot_config '.bestPractices.docsDir')
 
 # Absolute paths. Prefer these over the raw (base-ambiguous) config values.
@@ -256,11 +268,18 @@ if [ -z "$BOT_CURSOR_BIN" ]; then
   BOT_CURSOR_BIN="$(which cursor-agent 2>/dev/null || echo "cursor-agent")"
 fi
 
-# bravebot is asked for per run rather than configured, so it has no config keys: the
-# binary comes from `./run.sh --agent-bin`, the model from `--model`, and everything
-# else from bravebot's own settings. Both are honoured from the environment too.
+# bravebot's binary and model come from `./run.sh --agent-bin` / `--model` for one run,
+# from the environment, or from bot.bravebotBin / bot.bravebotModel (written by
+# `make setup`, because cron's PATH has no nvm directory for `which` to find it in).
+# Everything else is bravebot's own settings.
+if [ -z "${BOT_BRAVEBOT_BIN:-}" ]; then
+  BOT_BRAVEBOT_BIN=$(bot_config '.bot.bravebotBin')
+fi
 if [ -z "${BOT_BRAVEBOT_BIN:-}" ]; then
   BOT_BRAVEBOT_BIN="$(which bravebot 2>/dev/null || echo "bravebot")"
+fi
+if [ -z "${BOT_BRAVEBOT_MODEL:-}" ]; then
+  BOT_BRAVEBOT_MODEL=$(bot_config '.bot.bravebotModel')
 fi
 BOT_BRAVEBOT_MODEL="${BOT_BRAVEBOT_MODEL:-}"
 
@@ -278,6 +297,6 @@ export BOT_PROFILE BOT_PROFILE_DIR BOT_PROFILE_WORKTREES BOT_MAX_CONCURRENT_RUNS
 export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_SIGNING_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
 export BOT_REVIEWER_USERNAME BOT_REVIEWER_GH_CONFIG_DIR BOT_REVIEW_USERNAME
 export BOT_REVIEW_MAX_ROUNDS BOT_REVIEW_WAIT_MINUTES
-export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN BOT_AGENT_TOOLS BOT_REVIEW_MODEL
+export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN BOT_AGENT_TOOLS BOT_REVIEW_MODEL BOT_REVIEW_AGENT
 export BOT_BRAVEBOT_MODEL BOT_BRAVEBOT_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS

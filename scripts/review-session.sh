@@ -32,6 +32,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/load-config.sh"
+source "$SCRIPT_DIR/lib/review-agent.sh"
 
 SKILL_DIR="${REVIEW_PRS_SKILL_DIR:-$BOT_DIR/.claude/skills/review-prs}"
 MODEL="$BOT_REVIEW_MODEL"
@@ -72,21 +73,23 @@ fi
 # An empty gh config directory as well as no token: gh falls back to its default
 # config directory, which holds the bot's login.
 NO_GH=$(mktemp -d)
-trap 'rm -rf "$NO_GH"' EXIT
+BOT_REVIEW_AGENT_TMP=""
+trap 'rm -rf "$NO_GH" "$BOT_REVIEW_AGENT_TMP"' EXIT
 
 SETTINGS=$(python3 "$SCRIPT_DIR/review-session-settings.py" --work-dir "$WORK_DIR" \
   ${BOT_GH_CONFIG_DIR:+--deny-read "$BOT_GH_CONFIG_DIR"} \
   ${BOT_REVIEWER_GH_CONFIG_DIR:+--deny-read "$BOT_REVIEWER_GH_CONFIG_DIR"} \
   ${GH_CONFIG_DIR:+--deny-read "$GH_CONFIG_DIR"}) || exit 1
 
+# The agent is reviewer.agent's (claude unless config.json says otherwise).
+bot_review_agent_cmd review "/review-prs --work-dir $WORK_DIR" "$MODEL" "$SETTINGS" "$WORK_DIR" || exit 1
+
 RC=0
 (
   cd "$BOT_DIR" || exit 1
   exec env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
     GH_CONFIG_DIR="$NO_GH" \
-    "$BOT_CLAUDE_BIN" -p "/review-prs --work-dir $WORK_DIR" --model "$MODEL" \
-    --permission-mode dontAsk --settings "$SETTINGS" --add-dir "$WORK_DIR" \
-    --strict-mcp-config </dev/null
+    "${BOT_REVIEW_AGENT_CMD[@]}" </dev/null
 ) || RC=$?
 [ "$RC" -eq 0 ] || echo "The review session exited $RC; collecting what it wrote." >&2
 

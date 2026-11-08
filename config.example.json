@@ -26,11 +26,14 @@
     "codexBin": null,
     "cursorModel": null,
     "cursorBin": null,
+    "bravebotModel": null,
+    "bravebotBin": null,
     "ghConfigDir": null
   },
   "reviewer": {
     "username": null,
     "ghConfigDir": null,
+    "agent": "claude",
     "maxRounds": 5,
     "waitMinutes": 120
   },

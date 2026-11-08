@@ -26,7 +26,7 @@ schedule_run() {
   echo "# Gate check runs before git sync to avoid wasted fetches"
   echo "# Daily: 6 iterations, overnight, killed at 4h30m — before brave-core's 07:45"
   bot_cron_job "0 3 * * *" "./scripts/check-has-work.sh" \
-    "./scripts/timeout-tree.sh 16200 ./run.sh 6" \
+    "./scripts/timeout-tree.sh 16200 ./run.sh 6$(bot_cron_run_agent_args)" \
     "run-cron.log"
 }
 
