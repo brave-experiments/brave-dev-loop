@@ -35,7 +35,10 @@ concurrency:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: that label moved to 26.04, which actions/setup-python has
+    # no 3.9 build for, so the floor job failed before running anything. Move this
+    # to the next image only together with the floor in pyproject.toml.
+    runs-on: ubuntu-24.04
     strategy:
       # Both versions report. Knowing a failure is on 3.9 alone is the whole
       # point of testing 3.9.

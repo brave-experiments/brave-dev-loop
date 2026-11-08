@@ -3885,7 +3885,11 @@ class TestBravebotWorktrees:
     # Docs about the agent CLIs themselves name them throughout: a comparison run
     # exists to judge one tool against another, and reading bravebot's own session
     # store is half of that job. Neutrality is about the project named bravebot.
-    AGENT_DOCS = ("comparison-runs.md", "comparison-evaluation.md")
+    AGENT_DOCS = (
+        "comparison-runs.md",
+        "comparison-evaluation.md",
+        "review-agents.md",
+    )
 
     def test_the_pointers_stay_project_neutral(self):
         """Shared docs serve every profile; brave-core has no worktrees."""

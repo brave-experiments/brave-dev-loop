@@ -31,10 +31,10 @@ schedule_run() {
   echo "# Gate check runs before git sync to avoid wasted fetches"
   echo "# Weekdays: 2x/day"
   bot_cron_job "10 8 * * 1-5" "./scripts/check-has-work.sh" \
-    "./scripts/sync-target-repo.sh && ./run.sh 3" "run-cron.log"
+    "./scripts/sync-target-repo.sh && ./run.sh 3$(bot_cron_run_agent_args)" "run-cron.log"
   echo "# Weekends: once/day at 14:10"
   bot_cron_job "10 14 * * 0,6" "./scripts/check-has-work.sh" \
-    "./scripts/sync-target-repo.sh && ./run.sh 3" "run-cron.log"
+    "./scripts/sync-target-repo.sh && ./run.sh 3$(bot_cron_run_agent_args)" "run-cron.log"
 }
 
 schedule_review() {

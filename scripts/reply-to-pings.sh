@@ -33,6 +33,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/load-config.sh"
 source "$SCRIPT_DIR/lib/lock.sh"
+source "$SCRIPT_DIR/lib/review-agent.sh"
 source "$SCRIPT_DIR/lib/review-requests.sh"
 
 PINGS_PY="$SCRIPT_DIR/lib/pings.py"
@@ -82,8 +83,9 @@ reply_one() {
   fi
 
   # The session reads the target checkout too, to check what it is asked about.
-  local add_dirs=(--add-dir "$work")
-  [ -n "${BOT_TARGET_REPO_DIR:-}" ] && [ -d "$BOT_TARGET_REPO_DIR" ] && add_dirs+=(--add-dir "$BOT_TARGET_REPO_DIR")
+  # The work directory first: it is the one place the session may write.
+  local add_dirs=("$work")
+  [ -n "${BOT_TARGET_REPO_DIR:-}" ] && [ -d "$BOT_TARGET_REPO_DIR" ] && add_dirs+=("$BOT_TARGET_REPO_DIR")
 
   settings=$(python3 "$SCRIPT_DIR/review-session-settings.py" --reply --work-dir "$work" \
     ${BOT_GH_CONFIG_DIR:+--deny-read "$BOT_GH_CONFIG_DIR"} \
@@ -93,15 +95,16 @@ reply_one() {
   # No token, and an empty gh config directory so gh cannot fall back to the
   # login in its default one. A failed session is not the end: it may have written
   # the reply first, and post decides on what is on disk.
+  bot_review_agent_cmd reply "/reply-to-ping --work-dir $work" "$BOT_REVIEW_MODEL" "$settings" "${add_dirs[@]}" \
+    || { rm -rf "$work" "$no_gh"; return 1; }
   (
     cd "$BOT_DIR" || exit 1
     exec env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
       GH_CONFIG_DIR="$no_gh" \
       "$SCRIPT_DIR/timeout-tree.sh" "$SESSION_SECONDS" \
-      "$BOT_CLAUDE_BIN" -p "/reply-to-ping --work-dir $work" --model "$BOT_REVIEW_MODEL" \
-      --permission-mode dontAsk --settings "$settings" "${add_dirs[@]}" \
-      --strict-mcp-config </dev/null
+      "${BOT_REVIEW_AGENT_CMD[@]}" </dev/null
   ) || echo "The reply session for $repo#$number exited $?; posting what it wrote." >&2
+  [ -z "$BOT_REVIEW_AGENT_TMP" ] || rm -f "$BOT_REVIEW_AGENT_TMP"
 
   python3 "$PINGS_PY" post "${BOT_PING_ARGS[@]}" --work-dir "$work"
   rc=$?

@@ -56,6 +56,65 @@ $PRINT_ONLY || mkdir -p "$LOG_DIR"
 # Derive the PATH from CLAUDE_BIN's directory
 CLAUDE_BIN_DIR=$(dirname "$CLAUDE_BIN")
 
+# Which agents the jobs drive, read from config.json when the schedules are
+# installed (not from BOT_AGENT / BOT_REVIEW_AGENT in this shell: an environment
+# override on the machine running `make schedules` is not the deployment's setting).
+#   bot.agent       the agent run.sh drives; its flags go on every run.sh line
+#   reviewer.agent  the agent the review sweeps and the review-request poll run;
+#                   read again when each job fires, so it needs only the PATH here
+RUN_AGENT=$(bot_config '.bot.agent')
+RUN_AGENT="${RUN_AGENT:-claude}"
+REVIEW_AGENT=$(bot_config '.reviewer.agent')
+REVIEW_AGENT="${REVIEW_AGENT:-claude}"
+
+# The binary an agent runs from, as an absolute path. Cron's PATH is not this
+# shell's -- a bravebot or codex installed under nvm is invisible to it -- so the
+# path is resolved here and the lines carry it.
+resolve_agent_bin() {
+  local bin
+  case "$1" in
+    claude) bin="$BOT_CLAUDE_BIN" ;;
+    codex) bin="$BOT_CODEX_BIN" ;;
+    cursor) bin="$BOT_CURSOR_BIN" ;;
+    bravebot) bin="$BOT_BRAVEBOT_BIN" ;;
+    *) echo "Error: unsupported agent '$1' (expected: claude | codex | cursor | bravebot)" >&2; return 1 ;;
+  esac
+  if [[ "$bin" != /* ]]; then
+    bin=$(command -v "$bin") || {
+      echo "Error: the $1 binary is not on PATH; set it in config.json (bot.${1}Bin) or run 'make setup'." >&2
+      return 1
+    }
+  fi
+  printf '%s\n' "$bin"
+}
+
+EXTRA_PATH_DIRS=()
+add_path_dir() {
+  local d="$1" seen
+  [ "$d" = "$CLAUDE_BIN_DIR" ] && return 0
+  for seen in "${EXTRA_PATH_DIRS[@]:-}"; do [ "$seen" = "$d" ] && return 0; done
+  EXTRA_PATH_DIRS+=("$d")
+}
+
+# Claude is the default, and its lines carry no agent flag at all.
+BOT_RUN_AGENT_ARGS=""
+wants_group() {
+  local g
+  for g in "${GROUPS_TO_SYNC[@]}"; do [ "$g" = "$1" ] && return 0; done
+  return 1
+}
+if wants_group run && [ "$RUN_AGENT" != "claude" ]; then
+  RUN_AGENT_BIN=$(resolve_agent_bin "$RUN_AGENT") || exit 1
+  BOT_RUN_AGENT_ARGS=" --agent $RUN_AGENT --agent-bin $RUN_AGENT_BIN"
+  add_path_dir "$(dirname "$RUN_AGENT_BIN")"
+fi
+if wants_group review && [ "$REVIEW_AGENT" != "claude" ]; then
+  REVIEW_AGENT_BIN=$(resolve_agent_bin "$REVIEW_AGENT") || exit 1
+  add_path_dir "$(dirname "$REVIEW_AGENT_BIN")"
+fi
+PATH_PREFIX="$CLAUDE_BIN_DIR"
+for d in "${EXTRA_PATH_DIRS[@]:-}"; do [ -n "$d" ] && PATH_PREFIX="$PATH_PREFIX:$d"; done
+
 # Resolve sync repo path from config (optional — only for projects that sync from upstream)
 SYNC_REPO_ENABLED=$(bot_config_bool '.schedules.syncRepo')
 SYNC_REPO_PATH=$(bot_config '.schedules.syncRepoPath')
@@ -93,7 +152,7 @@ build_block() {
 # Managed by sync-schedules.sh - do not edit manually
 # Jobs: ${SCHEDULE_FILE#$PROJECT_ROOT/}
 SHELL=/bin/bash
-PATH=$CLAUDE_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+PATH=$PATH_PREFIX:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 $jobs
 
 # === end $marker ===

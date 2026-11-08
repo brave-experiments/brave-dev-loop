@@ -25,7 +25,8 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `reviewer.ghConfigDir`: the reviewer's own `gh` config directory (`null` with a username set = `~/.config/gh-<username>`, or under `$XDG_CONFIG_HOME`). `make setup` creates it and walks you through logging in
 - `reviewer.maxRounds`: how many reviews of one story `./run.sh` waits for before giving up on it (default `5`; `0` turns the wait off). A review that asks for changes starts a fix round and another wait. Has no effect without `reviewer.username`. See [Review gate](./review-gate.md)
 - `reviewer.waitMinutes`: how long `./run.sh` waits for one review before moving on (default `120`). The reviewer answers on its own schedule, so this must outlast the review-request poll plus a review
-- `bot.agent`: Which agent to run, `claude` (default), `codex`, `cursor`, or `bravebot`
+- `bot.agent`: Which agent `./run.sh` runs, `claude` (default), `codex`, `cursor`, or `bravebot`. `make setup` asks. `make schedules` reads it when installing, so a `run.sh` cron line carries `--agent <name> --agent-bin <absolute path>` for anything but `claude`; re-run it after changing the agent
+- `reviewer.agent`: Which agent the scheduled `/review-prs` sweeps, the review-request poll and ping replies run, `claude` (default) or `bravebot`. Independent of `bot.agent`. See [Review agents](./review-agents.md) for how each is confined; the second is the weaker
 - `bot.maxConcurrentRuns`: How many `run.sh` instances may share this bot directory (default `1`). Above 1 requires a profile with `"worktrees": true` — without per-story worktrees two runs share one working tree and overwrite each other. See [Concurrent runs](./concurrent-runs.md)
 - `bot.concurrentJobs`: How many runs one `./run.sh` starts in parallel, each on a run slot of its own (default `1`: one invocation is one run). Cannot exceed `bot.maxConcurrentRuns`, and does not apply to `tui` mode, which runs one job. See [Starting several runs at once](./concurrent-runs.md#starting-several-runs-at-once)
 - `bot.claudeModel`: Claude model to use (`opus`, `sonnet`, etc.; overridden by `./run.sh --model` for Claude runs)
@@ -34,7 +35,8 @@ Project-specific configuration (gitignored, created by `make setup`). Keys:
 - `bot.codexBin`: Path to the `codex` binary (`null` = found on PATH)
 - `bot.cursorModel`: Cursor model to use (`null` = account default; overridden by `./run.sh --model` for Cursor runs)
 - `bot.cursorBin`: Path to the `cursor-agent` binary (`null` = found on PATH)
-- bravebot has no config keys. Its binary comes from `./run.sh --agent-bin <path>` (`bravebot` on PATH when not given) and its model from `./run.sh --model`, so a locally built binary is a flag rather than a config edit
+- `bot.bravebotModel`: model for `--agent bravebot` (`null` = the agent's own choice; overridden by `./run.sh --model`)
+- `bot.bravebotBin`: absolute path of the binary for `--agent bravebot`. `make setup` stores it, because that binary is a `#!/usr/bin/env node` script that usually lives under nvm, which cron's PATH does not have (`null` = found on PATH; `./run.sh --agent-bin` overrides it for one run). `make schedules` also puts its directory on the cron block's `PATH` so the shebang finds `node`
 - `labels.*`: legacy. Labels now live in the project profile (`projects/<name>/profile.json`); `labels.disabledTestLabel` and `labels.inProgressLabel` are still honoured as fallbacks for deployments that set them by hand. See [Project profiles](../projects/README.md)
 - `labels.inProgressLabel`: label marking an issue as being worked, so deployments on other machines skip it (`""` = off, the profile's `labels.inProgress` wins where it defines one). See [Concurrent runs](./concurrent-runs.md)
 - `bestPractices.docsDir`: Path to the docs directory containing best practices (relative to bot dir)
