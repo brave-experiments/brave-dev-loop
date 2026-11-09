@@ -160,14 +160,16 @@ def test_claude_reviews_exactly_as_before(tmp_dir):
     assert out[-2] == "--strict-mcp-config"
 
 
-def test_bravebot_reviews_without_a_fetch_tool_and_with_the_network_closed(tmp_dir):
+def test_bravebot_reviews_without_a_fetch_tool(tmp_dir):
     out = review_cmd(tmp_dir, "bravebot").stdout.splitlines()
     assert out[0] == "/opt/bravebot"
     assert out[1] == "/review-prs --work-dir W"
     tools = out[out.index("--tools") + 1].split(",")
     assert "fetch_url" not in tools and "download_url" not in tools
     assert "run" in tools
-    assert out[out.index("--run-network") + 1] == "closed"
+    # `closed` stops bravebot starting python3 at all, so select-candidates.py
+    # cannot run and no review is ever posted.
+    assert out[out.index("--run-network") + 1] == "open"
     # Writes are held to the work directory; the bot directory is refused.
     assert out[out.index("--sandbox-allow-write") + 1].endswith("/work")
     assert "--sandbox-deny-write" in out
