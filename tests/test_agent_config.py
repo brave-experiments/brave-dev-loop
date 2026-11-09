@@ -173,6 +173,17 @@ def test_bravebot_reviews_without_a_fetch_tool_and_with_the_network_closed(tmp_d
     assert "--sandbox-deny-write" in out
 
 
+def test_bravebot_reviews_never_get_the_claude_model_alias(tmp_dir):
+    """`--model sonnet` makes bravebot fail with BB1003 when the operator's own
+    service is configured; with no bot.bravebotModel it names no model at all."""
+    out = review_cmd(tmp_dir, "bravebot").stdout.splitlines()
+    assert "--model" not in out and "sonnet" not in out
+    out = review_cmd(
+        tmp_dir, "bravebot", extra_env={"BOT_BRAVEBOT_MODEL": "my-model"}
+    ).stdout.splitlines()
+    assert out[out.index("--model") + 1] == "my-model"
+
+
 def test_a_bravebot_reply_session_gets_no_program_and_no_delegate(tmp_dir):
     out = review_cmd(tmp_dir, "bravebot", kind="reply").stdout.splitlines()
     tools = out[out.index("--tools") + 1].split(",")

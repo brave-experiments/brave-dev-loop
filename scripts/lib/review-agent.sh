@@ -36,7 +36,7 @@ BOT_BRAVEBOT_REPLY_TOOLS="read_file,list_files,search,write_file,edit_file,load_
 bot_review_agent_cmd() {
   local kind="$1" prompt="$2" model="$3" settings="$4"
   shift 4
-  local work_dir="${1:-}" dir tools path settings_file
+  local work_dir="${1:-}" dir tools path settings_file model_flag
   BOT_REVIEW_AGENT_CMD=()
   BOT_REVIEW_AGENT_TMP=""
 
@@ -64,7 +64,13 @@ bot_review_agent_cmd() {
         .permissions.deny += ([$bot] + $ARGS.positional | map("Edit(//" + (. | ltrimstr("/")) + "/**)"))
       ' "${@:2}" > "$settings_file" || { rm -f "$settings_file"; return 1; }
       BOT_REVIEW_AGENT_TMP="$settings_file"
-      BOT_REVIEW_AGENT_CMD=("$BOT_BRAVEBOT_BIN" "$prompt" --model "$model"
+      # $model is the reviewer's claude alias ("sonnet" by default), which bravebot
+      # resolves to one of Brave's models and then refuses (BB1003) when the
+      # operator has a service of their own. So it is not passed: the model is
+      # bot.bravebotModel when set, else bravebot's own `model` setting.
+      model_flag=()
+      [ -n "${BOT_BRAVEBOT_MODEL:-}" ] && model_flag=(--model "$BOT_BRAVEBOT_MODEL")
+      BOT_REVIEW_AGENT_CMD=("$BOT_BRAVEBOT_BIN" "$prompt" ${model_flag[@]+"${model_flag[@]}"}
         --settings "$settings_file" --trust-workspace --dangerously-skip-permissions
         --tools "$tools" --run-network closed
         --sandbox workspace-write --sandbox-deny-write "$BOT_DIR")
