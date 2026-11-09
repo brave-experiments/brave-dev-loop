@@ -1,8 +1,8 @@
-"""The agents the schedules and the review sessions run, from config.json.
+"""The agent the schedules run, from config.json.
 
 bot.agent decides the flags on every run.sh cron line, resolved when the schedules
-are installed; reviewer.agent decides what review-agent.sh launches. Both default to
-claude, and a claude deployment's crontab must not change by a byte.
+are installed. It defaults to claude, and a claude deployment's crontab must not
+change by a byte.
 """
 
 import json
@@ -102,107 +102,3 @@ def test_an_unknown_agent_is_refused(tmp_dir):
     result = render(tmp_dir, bot={"agent": "nope"})
     assert result.returncode != 0
     assert "unsupported agent 'nope'" in result.stderr
-
-
-def test_the_run_agent_does_not_touch_the_review_group(tmp_dir):
-    """bot.agent is for run.sh. A review-only install must not need its binary."""
-    result = render(tmp_dir, bot={"agent": "bravebot"}, group="review")
-    assert result.returncode == 0, result.stderr
-    assert "--agent" not in result.stdout
-
-
-def test_a_review_agent_is_on_the_path_but_not_on_any_line(tmp_dir):
-    """review-session.sh reads reviewer.agent when the job fires, so the lines do
-    not change; only the block's PATH needs the binary's directory."""
-    binary = fake_agent(tmp_dir)
-    claude_only = render(tmp_dir, group="review").stdout
-    out = render(
-        tmp_dir,
-        bot={"bravebotBin": binary},
-        reviewer={"agent": "bravebot"},
-        group="review",
-    ).stdout
-    assert os.path.dirname(binary) in out
-    assert [ln for ln in out.splitlines() if ln[:1].isdigit()] == [
-        ln for ln in claude_only.splitlines() if ln[:1].isdigit()
-    ]
-
-
-def review_cmd(tmp_dir, agent, kind="review", extra_env=None):
-    """BOT_REVIEW_AGENT_CMD, one word to a line, as review-agent.sh builds it."""
-    root = Schedules._bot_dir(tmp_dir, "default")
-    script = (
-        f'source "{root}/scripts/lib/load-config.sh"\n'
-        f'source "{root}/scripts/lib/review-agent.sh"\n'
-        f'bot_review_agent_cmd {kind} "/review-prs --work-dir W" sonnet \'{{"permissions":{{"deny":[]}}}}\' '
-        f'"{tmp_dir}/work" "{tmp_dir}/target"\n'
-        'printf "%s\\n" "${BOT_REVIEW_AGENT_CMD[@]}"\n'
-        'echo "TMP=$BOT_REVIEW_AGENT_TMP"\n'
-    )
-    env = {
-        "PATH": "/usr/bin:/bin",
-        "HOME": tmp_dir,
-        "BOT_REVIEW_AGENT": agent,
-        "BOT_BRAVEBOT_BIN": "/opt/bravebot",
-        **(extra_env or {}),
-    }
-    return subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, env=env
-    )
-
-
-def test_claude_reviews_exactly_as_before(tmp_dir):
-    out = review_cmd(tmp_dir, "claude").stdout.splitlines()
-    assert out[0].endswith("claude")
-    assert out[1:4] == ["-p", "/review-prs --work-dir W", "--model"]
-    assert "--permission-mode" in out and "dontAsk" in out
-    assert out.count("--add-dir") == 2
-    assert out[-2] == "--strict-mcp-config"
-
-
-def test_bravebot_reviews_without_a_fetch_tool(tmp_dir):
-    out = review_cmd(tmp_dir, "bravebot").stdout.splitlines()
-    assert out[0] == "/opt/bravebot"
-    assert out[1] == "/review-prs --work-dir W"
-    tools = out[out.index("--tools") + 1].split(",")
-    assert "fetch_url" not in tools and "download_url" not in tools
-    assert "run" in tools
-    # `closed` stops bravebot starting python3 at all, so select-candidates.py
-    # cannot run and no review is ever posted.
-    assert out[out.index("--run-network") + 1] == "open"
-    # Writes are held to the work directory; the bot directory is refused.
-    assert out[out.index("--sandbox-allow-write") + 1].endswith("/work")
-    assert "--sandbox-deny-write" in out
-
-
-def test_bravebot_reviews_never_get_the_claude_model_alias(tmp_dir):
-    """`--model sonnet` makes bravebot fail with BB1003 when the operator's own
-    service is configured; with no bot.bravebotModel it names no model at all."""
-    out = review_cmd(tmp_dir, "bravebot").stdout.splitlines()
-    assert "--model" not in out and "sonnet" not in out
-    out = review_cmd(
-        tmp_dir, "bravebot", extra_env={"BOT_BRAVEBOT_MODEL": "my-model"}
-    ).stdout.splitlines()
-    assert out[out.index("--model") + 1] == "my-model"
-
-
-def test_a_bravebot_reply_session_gets_no_program_and_no_delegate(tmp_dir):
-    out = review_cmd(tmp_dir, "bravebot", kind="reply").stdout.splitlines()
-    tools = out[out.index("--tools") + 1].split(",")
-    assert "run" not in tools and "spawn_agent" not in tools
-
-
-def test_bravebot_settings_deny_writes_outside_the_work_directory(tmp_dir):
-    """Bypass mode ignores the Edit allow rule, so the confinement is a deny."""
-    out = review_cmd(tmp_dir, "bravebot").stdout.splitlines()
-    settings = out[out.index("--settings") + 1]
-    with open(settings) as f:
-        deny = json.load(f)["permissions"]["deny"]
-    assert any(rule.startswith("Edit(//") and "/bot/" in rule for rule in deny)
-    assert any(rule.endswith("/target/**)") for rule in deny)
-    assert not any(rule.endswith("/work/**)") for rule in deny)
-
-
-def test_an_agent_that_cannot_review_is_refused(tmp_dir):
-    result = review_cmd(tmp_dir, "codex")
-    assert "cannot review" in result.stderr

@@ -98,14 +98,6 @@ def add_backlog():
     )
 
 
-@pytest.fixture
-def chunk_best_practices():
-    return _load_module(
-        "chunk_best_practices",
-        os.path.join(SKILLS_DIR, "review-prs", "chunk-best-practices.py"),
-    )
-
-
 # --- Temp file helpers ---
 
 
