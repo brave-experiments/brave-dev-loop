@@ -333,29 +333,26 @@ def fetch_existing_comments(repo, pr_number):
             f"repos/{repo}/pulls/{pr_number}/comments",
             "--paginate",
             "--jq",
-            "[.[] | {path, line, body, user: .user.login}]",
+            ".[] | {path, line, body, user: .user.login}",
         ],
         timeout=60,
     )
     if rc != 0 or not out:
         return []
-    try:
-        # gh --paginate with --jq may output multiple JSON arrays
-        # Concatenate them
-        comments = []
-        for chunk in re.split(r"\]\s*\[", out):
-            chunk = chunk.strip()
-            if not chunk.startswith("["):
-                chunk = "[" + chunk
-            if not chunk.endswith("]"):
-                chunk = chunk + "]"
-            try:
-                comments.extend(json.loads(chunk))
-            except json.JSONDecodeError:
-                pass
-        return comments
-    except Exception:
-        return []
+    # One compact object per line: a comment body is escaped to a single line,
+    # so a body holding "] [" cannot be mistaken for a page boundary.
+    comments = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            c = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(c, dict):
+            comments.append(c)
+    return comments
 
 
 def _rule_dedup_key(violation):
