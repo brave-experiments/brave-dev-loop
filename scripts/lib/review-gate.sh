@@ -8,7 +8,7 @@
 # reviews per story; then the story is left as it stands and the run goes on.
 #
 # The review itself is not run from here. The reviewer account answers
-# review requests on its own schedule (scripts/review-requested.sh), possibly on
+# review requests on its own schedule (the separate reviewer project), possibly on
 # another machine, and a second reviewer started from this run would post a
 # second review of the same head. This only asks, once, when nobody has, and
 # then reads GitHub until the answer is there or the wait runs out.

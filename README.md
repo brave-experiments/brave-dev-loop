@@ -107,10 +107,8 @@ and a hint it cannot use leaves the ordinary queue in charge.
 tail -f data/progress.txt        # watch progress
 make schedules                   # install/update all of this project's cron jobs
 make schedules-run               # ...only the run.sh jobs
-make schedules-review            # ...only the PR review jobs
 make remove-schedules            # remove all of this project's cron jobs
 make remove-schedules-run        # ...only the run.sh jobs
-make remove-schedules-review     # ...only the PR review jobs
 make view-schedules              # show the current schedule
 make unmount-worktrees           # remove idle story worktrees (ALL=1 for all)
 ./scripts/reset-run-state.sh     # reset run state between runs
@@ -202,12 +200,10 @@ their story id instead.
 Stop with `Ctrl+C`; the bot returns the target repo to its default branch on
 the way out.
 
-Skills are run interactively from the bot directory:
-
-```bash
-claude
-> /review-prs 1d open
-```
+Reviewing other people's pull requests (`/review-prs`, the scheduled sweeps, the
+review-request poll) is a separate project:
+[brave-experiments/reviewer](https://github.com/brave-experiments/reviewer).
+This repo only waits for the reviewer's verdict on what it pushed.
 
 ## Documentation
 

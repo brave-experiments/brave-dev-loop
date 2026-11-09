@@ -32,7 +32,9 @@ gh auth switch --user <your-own-login>  # switch back; both tokens stay stored
 
 ## Reviewer account
 
-The bot opens PRs, and GitHub does not let an account approve its own. So scheduled reviews can run as a second account, the reviewer. `make setup` asks for its username (blank keeps reviewing as the bot), saves it as `reviewer.username` in `config.json`, and then walks you through the login:
+The bot opens PRs, and GitHub does not let an account approve its own. So a second account, the reviewer, reviews them. The reviews themselves (the `/review-prs` sweeps, the review-request poll, the ping replies) are posted by the separate https://github.com/brave-experiments/reviewer project, not by this repo. This repo only needs to know who the reviewer is, so `run.sh` can wait for its verdict.
+
+`make setup` asks for the reviewer's username (blank means none), saves it as `reviewer.username` in `config.json`, and then walks you through the login:
 
 ```bash
 GH_CONFIG_DIR=~/.config/gh-<reviewer> gh auth login --hostname github.com --web --skip-ssh-key
@@ -40,24 +42,9 @@ GH_CONFIG_DIR=~/.config/gh-<reviewer> gh auth login --hostname github.com --web 
 
 Setup offers to run that for you. Sign in to github.com as the reviewer first (a private window if you are signed in as someone else); gh prints a one-time code to enter at github.com/login/device. Setup then checks the login resolves to the reviewer, and reports the reviewer's access to the PR repository: approvals only count toward required reviews from an account with write access.
 
-The login lives in its own gh config directory, `~/.config/gh-<reviewer>` by default (`reviewer.ghConfigDir` overrides it), so it never enters your gh config or the bot's. Nothing global changes.
-
-| Runs as | Jobs |
-| --- | --- |
-| Reviewer | the `/review-prs` sweeps and the review-request poll (`check-review-requests.sh`, `review-requested.sh`), including the replies to pings it makes (`reply-to-pings.sh`) |
-| Bot | `run.sh`, the PRD sync, maintenance jobs, and the git fetches that precede a review |
-
-The cron lines for the first row go through `scripts/as-reviewer.sh`, which reads `config.json` when the job fires. Once the jobs have been installed with the wrapper (`make schedules-review`), adding, changing or removing the reviewer needs no further re-sync. The wrapper sets `GH_TOKEN` to the reviewer's token as well as `GH_CONFIG_DIR`, because `.envrc` exports the bot's `GH_TOKEN` into every cron job and a token outranks a config directory.
-
-It does not fall back. With a reviewer configured, a missing login, or a directory logged in as a different account, stops the job with an error in its log; quietly reviewing as the bot would defeat the account's purpose. Clear `reviewer.username` to go back to the bot.
-
-`prepare-review.py` and `collect-results.py` re-run themselves through the wrapper when the gh login in force is not the reviewer, so a `/review-prs` typed into a session reviews as the reviewer too. Run as the bot, a review of a PR the bot opened can only comment, and it caches the commit as reviewed, so no later run approves it.
-
-Approving needs only triage, but resolving a review thread needs write access (or authorship of the PR), so without it every re-review ends in "request changes" over threads the code already answers. A reviewer with write access could also push and merge, which is why the scheduled sessions never hold its token: `scripts/review-session.sh` runs the two scripts that talk to GitHub itself and starts the session that reads the PR without one (see [skills.md](skills.md)).
+The login lives in its own gh config directory, `~/.config/gh-<reviewer>` by default (`reviewer.ghConfigDir` overrides it), so it never enters your gh config or the bot's. Nothing global changes. The reviewer project reads the same directory, so one login serves both.
 
 `run.sh` itself runs as the bot, but with a reviewer configured it waits for the reviewer's verdict on every pull request it pushes to, and answers a request for changes before moving on: see [Review gate](review-gate.md).
-
-Review requests are polled for the reviewer, not the bot: a human asks for a review from the account that will answer it. To run any command by hand as the reviewer, `./scripts/as-reviewer.sh -- <command>`.
 
 The bot asks the reviewer for a fresh review after each follow-up push to an open PR (`scripts/request-review.sh <pr>`, run as the bot, the PR's author), because GitHub removes a reviewer from the request list once they have reviewed. With no reviewer configured it does nothing.
 
