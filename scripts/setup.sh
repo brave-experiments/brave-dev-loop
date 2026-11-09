@@ -53,7 +53,6 @@ if [ "$WRITE_CONFIG" = true ]; then
     PREV_REVIEWER_USER=$(_prev '.reviewer.username')
     PREV_REVIEWER_DIR=$(_prev '.reviewer.ghConfigDir')
     PREV_AGENT=$(_prev '.bot.agent')
-    PREV_REVIEW_AGENT=$(_prev '.reviewer.agent')
     PREV_BRAVEBOT_BIN=$(_prev '.bot.bravebotBin')
   fi
 
@@ -258,9 +257,10 @@ if [ "$WRITE_CONFIG" = true ]; then
 
   echo ""
   echo "─── Reviewer Account ───"
-  echo "Scheduled /review-prs jobs can run as a second GitHub account, so the bot"
-  echo "that writes PRs is not the one that reviews them. GitHub does not let an"
-  echo "account approve its own PR. ./run.sh keeps using $CFG_BOT_USER either way."
+  echo "./run.sh can wait for a second GitHub account's review of each pull request"
+  echo "it pushes (the review gate, docs/review-gate.md). GitHub does not let an"
+  echo "account approve its own PR. The reviews themselves are posted by the separate"
+  echo "https://github.com/brave-experiments/reviewer project, not by this repo."
   echo "Its gh login is kept in its own directory under ~/.config, apart from your"
   echo "own gh config and the bot's."
   echo ""
@@ -273,7 +273,7 @@ if [ "$WRITE_CONFIG" = true ]; then
     fi
     if [ -z "$CFG_REVIEWER_USER" ] || [ "$CFG_REVIEWER_USER" = "-" ]; then
       CFG_REVIEWER_USER=""
-      echo "  Scheduled reviews will run as $CFG_BOT_USER."
+      echo "  No review gate: ./run.sh will not wait for a review."
       break
     fi
     if ! [[ "$CFG_REVIEWER_USER" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
@@ -297,13 +297,9 @@ if [ "$WRITE_CONFIG" = true ]; then
 
   echo ""
   echo "─── Agents ───"
-  echo "Which agent runs where. They are independent: ./run.sh can drive one while the"
-  echo "scheduled reviews run another. 'make schedules' builds its cron lines from these."
-  echo "  run     ./run.sh and the run.sh schedules: claude | codex | cursor | bravebot"
-  echo "  review  scheduled /review-prs sweeps, review requests and ping replies:"
-  echo "          claude | bravebot. See docs/review-agents.md for how each is confined."
-  echo "A flag on the command line (./run.sh --agent ...) or BOT_AGENT in the environment"
-  echo "still overrides the run agent for one run."
+  echo "The agent ./run.sh and the run.sh schedules drive: claude | codex | cursor | bravebot."
+  echo "'make schedules' builds its cron lines from it. A flag on the command line"
+  echo "(./run.sh --agent ...) or BOT_AGENT in the environment still overrides it for one run."
   echo ""
   # Re-asks until the answer is one of the words given. Blank takes the default.
   prompt_choice() {
@@ -319,12 +315,11 @@ if [ "$WRITE_CONFIG" = true ]; then
     eval "$var_name=\$value"
   }
   prompt_choice CFG_AGENT "Agent for ./run.sh" "${PREV_AGENT:-claude}" "claude codex cursor bravebot"
-  prompt_choice CFG_REVIEW_AGENT "Agent for scheduled reviews" "${PREV_REVIEW_AGENT:-claude}" "claude bravebot"
 
   # bravebot is a node script that lives under nvm for most people, and cron's PATH
   # has no nvm directory. Its absolute path is stored so no job has to find it.
   CFG_BRAVEBOT_BIN="${PREV_BRAVEBOT_BIN:-}"
-  if [ "$CFG_AGENT" = "bravebot" ] || [ "$CFG_REVIEW_AGENT" = "bravebot" ]; then
+  if [ "$CFG_AGENT" = "bravebot" ]; then
     DEFAULT_BRAVEBOT_BIN="${PREV_BRAVEBOT_BIN:-$(command -v bravebot 2>/dev/null || true)}"
     while true; do
       if [ -n "$DEFAULT_BRAVEBOT_BIN" ]; then
@@ -360,7 +355,6 @@ if [ "$WRITE_CONFIG" = true ]; then
   CFG_REVIEWER_USER="$CFG_REVIEWER_USER" \
   CFG_REVIEWER_DIR="$CFG_REVIEWER_DIR" \
   CFG_AGENT="$CFG_AGENT" \
-  CFG_REVIEW_AGENT="$CFG_REVIEW_AGENT" \
   CFG_BRAVEBOT_BIN="$CFG_BRAVEBOT_BIN" \
   CONFIG_FILE="$CONFIG_FILE" \
   BOT_ROOT="$PROJECT_ROOT" \
@@ -442,7 +436,6 @@ config = {
         **existing_reviewer,
         'username': val('CFG_REVIEWER_USER'),
         'ghConfigDir': val('CFG_REVIEWER_DIR'),
-        'agent': os.environ['CFG_REVIEW_AGENT'],
     },
     # Labels belong to the project profile (projects/<name>/profile.json), which
     # is where anything actually reads them from. This block is carried forward
@@ -985,9 +978,10 @@ fi
 echo ""
 
 # ─── Step 6b: Reviewer gh account ────────────────────────────────────────────
-# Scheduled /review-prs jobs run through scripts/as-reviewer.sh, which reads the
-# login from the directory below. It is a gh config directory of its own, so the
-# login never enters your gh config or the bot's.
+# The review gate (scripts/lib/review-gate.sh) waits for this account's review,
+# and the separate reviewer project posts it from the directory below. It is a gh
+# config directory of its own, so the login never enters your gh config or the
+# bot's.
 
 REVIEWER_LOGGED_IN=false
 if [ -n "$BOT_REVIEWER_USERNAME" ]; then
@@ -1035,21 +1029,19 @@ if [ -n "$BOT_REVIEWER_USERNAME" ]; then
   fi
 
   if [ -z "$REVIEWER_LOGIN" ]; then
-    echo "⚠️  Reviewer '$BOT_REVIEWER_USERNAME' is not logged in. Scheduled reviews will"
-    echo "   fail until it is (they do not fall back to the bot). Run the command above,"
+    echo "⚠️  Reviewer '$BOT_REVIEWER_USERNAME' is not logged in. Run the command above,"
     echo "   or re-run 'make setup'."
   elif ! same_login "$REVIEWER_LOGIN" "$BOT_REVIEWER_USERNAME"; then
     echo "⚠️  $BOT_REVIEWER_GH_CONFIG_DIR is logged in as '$REVIEWER_LOGIN', not"
-    echo "   '$BOT_REVIEWER_USERNAME'. Scheduled reviews refuse to run as the wrong account."
+    echo "   '$BOT_REVIEWER_USERNAME'."
     echo "   Log that one out, then sign in again as $BOT_REVIEWER_USERNAME:"
     echo "     GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth logout --hostname github.com"
     echo "     GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth login --hostname github.com --web --skip-ssh-key"
   else
     REVIEWER_LOGGED_IN=true
     echo "✓ Reviewer '$REVIEWER_LOGIN' is logged in ($BOT_REVIEWER_GH_CONFIG_DIR)"
-    echo "  Scheduled /review-prs jobs and the review-request poll run as this account;"
-    echo "  ./run.sh keeps using $BOT_GH_ACCOUNT. Review requests are now answered for"
-    echo "  $BOT_REVIEWER_USERNAME, not $BOT_USERNAME."
+    echo "  ./run.sh waits for this account's review of each pull request it pushes and"
+    echo "  keeps using $BOT_GH_ACCOUNT itself."
     REVIEWER_PERMS=$(reviewer_gh api "repos/$BOT_PR_REPO" --jq '.permissions | if .admin or .maintain or .push then "write" elif .triage then "triage" elif .pull then "read" else "none" end' 2>/dev/null || echo "")
     case "$REVIEWER_PERMS" in
       write) echo "  ✓ Has write access to $BOT_PR_REPO: its approvals count." ;;
@@ -1062,7 +1054,7 @@ if [ -n "$BOT_REVIEWER_USERNAME" ]; then
     esac
   fi
 else
-  echo "✓ No reviewer account: scheduled reviews run as $BOT_USERNAME"
+  echo "✓ No reviewer account: ./run.sh does not wait for a review"
   echo "  (re-run 'make setup' to add one)"
 fi
 echo ""
@@ -1098,12 +1090,8 @@ has_block() {
   return 1
 }
 DEFAULT_SCHEDULES=none
-if has_block run && has_block review; then
-  DEFAULT_SCHEDULES=all
-elif has_block run; then
+if has_block run; then
   DEFAULT_SCHEDULES=run
-elif has_block review; then
-  DEFAULT_SCHEDULES=review
 fi
 
 echo "─── Schedules ───"
@@ -1113,19 +1101,18 @@ elif [ ! -t 0 ]; then
   echo "ℹ️  No terminal — skipping. Run 'make schedules' to install them."
 else
   echo "Cron jobs for profile '$BOT_PROFILE', built from the agents chosen above:"
-  echo "  all     run + review + maintenance   (make schedules)"
+  echo "  all     run + maintenance            (make schedules)"
   echo "  run     run.sh and the PRD sync       (make schedules-run)"
-  echo "  review  review sweeps and polls       (make schedules-review)"
   echo "  none    leave the crontab alone"
   [ "$DEFAULT_SCHEDULES" = none ] || echo "Currently installed for $BOT_PROJECT_NAME: $DEFAULT_SCHEDULES — reinstalling picks up changed agents."
   SCHEDULE_CHOICE=""
   while true; do
-    read -p "Install schedules? (all/run/review/none) [$DEFAULT_SCHEDULES]: " SCHEDULE_CHOICE
+    read -p "Install schedules? (all/run/none) [$DEFAULT_SCHEDULES]: " SCHEDULE_CHOICE
     SCHEDULE_CHOICE="$(tr '[:upper:]' '[:lower:]' <<< "${SCHEDULE_CHOICE:-$DEFAULT_SCHEDULES}")"
     case "$SCHEDULE_CHOICE" in
-      all|run|review|none) break ;;
+      all|run|none) break ;;
     esac
-    echo "  ⚠️  Enter all, run, review or none."
+    echo "  ⚠️  Enter all, run or none."
   done
   case "$SCHEDULE_CHOICE" in
     none) echo "  Left the crontab alone." ;;
@@ -1169,9 +1156,6 @@ fi
 if [ -n "$BOT_REVIEWER_USERNAME" ]; then
   if [ "$REVIEWER_LOGGED_IN" != true ]; then
     NEXT+=("Log in the reviewer: GH_CONFIG_DIR=$BOT_REVIEWER_GH_CONFIG_DIR gh auth login --hostname github.com --web --skip-ssh-key")
-  fi
-  if [ "$SCHEDULES_INSTALLED" != true ]; then
-    NEXT+=("Run 'make schedules-review' once so the review jobs go through scripts/as-reviewer.sh (the reviewer itself is read when a job fires)")
   fi
 fi
 
