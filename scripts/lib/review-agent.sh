@@ -70,9 +70,13 @@ bot_review_agent_cmd() {
       # bot.bravebotModel when set, else bravebot's own `model` setting.
       model_flag=()
       [ -n "${BOT_BRAVEBOT_MODEL:-}" ] && model_flag=(--model "$BOT_BRAVEBOT_MODEL")
+      # --run-network closed is not used: bravebot cannot confine python3 under it on
+      # Linux ("could not be confined: the network is closed"), so the one script the
+      # session must run, select-candidates.py, never starts and no review is posted.
+      # docs/review-agents.md says what that leaves.
       BOT_REVIEW_AGENT_CMD=("$BOT_BRAVEBOT_BIN" "$prompt" ${model_flag[@]+"${model_flag[@]}"}
         --settings "$settings_file" --trust-workspace --dangerously-skip-permissions
-        --tools "$tools" --run-network closed
+        --tools "$tools" --run-network open
         --sandbox workspace-write --sandbox-deny-write "$BOT_DIR")
       for dir in "$@"; do
         BOT_REVIEW_AGENT_CMD+=(--add-dir "$dir")

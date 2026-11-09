@@ -25,7 +25,7 @@ and only the validators' results file leaves it. So the session may:
 - read its work directory and the bot directory (credential paths excepted);
 - write only inside its work directory;
 - run one script, `select-candidates.py`, and launch subagents;
-- not reach the network.
+- not reach the network (claude only: bravebot's sandbox cannot hold `python3` under a closed network, see below).
 
 ## claude
 
@@ -47,7 +47,7 @@ What replaces the allowlist:
 | File reads of credentials | `Read` deny rules from `review-session-settings.py`, which hold in every mode. |
 | File writes outside the work directory | `Edit` deny rules for the bot directory and each read-only directory, added by `review-agent.sh`. Writes elsewhere (for example `/tmp`) are not denied. |
 | Programs `run` starts | `--sandbox workspace-write`, writable only in the work directory (`--sandbox-allow-write`), `--sandbox-deny-write` on the bot directory, and `--sandbox-deny-read` on ssh keys, gh config directories and `.envrc`. |
-| Network for programs | `--run-network closed`. |
+| Network for programs | None: `--run-network open`. `closed` makes bravebot refuse to start `python3` on Linux (it cannot confine a program that does not need the network), so `select-candidates.py` never runs. See weakness 5. |
 | Tool surface | `--tools` is a fixed list with no `fetch_url` or `download_url`. A reply session also gets no `run` and no `spawn_agent`. |
 | GitHub | No token and an empty `GH_CONFIG_DIR`, as for claude. |
 
@@ -65,7 +65,11 @@ What replaces the allowlist:
 4. **`--trust-workspace`** trusts the whole bot directory so the `/review-prs` skill under
    `.claude/skills` loads. It trusts the PR checkout nothing, but it does vouch for the
    bot directory's own files.
-5. **Not verified here.** This has not been run against a real PR. The flags come from
+5. **Programs `run` starts can reach the network.** The session holds no GitHub token,
+   and credential paths are denied to programs, but a program it runs can send out
+   anything else it can read (the PR checkout, the bot directory's files). The tool
+   surface has no `fetch_url`, so only `run` can do it.
+6. **Not verified here.** This has not been run against a real PR. The flags come from
    bravebot's help and docs, and a flag combination bravebot refuses will fail the
    session (the collector still runs and posts nothing).
 
