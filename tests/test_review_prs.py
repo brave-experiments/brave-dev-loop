@@ -62,6 +62,19 @@ def diff_of(*sections):
     return "\n".join(sections) + "\n"
 
 
+class TestFetchExistingComments:
+    """A comment body holding "] [" must not break the page parse."""
+
+    def test_body_with_bracket_pair_yields_only_dicts(self, post, monkeypatch):
+        rows = [
+            {"path": "a.rs", "line": 1, "body": "see [1] [2]\n] [\n0", "user": "bot"},
+            {"path": "b.rs", "line": 2, "body": "x", "user": "bot"},
+        ]
+        out = "\n".join(json.dumps(r) for r in rows) + "\n"
+        monkeypatch.setattr(post, "run_cmd", lambda *a, **k: (0, out, ""))
+        assert post.fetch_existing_comments("o/r", 1) == rows
+
+
 class TestDiffSections:
     def test_split_keeps_every_file_in_order(self, prep):
         a = section("browser/a.cc", ["int x;"])
