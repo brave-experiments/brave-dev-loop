@@ -76,6 +76,24 @@ diff changes code gated to one (`cfg(windows)`, the Linux backend, the sandbox).
 Then run the gate for that platform. Otherwise skip them and write
 `Docker gates skipped: host-only` in progress.txt.
 
+### The security audit before the pull request
+
+Once the host gates pass, and before the pull request is opened, run bravebot's
+own check of the branch against the untrusted-content rule:
+
+```sh
+python3 agents/skills/security-audit/security-audit.py --before-pr upstream/main
+```
+
+It measures from `upstream/main`, as `check-affected` does, and runs the
+mechanical half of the audit only where the diff reaches a path that keeps
+answers. No model is involved, so the result is the exit status: 0 means open
+the pull request, 1 means a finding at error that is fixed before the pull
+request opens, and 2 means the command was given a base it could not use, which
+is a failed step and not a pass. Untracked files are not counted, so commit
+before running it. `agents/skills/security-audit/SKILL.md` in the target repo
+says what it checks.
+
 Three of the gates it can choose are worth knowing about before they run:
 
 - **check-ui** builds the two bridge crates, typechecks and builds the desktop
