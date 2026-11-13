@@ -1,4 +1,4 @@
-.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules schedules-run schedules-review remove-schedules remove-schedules-run remove-schedules-review view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase approve merge unmount-worktrees
+.PHONY: test lint format check check-reviewdog check-reviewdog-full setup schedules schedules-run remove-schedules remove-schedules-run view-schedules clean archive archive-progress archive-prd backlog backlog-dry-run worktree rebase approve merge unmount-worktrees
 
 # Prefer .venv when it exists so no target needs an activated shell. PEP 668
 # interpreters (Homebrew, recent Debian) refuse a system-wide pytest install, so
@@ -54,17 +54,13 @@ setup:
 	@rm -rf *.egg-info
 	./scripts/setup.sh
 
-# Install/update every cron schedule for this project: run, review, maintenance
+# Install/update every cron schedule for this project: run, maintenance
 schedules:
 	./scripts/sync-schedules.sh
 
 # Install/update only the schedules that start run.sh (and the PRD sync feeding it)
 schedules-run:
 	./scripts/sync-schedules.sh --group run
-
-# Install/update only the schedules that review PRs (the sweeps and the poll for requested reviews)
-schedules-review:
-	./scripts/sync-schedules.sh --group review
 
 # Remove this project's cron schedules, leaving every other crontab line alone
 remove-schedules:
@@ -73,10 +69,6 @@ remove-schedules:
 # Remove only the run.sh schedules
 remove-schedules-run:
 	./scripts/remove-schedules.sh --group run
-
-# Remove only the review schedules
-remove-schedules-review:
-	./scripts/remove-schedules.sh --group review
 
 # Show schedule summary
 view-schedules:

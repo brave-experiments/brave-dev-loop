@@ -306,7 +306,7 @@ Classify each discovered pattern into one of these categories:
 |----------|----------------|
 | Bot workflow (git, PRs, reviews, test execution) | `$BOT_DIR/docs/` (appropriate workflow doc) |
 | Security | `$BOT_DIR/SECURITY.md` |
-| Best practices (testing, coding, architecture, etc.) | Appropriate file in `$TARGET_REPO/docs/best-practices/` — discover available docs dynamically via `python3 $BOT_DIR/.claude/skills/review-prs/discover-best-practices.py $TARGET_REPO/docs/best-practices/` |
+| Best practices (testing, coding, architecture, etc.) | Appropriate file in `$TARGET_REPO/docs/best-practices/` — discover available docs dynamically via `python3 $BOT_DIR/scripts/discover-best-practices.py $TARGET_REPO/docs/best-practices/` |
 
 ---
 

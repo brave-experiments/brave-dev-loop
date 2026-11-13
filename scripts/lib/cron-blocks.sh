@@ -12,8 +12,12 @@
 # can be installed or removed without touching the others:
 #
 #   run          run.sh, and the PRD sync that feeds it
-#   review       the review-prs sweeps and the poll for requested reviews
 #   maintenance  everything else: pattern search, Signal, the repo sync
+#
+# A third group, review, used to be here. The review-prs jobs moved to
+# https://github.com/brave-experiments/reviewer. Their blocks are still stripped
+# (BOT_CRON_RETIRED_GROUPS) so an install or removal here does not leave a block
+# behind that calls scripts which no longer exist.
 #
 # A block written before groups existed holds all of them under the bare
 # project marker. Installing or removing every group replaces it; one group
@@ -21,13 +25,16 @@
 #
 # Usage:
 #   source "$(dirname "${BASH_SOURCE[0]}")/lib/cron-blocks.sh"
-#   marker=$(bot_cron_marker "$BOT_PROJECT_NAME" review)
+#   marker=$(bot_cron_marker "$BOT_PROJECT_NAME" run)
 #   cleaned=$(bot_strip_cron_blocks "$BOT_PROJECT_NAME" <<< "$existing")
 
 # Current spelling first; every earlier one after it.
 BOT_CRON_MARKER_NAMES=(brave-dev-loop brave-dev-bot)
 
-BOT_CRON_GROUPS=(run review maintenance)
+BOT_CRON_GROUPS=(run maintenance)
+
+# Groups this repo no longer writes but still removes.
+BOT_CRON_RETIRED_GROUPS=(review)
 
 # The marker to write. Parentheses rather than brackets: the marker has to
 # survive pattern matching without escaping. The group, when there is one,
@@ -48,7 +55,7 @@ bot_strip_cron_blocks() {
     labels=("$project:$group")
   else
     labels=("$project")
-    for g in "${BOT_CRON_GROUPS[@]}"; do labels+=("$project:$g"); done
+    for g in "${BOT_CRON_GROUPS[@]}" "${BOT_CRON_RETIRED_GROUPS[@]}"; do labels+=("$project:$g"); done
   fi
   for name in "${BOT_CRON_MARKER_NAMES[@]}"; do
     for g in "${labels[@]}"; do

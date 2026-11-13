@@ -3,9 +3,9 @@
 # Also kills the job if it exceeds a timeout (default: 2 hours).
 #
 # Usage: with-lock.sh <lock-name> [--timeout <seconds>] [--slots <n>] -- <command...>
-# Example: with-lock.sh review-prs -- claude -p '/review-prs ...'
-#          with-lock.sh review-prs --timeout 3600 -- claude -p '/review-prs ...'
-#          with-lock.sh review-prs --slots 3 -- ./scripts/review-requested.sh
+# Example: with-lock.sh run-agent -- claude -p '...'
+#          with-lock.sh run-agent --timeout 3600 -- claude -p '...'
+#          with-lock.sh run-agent --slots 3 -- ./scripts/some-job.sh
 #
 # One slot by default: the second instance exits 0 having done nothing, which is
 # what a gated cron job wants. `--slots n` makes it a counting semaphore

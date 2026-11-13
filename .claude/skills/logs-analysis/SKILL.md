@@ -1,6 +1,6 @@
 ---
 name: logs-analysis
-description: "Analyze session logs in ~/.brave-dev-loop/sessions and cron logs in ./logs for errors, schedule gaps, and problems. Checks if cron jobs (run.sh, review-prs, add-backlog, learnable-pattern-search, check-signal) are running correctly. Triggers on: analyze logs, check logs, logs analysis, log report."
+description: "Analyze session logs in ~/.brave-dev-loop/sessions and cron logs in ./logs for errors, schedule gaps, and problems. Checks if cron jobs (run.sh, add-backlog, learnable-pattern-search, check-signal) are running correctly. Triggers on: analyze logs, check logs, logs analysis, log report."
 ---
 
 # Logs Analysis
@@ -60,7 +60,6 @@ Also spawn a separate subagent for cron log analysis:
 >
 > Expected cron schedule:
 > - run-cron.log: runs at 04:00 and 13:00 daily (EST, which is UTC-5)
-> - review-prs-cron.log: runs at 05:00, 08:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00 daily (EST)
 > - add-backlog-cron.log: runs at 03:00 and 11:00 daily (EST)
 > - learnable-pattern-search-cron.log: runs at 06:00 daily (EST)
 > - check-signal-cron.log: runs every hour at :05 (EST)

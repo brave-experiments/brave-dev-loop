@@ -33,7 +33,6 @@
   "reviewer": {
     "username": null,
     "ghConfigDir": null,
-    "agent": "claude",
     "maxRounds": 5,
     "waitMinutes": 120
   },

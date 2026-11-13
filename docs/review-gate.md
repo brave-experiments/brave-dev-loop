@@ -64,8 +64,8 @@ handles it like any other.
 ## What it does not do
 
 It does not run the review. The reviewer answers review requests on its own
-schedule (`make schedules-review`, `scripts/review-requested.sh`), possibly on
-another machine, and starting a second review from here would post a second
+schedule (the separate [reviewer](https://github.com/brave-experiments/reviewer)
+project's `make schedules`), possibly on another machine, and starting a second review from here would post a second
 review of one head. So the wait is only as good as that schedule: with nothing
 answering requests, every wait runs out `waitMinutes` later. Set
 `reviewer.maxRounds` to 0 for a deployment like that.

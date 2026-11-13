@@ -6,12 +6,13 @@
 # profile has no file of its own). Schedule changes are made there and
 # committed to source control.
 #
-# A project's jobs are split into groups -- run, review, maintenance -- and each
+# A project's jobs are split into groups -- run, maintenance -- and each
 # group is a crontab block of its own, so a machine can install only the jobs
-# that run.sh, or only the ones that review, without the other set.
+# that run.sh, or only the maintenance ones, without the other set. (A third
+# group, review, moved to https://github.com/brave-experiments/reviewer.)
 #
 #   ./scripts/sync-schedules.sh                    install/update every group
-#   ./scripts/sync-schedules.sh --group review     install/update one group only
+#   ./scripts/sync-schedules.sh --group run        install/update one group only
 #   ./scripts/sync-schedules.sh --print [...]      print the blocks, touch no crontab
 #
 # The inverse is remove-schedules.sh, which takes the same --group.
@@ -24,11 +25,11 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --print) PRINT_ONLY=true ;;
     --group)
-      [ $# -ge 2 ] || { echo "Error: --group needs a value (run, review, maintenance or all)." >&2; exit 1; }
+      [ $# -ge 2 ] || { echo "Error: --group needs a value (run, maintenance or all)." >&2; exit 1; }
       GROUP="$2"
       shift
       ;;
-    *) echo "Usage: sync-schedules.sh [--print] [--group run|review|maintenance|all]" >&2; exit 1 ;;
+    *) echo "Usage: sync-schedules.sh [--print] [--group run|maintenance|all]" >&2; exit 1 ;;
   esac
   shift
 done
@@ -44,7 +45,7 @@ if [ "$GROUP" = "all" ]; then
 else
   case " ${BOT_CRON_GROUPS[*]} " in
     *" $GROUP "*) GROUPS_TO_SYNC=("$GROUP") ;;
-    *) echo "Error: unknown group '$GROUP' (run, review, maintenance or all)." >&2; exit 1 ;;
+    *) echo "Error: unknown group '$GROUP' (run, maintenance or all)." >&2; exit 1 ;;
   esac
 fi
 
@@ -56,16 +57,12 @@ $PRINT_ONLY || mkdir -p "$LOG_DIR"
 # Derive the PATH from CLAUDE_BIN's directory
 CLAUDE_BIN_DIR=$(dirname "$CLAUDE_BIN")
 
-# Which agents the jobs drive, read from config.json when the schedules are
-# installed (not from BOT_AGENT / BOT_REVIEW_AGENT in this shell: an environment
-# override on the machine running `make schedules` is not the deployment's setting).
+# Which agent the jobs drive, read from config.json when the schedules are
+# installed (not from BOT_AGENT in this shell: an environment override on the
+# machine running `make schedules` is not the deployment's setting).
 #   bot.agent       the agent run.sh drives; its flags go on every run.sh line
-#   reviewer.agent  the agent the review sweeps and the review-request poll run;
-#                   read again when each job fires, so it needs only the PATH here
 RUN_AGENT=$(bot_config '.bot.agent')
 RUN_AGENT="${RUN_AGENT:-claude}"
-REVIEW_AGENT=$(bot_config '.reviewer.agent')
-REVIEW_AGENT="${REVIEW_AGENT:-claude}"
 
 # The binary an agent runs from, as an absolute path. Cron's PATH is not this
 # shell's -- a bravebot or codex installed under nvm is invisible to it -- so the
@@ -108,10 +105,6 @@ if wants_group run && [ "$RUN_AGENT" != "claude" ]; then
   BOT_RUN_AGENT_ARGS=" --agent $RUN_AGENT --agent-bin $RUN_AGENT_BIN"
   add_path_dir "$(dirname "$RUN_AGENT_BIN")"
 fi
-if wants_group review && [ "$REVIEW_AGENT" != "claude" ]; then
-  REVIEW_AGENT_BIN=$(resolve_agent_bin "$REVIEW_AGENT") || exit 1
-  add_path_dir "$(dirname "$REVIEW_AGENT_BIN")"
-fi
 PATH_PREFIX="$CLAUDE_BIN_DIR"
 for d in "${EXTRA_PATH_DIRS[@]:-}"; do [ -n "$d" ] && PATH_PREFIX="$PATH_PREFIX:$d"; done
 
@@ -134,7 +127,7 @@ if [ ! -f "$SCHEDULE_FILE" ]; then
   exit 1
 fi
 
-# The jobs file defines one function per group (schedule_run, schedule_review,
+# The jobs file defines one function per group (schedule_run,
 # schedule_maintenance), each printing that group's crontab lines. A group it
 # does not define is a group this project has no jobs in.
 source "$SCHEDULE_FILE"

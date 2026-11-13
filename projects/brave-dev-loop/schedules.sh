@@ -17,8 +17,9 @@
 # drives its own agent session over its own checkout.
 #
 # The jobs are grouped, and each group is a function that prints its lines: a
-# machine can install just the jobs that run.sh (make schedules-run), just the
-# ones that review (make schedules-review), or all of them (make schedules).
+# machine can install just the jobs that run.sh (make schedules-run), or all of
+# them (make schedules). The review jobs moved to
+# https://github.com/brave-experiments/reviewer.
 
 schedule_run() {
   echo ""
@@ -28,13 +29,4 @@ schedule_run() {
   bot_cron_job "0 3 * * *" "./scripts/check-has-work.sh" \
     "./scripts/timeout-tree.sh 16200 ./run.sh 6$(bot_cron_run_agent_args)" \
     "run-cron.log"
-}
-
-schedule_review() {
-  echo ""
-  echo "# Review PRs — skip if no recent open PRs"
-  echo "# Daily: once, late, after the day's human pull requests have landed"
-  bot_cron_job "30 21 * * *" "./scripts/check-new-prs.sh" \
-    "$(bot_cron_as_reviewer "$(bot_cron_review review-prs '1d open --auto --reviewer-priority' '' "$BOT_REVIEW_MODEL")")" \
-    "review-prs-cron.log"
 }

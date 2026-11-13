@@ -13,7 +13,6 @@
 #   BOT_REVIEWER_USERNAME, BOT_REVIEWER_GH_CONFIG_DIR, BOT_REVIEW_USERNAME,
 #   BOT_REVIEW_MAX_ROUNDS, BOT_REVIEW_WAIT_MINUTES,
 #   BOT_AGENT, BOT_CLAUDE_MODEL, BOT_CLAUDE_BIN,
-#   BOT_REVIEW_AGENT (reviewer.agent: claude | bravebot; the agent scheduled reviews run),
 #   BOT_CODEX_MODEL, BOT_CODEX_BIN,
 #   BOT_CURSOR_MODEL, BOT_CURSOR_BIN,
 #   BOT_BRAVEBOT_MODEL, BOT_BRAVEBOT_BIN, BOT_BP_DOCS_DIR,
@@ -175,8 +174,8 @@ BOT_SIGNING_KEY_PATH=$(bot_config '.bot.signingKeyPath')
 BOT_GH_ACCOUNT=$(bot_config '.bot.ghAccount')
 BOT_GH_CONFIG_DIR=$(bot_config '.bot.ghConfigDir')
 
-# The second account scheduled /review-prs jobs run as (scripts/as-reviewer.sh).
-# Empty means there is none and those jobs run as the bot. Its gh login lives in
+# The second account whose review the review gate waits for (the separate
+# reviewer project posts it). Empty means there is none. Its gh login lives in
 # a config directory of its own, under ~/.config unless config.json says
 # otherwise, so it never enters the bot's or the machine owner's gh config.
 BOT_REVIEWER_USERNAME=$(bot_config '.reviewer.username')
@@ -212,22 +211,6 @@ BOT_CURSOR_BIN=$(bot_config '.bot.cursorBin')
 # value: a job started with a shorter list than the crontab's fails somewhere
 # mid-session, on whichever tool the skill reaches for last.
 BOT_AGENT_TOOLS="Bash,Read,Glob,Grep,Write,Edit,Task,WebFetch"
-
-# Model for a /review-prs session, sweep or review request alike. The session
-# only runs scripts and launches subagents that pick their own model, so it
-# needs no Opus; on a large sweep its own context is re-read on every turn.
-BOT_REVIEW_MODEL="${BOT_REVIEW_MODEL:-sonnet}"
-
-# Agent for a scheduled /review-prs session or ping reply, independent of the one
-# ./run.sh drives (bot.agent). BOT_REVIEW_AGENT in the environment wins over
-# reviewer.agent, as BOT_AGENT does over bot.agent. See scripts/lib/review-agent.sh.
-_BOT_REVIEW_AGENT_ENV="${BOT_REVIEW_AGENT:-}"
-BOT_REVIEW_AGENT=$(bot_config '.reviewer.agent')
-if [ -n "$_BOT_REVIEW_AGENT_ENV" ]; then
-  BOT_REVIEW_AGENT="$_BOT_REVIEW_AGENT_ENV"
-fi
-unset _BOT_REVIEW_AGENT_ENV
-BOT_REVIEW_AGENT="${BOT_REVIEW_AGENT:-claude}"
 
 BOT_BP_DOCS_DIR=$(bot_config '.bestPractices.docsDir')
 
@@ -297,6 +280,6 @@ export BOT_PROFILE BOT_PROFILE_DIR BOT_PROFILE_WORKTREES BOT_MAX_CONCURRENT_RUNS
 export BOT_USERNAME BOT_EMAIL BOT_SSH_KEY_PATH BOT_SIGNING_KEY_PATH BOT_GH_ACCOUNT BOT_GH_CONFIG_DIR
 export BOT_REVIEWER_USERNAME BOT_REVIEWER_GH_CONFIG_DIR BOT_REVIEW_USERNAME
 export BOT_REVIEW_MAX_ROUNDS BOT_REVIEW_WAIT_MINUTES
-export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN BOT_AGENT_TOOLS BOT_REVIEW_MODEL BOT_REVIEW_AGENT
+export BOT_AGENT BOT_CLAUDE_MODEL BOT_CLAUDE_BIN BOT_CODEX_MODEL BOT_CODEX_BIN BOT_CURSOR_MODEL BOT_CURSOR_BIN BOT_AGENT_TOOLS
 export BOT_BRAVEBOT_MODEL BOT_BRAVEBOT_BIN
 export BOT_BP_DOCS_DIR BOT_BP_DOCS_DIR_ABS

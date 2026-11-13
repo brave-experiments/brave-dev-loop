@@ -47,7 +47,7 @@ The user may also provide any other Chromium documentation URL.
 Discover all `.md` files in `$TARGET_REPO/docs/best-practices/` dynamically:
 
 ```bash
-python3 $BOT_DIR/.claude/skills/review-prs/discover-best-practices.py $TARGET_REPO/docs/best-practices/
+python3 $BOT_DIR/scripts/discover-best-practices.py $TARGET_REPO/docs/best-practices/
 ```
 
 This returns a JSON array of all best-practice documents. Read every file listed to build a complete picture of current rules.

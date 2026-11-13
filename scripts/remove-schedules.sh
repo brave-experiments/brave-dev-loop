@@ -6,8 +6,11 @@
 # another project's block, and anything written by hand.
 #
 #   ./scripts/remove-schedules.sh                    remove every group's block
-#   ./scripts/remove-schedules.sh --group review      remove one group's block only
+#   ./scripts/remove-schedules.sh --group run         remove one group's block only
 #   ./scripts/remove-schedules.sh --print [...]       print the crontab that would remain, touch nothing
+
+# Blocks of the retired review group (now in https://github.com/brave-experiments/reviewer)
+# are removed with every other block when no group is named.
 
 set -e
 
@@ -17,11 +20,11 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --print) PRINT_ONLY=true ;;
     --group)
-      [ $# -ge 2 ] || { echo "Error: --group needs a value (run, review, maintenance or all)." >&2; exit 1; }
+      [ $# -ge 2 ] || { echo "Error: --group needs a value (run, maintenance or all)." >&2; exit 1; }
       GROUP="$2"
       shift
       ;;
-    *) echo "Usage: remove-schedules.sh [--print] [--group run|review|maintenance|all]" >&2; exit 1 ;;
+    *) echo "Usage: remove-schedules.sh [--print] [--group run|maintenance|all]" >&2; exit 1 ;;
   esac
   shift
 done
@@ -33,7 +36,7 @@ source "$SCRIPT_DIR/lib/cron-blocks.sh"
 if [ "$GROUP" != "all" ]; then
   case " ${BOT_CRON_GROUPS[*]} " in
     *" $GROUP "*) ;;
-    *) echo "Error: unknown group '$GROUP' (run, review, maintenance or all)." >&2; exit 1 ;;
+    *) echo "Error: unknown group '$GROUP' (run, maintenance or all)." >&2; exit 1 ;;
   esac
 fi
 
