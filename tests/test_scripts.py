@@ -3725,6 +3725,25 @@ class TestBravebotProfile:
         for kind, step in self._profile()["testSteps"].items():
             assert "cargo test" in step, kind
 
+    AUDIT = "security-audit.py --before-pr upstream/main"
+
+    def test_audits_the_branch_before_the_pull_request_opens(self):
+        """bravebot's security audit has a mode for a branch about to become a
+        pull request, and nothing else runs it before review. It goes after
+        the host gates, measured from upstream/main as check-affected is, and
+        a finding has to stop the pull request rather than be noted."""
+        validations = self._profile()["validations"]
+        audit = [i for i, v in enumerate(validations) if self.AUDIT in v]
+        host = [i for i, v in enumerate(validations) if self.HOST.search(v)]
+        assert len(audit) == 1, audit
+        assert audit[0] > host[0], validations
+        step = validations[audit[0]]
+        assert "(must pass" in step, step
+        assert "do not open the pull request until it exits 0" in step, step
+        assert "exit 2" in step and "not a pass" in step, step
+        with open(os.path.join(PROJECTS_DIR, "bravebot", "docs", "testing.md")) as f:
+            assert self.AUDIT in f.read()
+
 
 class TestBravebotTriageAxes:
     """bravebot labels every open issue on three axes, and its /triage-issues
